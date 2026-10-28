@@ -1,0 +1,271 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures
+// for the SoundBook Pavilion (soundbook-library-db) application:
+//
+// Collection: categories
+// Document ID: {categoryId} (matches field `id`, e.g., "cat_literature" or "cat_1730000000000")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal categoryId) - Unique category identifier
+//   - name: string (required, 1..100 chars) - Display title of the library category hall
+//   - code: string (required, 1..50 chars) - Library call-number style code (e.g., "LIT-100")
+//   - description: string (required, 0..1000 chars) - Category description text
+//   - themeColor: string (required, 1..30 chars) - Hex or CSS theme color (e.g., "#8B5A2B")
+//   - icon: string (required, 1..50 chars) - Icon identifier (e.g., "BookOpen", "Landmark")
+//   - order: number (required, 0..10000) - Display sort order
+//   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//
+// Collection: audioItems
+// Document ID: {audioId} (matches field `id`, e.g., "audio_sample_1" or "audio_1730000000000")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal audioId) - Unique audio item identifier
+//   - title: string (required, 1..200 chars) - Audio book/recording title
+//   - categoryId: string (required, 1..128 chars) - Reference to categories/{categoryId}
+//   - description: string (required, 0..5000 chars) - Description and background notes
+//   - duration: number (required, 0..86400) - Audio duration in seconds
+//   - fileSize: number (optional, 0..1073741824) - File size in bytes
+//   - mimeType: string (optional, 0..128 chars) - Audio MIME type (e.g., "audio/mpeg", "audio/wav")
+//   - audioDriveFileId: string (optional, 0..256 chars) - Google Drive file ID for the audio file
+//   - audioUrl: string (required, 1..950000 chars, valid http/https/data/blob URL) - Audio stream or data URL
+//   - coverImageDriveId: string (optional, 0..256 chars) - Google Drive file ID for the cover image
+//   - coverImageUrl: string (required, 1..950000 chars, valid http/https/data/blob URL) - Cover image URL
+//   - playbackDisplay: map (required) - Synchronized text & slide presentation payload:
+//       - textContent: string (required, 0..50000 chars) - Transcript or timed reading script
+//       - slides: list (required, 0..100 items) - List of PlaybackSlide maps:
+//           - id: string (required, 1..128 chars)
+//           - imageDriveId: string (optional, 0..256 chars)
+//           - imageUrl: string (required, 1..950000 chars, valid http/https/data/blob URL)
+//           - caption: string (required, 0..500 chars)
+//           - timestampSec: number (required, 0..86400)
+//   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is owner based on document's uid field
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    // Verify UID hasn't been tampered with on create
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    // Ensure uid field is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Validate required fields exist on the incoming document
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate string length on request.resource.data
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate optional string (if present, must be string and within length bounds)
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        (request.resource.data[field] is string &&
+         request.resource.data[field].size() >= minLen &&
+         request.resource.data[field].size() <= maxLen);
+    }
+
+    // Validate standard web URL format (https:// or http://)
+    function isValidUrl(url) {
+      return url is string &&
+        url.size() >= 1 &&
+        url.size() <= 2048 &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate media URLs used by SoundBook Pavilion (Google Drive/Unsplash http(s), synthesized WAV data URLs, or blob preview URLs)
+    function isValidMediaUrl(url) {
+      return url is string &&
+        url.size() >= 1 &&
+        url.size() <= 950000 &&
+        (url.matches("^https://.*") ||
+         url.matches("^http://.*") ||
+         url.matches("^data:.*") ||
+         url.matches("^blob:.*"));
+    }
+
+    // Validate ISO 8601 date string format (YYYY-MM-DDTHH:MM:SS)
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.size() >= 19 &&
+        dateStr.size() <= 64 &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // Validate that a list is a list and enforces size limits
+    function isValidList(listData, maxSize) {
+      return listData is list && listData.size() <= maxSize;
+    }
+
+    // Validate that a map contains only allowed keys
+    function isValidMap(mapData, allowedKeys) {
+      return mapData is map && mapData.keys().hasOnly(allowedKeys);
+    }
+
+    // Validate that immutable fields have not been modified during an update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update rules)
+    // ===============================================================
+
+    // Validate a single PlaybackSlide map inside playbackDisplay.slides
+    function isValidPlaybackSlide(slide) {
+      return slide is map &&
+        slide.keys().hasAll(['id', 'imageUrl', 'caption', 'timestampSec']) &&
+        slide.keys().hasOnly(['id', 'imageDriveId', 'imageUrl', 'caption', 'timestampSec']) &&
+        slide.id is string && slide.id.size() >= 1 && slide.id.size() <= 128 &&
+        (!('imageDriveId' in slide) || (slide.imageDriveId is string && slide.imageDriveId.size() <= 256)) &&
+        isValidMediaUrl(slide.imageUrl) &&
+        slide.caption is string && slide.caption.size() <= 500 &&
+        slide.timestampSec is number && slide.timestampSec >= 0 && slide.timestampSec <= 86400;
+    }
+
+    // Validate the playbackDisplay map on an AudioItem
+    function isValidPlaybackDisplay(display) {
+      return isValidMap(display, ['textContent', 'slides']) &&
+        display.keys().hasAll(['textContent', 'slides']) &&
+        display.textContent is string &&
+        display.textContent.size() <= 50000 &&
+        isValidList(display.slides, 100) &&
+        (display.slides.size() == 0 || isValidPlaybackSlide(display.slides[0]));
+    }
+
+    // Validate Category document schema and field bounds
+    function isValidCategory(data, categoryId) {
+      let requiredFields = ['id', 'name', 'code', 'description', 'themeColor', 'icon', 'order', 'createdAt'];
+      let allowedFields = ['id', 'name', 'code', 'description', 'themeColor', 'icon', 'order', 'createdAt'];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == categoryId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('name', 1, 100) &&
+        validStringLength('code', 1, 50) &&
+        validStringLength('description', 0, 1000) &&
+        validStringLength('themeColor', 1, 30) &&
+        validStringLength('icon', 1, 50) &&
+        data.order is number && data.order >= 0 && data.order <= 10000 &&
+        isValidDateString(data.createdAt);
+    }
+
+    // Validate AudioItem document schema and field bounds
+    function isValidAudioItem(data, audioId) {
+      let requiredFields = [
+        'id',
+        'title',
+        'categoryId',
+        'description',
+        'duration',
+        'audioUrl',
+        'coverImageUrl',
+        'playbackDisplay',
+        'createdAt',
+        'updatedAt'
+      ];
+      let allowedFields = [
+        'id',
+        'title',
+        'categoryId',
+        'description',
+        'duration',
+        'fileSize',
+        'mimeType',
+        'audioDriveFileId',
+        'audioUrl',
+        'coverImageDriveId',
+        'coverImageUrl',
+        'playbackDisplay',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == audioId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('title', 1, 200) &&
+        validStringLength('categoryId', 1, 128) &&
+        validStringLength('description', 0, 5000) &&
+        data.duration is number && data.duration >= 0 && data.duration <= 86400 &&
+        (!('fileSize' in data) || (data.fileSize is number && data.fileSize >= 0 && data.fileSize <= 1073741824)) &&
+        isValidOptionalString('mimeType', 0, 128) &&
+        isValidOptionalString('audioDriveFileId', 0, 256) &&
+        isValidMediaUrl(data.audioUrl) &&
+        isValidOptionalString('coverImageDriveId', 0, 256) &&
+        isValidMediaUrl(data.coverImageUrl) &&
+        isValidPlaybackDisplay(data.playbackDisplay) &&
+        isValidDateString(data.createdAt) &&
+        isValidDateString(data.updatedAt);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Library Categories (categories/{categoryId})
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create: if isValidCategory(request.resource.data, categoryId);
+      allow update: if isValidCategory(request.resource.data, categoryId) &&
+                       areImmutableFieldsUnchanged(['id', 'createdAt']);
+      allow delete: if true;
+    }
+
+    // Audio Library Items (audioItems/{audioId})
+    match /audioItems/{audioId} {
+      allow read: if true;
+      allow create: if isValidAudioItem(request.resource.data, audioId);
+      allow update: if isValidAudioItem(request.resource.data, audioId) &&
+                       areImmutableFieldsUnchanged(['id']);
+      allow delete: if true;
+    }
+
+    // Default deny for all other collections and paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

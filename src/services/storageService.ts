@@ -16,12 +16,12 @@ const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
 const LOCAL_AUDIO_ITEMS_KEY = 'soundbook_audio_items_v1';
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
-  firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB1MHVQ_CnTOxl2LSwoaPAZQogWtjrb-Ls',
   firebaseAuthDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'soundbook-library-db.firebaseapp.com',
   firebaseProjectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'soundbook-library-db',
-  firebaseStorageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'soundbook-library-db.appspot.com',
-  firebaseMessagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-  firebaseAppId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  firebaseStorageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'soundbook-library-db.firebasestorage.app',
+  firebaseMessagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '528102320989',
+  firebaseAppId: import.meta.env.VITE_FIREBASE_APP_ID || '1:528102320989:web:8dede1f2aebeabf814d6b4',
   googleDriveScriptUrl: import.meta.env.VITE_GOOGLE_DRIVE_SCRIPT_URL || '',
   googleDriveFolderId: import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '',
 };
