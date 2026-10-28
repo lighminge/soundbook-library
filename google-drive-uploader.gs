@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟自動上傳與同步刪除代理腳本
+ * 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟上傳、串流讀取與同步刪除腳本
  * ============================================================================
  * 【重要設定步驟】：
  * 1. 前往 https://script.google.com/ 開啟專案，將本程式碼完整貼上並按 Ctrl+S 儲存。
@@ -13,13 +13,11 @@
  * 4. 複製部署後的「網頁應用程式網址 (結尾為 /exec)」，貼回聲書閣右上角「雲端連線設定」即可！
  */
 
-// 授權專用函式：在編輯器點擊「執行」此函式即可觸發 Google Drive 讀寫與刪除權限視窗
 function testDrivePermission() {
   const root = DriveApp.getRootFolder();
   Logger.log('Google 雲端硬碟讀寫與刪除權限授權成功！根目錄名稱：' + root.getName());
 }
 
-// 自動從完整網址擷取資料夾 ID
 function cleanFolderId(rawId) {
   if (!rawId) return '';
   const str = String(rawId).trim();
@@ -32,7 +30,24 @@ function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
 
-    // 1. 處理同步刪除雲端硬碟檔案 (移至垃圾桶)
+    // 1. 處理讀取雲端硬碟音訊/圖片資料流 (解決瀏覽器對 Google Drive 音檔跨域阻擋問題)
+    if (payload.action === 'getFile') {
+      const targetId = String(payload.fileId || '').trim();
+      const targetFile = DriveApp.getFileById(targetId);
+      const blob = targetFile.getBlob();
+      const b64 = Utilities.base64Encode(blob.getBytes());
+      return ContentService.createTextOutput(
+        JSON.stringify({
+          success: true,
+          action: 'getFile',
+          fileId: targetId,
+          mimeType: blob.getContentType() || 'audio/mpeg',
+          base64Data: b64
+        })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 2. 處理同步刪除雲端硬碟檔案 (移至垃圾桶)
     if (payload.action === 'delete') {
       const rawIds = payload.fileIds || (payload.fileId ? [payload.fileId] : []);
       const deletedIds = [];
@@ -44,8 +59,8 @@ function doPost(e) {
           continue;
         }
         try {
-          var targetFile = DriveApp.getFileById(fId);
-          targetFile.setTrashed(true);
+          var targetFileToDel = DriveApp.getFileById(fId);
+          targetFileToDel.setTrashed(true);
           deletedIds.push(fId);
         } catch (delErr) {
           errors.push({ fileId: fId, error: delErr.toString() });
@@ -62,7 +77,7 @@ function doPost(e) {
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 2. 處理上傳檔案至雲端硬碟
+    // 3. 處理上傳檔案至雲端硬碟
     const folderId = cleanFolderId(payload.folderId);
     const fileName = payload.fileName || ('soundbook_' + new Date().getTime());
     const mimeType = payload.mimeType || 'application/octet-stream';
@@ -76,7 +91,6 @@ function doPost(e) {
     const blob = Utilities.newBlob(decoded, mimeType, fileName);
     const file = folder.createFile(blob);
 
-    // 設定為「知道連結的任何人都能檢視」，讓網頁可直接串流播放語音與顯示圖片
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     const fileId = file.getId();

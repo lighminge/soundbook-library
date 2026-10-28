@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { AudioItem, Category, CloudConfig } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
+import { base64ToBlob, cacheMediaBlob, getCachedMediaBlobUrl } from '../utils/mediaCache';
 
 const CONFIG_STORAGE_KEY = 'soundbook_cloud_config_v1';
 const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
@@ -501,9 +502,21 @@ export async function uploadFileToGoogleDrive(
 
       if (result && result.success) {
         onProgress?.(100, 'Google 雲端硬碟上傳完成！');
+
+        // 立即將原始檔案存入瀏覽器 IndexedDB 與記憶體快取，確保「目前綁定語音檔」與「放映室」可 100% 立即播放，不受 Google Drive 跨域限制！
+        await cacheMediaBlob(result.fileId, file);
+        if (result.directUrl) {
+          await cacheMediaBlob(result.directUrl, file);
+        }
+
+        // 若音檔或圖片 Base64 小於 900KB，直接將 dataUrl 作為儲存網址，讓跨裝置無須額外下載也能秒播
+        const isAudio = (file.type || '').startsWith('audio/');
+        const safeDirectUrl =
+          isAudio && dataUrl.length <= 900000 ? dataUrl : result.directUrl;
+
         return {
           fileId: result.fileId,
-          directUrl: result.directUrl,
+          directUrl: safeDirectUrl,
           viewUrl: result.viewUrl,
           mode: 'google_drive',
         };
@@ -521,15 +534,56 @@ export async function uploadFileToGoogleDrive(
   await new Promise((r) => setTimeout(r, 350));
   onProgress?.(100, '檔案就緒！');
 
-  // 若檔案較大（> 600KB），使用 ObjectURL 確保播放流暢；小檔案則保留 DataURL
-  const finalUrl = file.size > 600 * 1024 ? URL.createObjectURL(file) : dataUrl;
+  const localId = `gdrive_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const blobUrl = await cacheMediaBlob(localId, file);
+  const finalUrl = dataUrl.length <= 900000 ? dataUrl : blobUrl;
 
   return {
-    fileId: `gdrive_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    fileId: localId,
     directUrl: finalUrl,
     mode: 'local_preview',
     errorReason,
   };
+}
+
+/**
+ * 透過 Google Apps Script 讀取雲端硬碟中的音訊檔案並轉為可播放的本地 Blob URL
+ * （用於跨裝置開啟、或重新整理後載入大於 900KB 的 Google Drive 語音檔）
+ */
+export async function fetchAudioBlobFromGoogleDrive(fileId: string): Promise<string | null> {
+  if (!fileId || fileId.startsWith('demo_') || fileId.startsWith('gdrive_local_')) {
+    return null;
+  }
+
+  // 先檢查本地快取
+  const cached = await getCachedMediaBlobUrl(fileId);
+  if (cached) return cached;
+
+  const config = getCloudConfig();
+  if (!isGoogleDriveConfigured(config)) return null;
+
+  try {
+    const response = await fetch(config.googleDriveScriptUrl.trim(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        action: 'getFile',
+        fileId: fileId.trim(),
+      }),
+    });
+
+    const result = await response.json();
+    if (result && result.success && result.base64Data) {
+      const blob = base64ToBlob(result.base64Data, result.mimeType || 'audio/mpeg');
+      return await cacheMediaBlob(fileId, blob);
+    }
+  } catch (e) {
+    console.warn('從 Google 雲端硬碟讀取音訊資料流失敗:', e);
+  }
+
+  return null;
 }
 
 /**

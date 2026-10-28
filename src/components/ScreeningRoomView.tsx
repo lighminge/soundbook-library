@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
+import { fetchAudioBlobFromGoogleDrive } from '../services/storageService';
+import { usePlayableAudioUrl } from '../utils/mediaCache';
 
 interface ScreeningRoomViewProps {
   categories: Category[];
@@ -89,6 +91,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   const currentItem = activeAudio || audioItems[0] || null;
 
+  // 將 Google Drive 音訊自動解析為瀏覽器 100% 可播放的本地 Blob/Data URL
+  const { playableUrl: playableScreeningUrl, isLoadingAudio: isScreeningAudioLoading } =
+    usePlayableAudioUrl(
+      currentItem?.audioUrl || '',
+      currentItem?.audioDriveFileId,
+      fetchAudioBlobFromGoogleDrive
+    );
+
   // 當切換曲目時重置播放狀態
   useEffect(() => {
     setIsPlaying(false);
@@ -98,6 +108,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setDuration(currentItem.duration || 20);
     }
   }, [currentItem?.id]);
+
+  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源
+  useEffect(() => {
+    if (audioRef.current && playableScreeningUrl) {
+      audioRef.current.load();
+    }
+  }, [playableScreeningUrl]);
 
   // 依據分類與搜尋篩選清單
   const filteredItems = audioItems.filter((item) => {
@@ -209,7 +226,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       {/* 隱藏的 HTML5 Audio 元件 */}
       <audio
         ref={audioRef}
-        src={currentItem.audioUrl}
+        src={playableScreeningUrl}
         loop={isLooping}
         onTimeUpdate={() => {
           if (audioRef.current) {
@@ -408,6 +425,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 />
                 <div className="flex items-center justify-between text-xs font-mono text-[#C8B5A0]">
                   <span>{formatDuration(currentTime)}</span>
+                  {isScreeningAudioLoading && (
+                    <span className="text-amber-300 animate-pulse font-sans">
+                      正在從 Google 雲端硬碟載入音訊串流...
+                    </span>
+                  )}
                   <span>{formatDuration(duration)}</span>
                 </div>
               </div>

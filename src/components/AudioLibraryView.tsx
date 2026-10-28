@@ -21,7 +21,9 @@ import { AudioItem, Category, PlaybackSlide } from '../types';
 import {
   getAudioFileDuration,
   uploadFileToGoogleDrive,
+  fetchAudioBlobFromGoogleDrive,
 } from '../services/storageService';
+import { usePlayableAudioUrl } from '../utils/mediaCache';
 import { formatDuration, getCategoryIcon } from './DashboardView';
 
 interface AudioLibraryViewProps {
@@ -92,6 +94,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [newSlideCaption, setNewSlideCaption] = useState('');
   const [newSlideTimeSec, setNewSlideTimeSec] = useState(0);
   const [newSlideUrl, setNewSlideUrl] = useState('');
+
+  // 將編輯器中的 Google Drive 語音檔自動解析為瀏覽器 100% 可直接播放的 Blob/Data URL
+  const { playableUrl: playableEditorAudioUrl, isLoadingAudio: isEditorAudioLoading } =
+    usePlayableAudioUrl(audioUrl, audioDriveFileId, fetchAudioBlobFromGoogleDrive);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -763,6 +769,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-semibold text-[#5C3A1B]">
                       目前綁定語音檔（時長：{formatDuration(duration)}）
+                      {isEditorAudioLoading && (
+                        <span className="ml-2 text-[#8B5A2B] animate-pulse">
+                          正在從雲端硬碟載入音訊串流...
+                        </span>
+                      )}
                     </span>
                     <label className="px-3 py-1 rounded-lg bg-white border border-[#C8B598] hover:border-[#8B5A2B] text-xs font-medium text-[#5C3A1B] cursor-pointer flex items-center gap-1">
                       <Upload className="w-3.5 h-3.5" />
@@ -779,7 +790,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       />
                     </label>
                   </div>
-                  <audio controls src={audioUrl} className="w-full h-9" />
+                  <audio
+                    key={playableEditorAudioUrl}
+                    controls
+                    src={playableEditorAudioUrl}
+                    className="w-full h-9"
+                  />
                 </div>
               </div>
 

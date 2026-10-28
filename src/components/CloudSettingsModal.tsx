@@ -44,7 +44,20 @@ function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
 
-    // 支援同步刪除 Google 雲端硬碟中的語音檔與圖片
+    // 1. 支援跨裝置讀取雲端硬碟音訊串流
+    if (payload.action === 'getFile') {
+      const targetId = String(payload.fileId || '').trim();
+      const blob = DriveApp.getFileById(targetId).getBlob();
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'getFile',
+        fileId: targetId,
+        mimeType: blob.getContentType() || 'audio/mpeg',
+        base64Data: Utilities.base64Encode(blob.getBytes())
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 2. 支援同步刪除 Google 雲端硬碟中的語音檔與圖片
     if (payload.action === 'delete') {
       const rawIds = payload.fileIds || (payload.fileId ? [payload.fileId] : []);
       const deletedIds = [];
