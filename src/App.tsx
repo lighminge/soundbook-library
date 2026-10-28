@@ -86,14 +86,15 @@ export function App() {
     await saveAudioItem(item, nextItems);
   };
 
-  // 刪除語音檔
+  // 刪除語音檔（同時刪除 Firebase 資料與 Google 雲端硬碟內的實體檔案）
   const handleDeleteAudioItem = async (itemId: string) => {
+    const targetItem = audioItems.find((a) => a.id === itemId);
     const nextItems = audioItems.filter((a) => a.id !== itemId);
     setAudioItems(nextItems);
     if (activeAudioForPlayback?.id === itemId) {
       setActiveAudioForPlayback(nextItems[0] || null);
     }
-    await removeAudioItem(itemId, nextItems);
+    return await removeAudioItem(itemId, nextItems, targetItem);
   };
 
   return (

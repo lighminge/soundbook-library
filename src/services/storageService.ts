@@ -263,7 +263,125 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
   }
 }
 
-export async function removeAudioItem(itemId: string, remainingItems: AudioItem[]): Promise<void> {
+/**
+ * 從 Google Drive 串流網址或圖片網址中嘗試解析出 File ID
+ */
+function extractDriveFileIdFromUrl(url?: string): string | null {
+  if (!url) return null;
+  const idParam = url.match(/[?&]id=([a-zA-Z0-9_-]{15,})/);
+  if (idParam && idParam[1]) return idParam[1];
+  const dPath = url.match(/\/d\/([a-zA-Z0-9_-]{15,})/);
+  if (dPath && dPath[1]) return dPath[1];
+  return null;
+}
+
+/**
+ * 收集單一 AudioItem 關聯的所有真實 Google Drive File IDs (語音檔、封面圖、播放插圖)
+ */
+export function collectDriveFileIdsFromItem(item: AudioItem): string[] {
+  const rawIds = new Set<string>();
+
+  const addIfValid = (id?: string | null) => {
+    if (!id) return;
+    const trimmed = id.trim();
+    if (
+      trimmed.length >= 15 &&
+      !trimmed.startsWith('demo_') &&
+      !trimmed.startsWith('gdrive_local_')
+    ) {
+      rawIds.add(trimmed);
+    }
+  };
+
+  addIfValid(item.audioDriveFileId);
+  addIfValid(extractDriveFileIdFromUrl(item.audioUrl));
+  addIfValid(item.coverImageDriveId);
+  addIfValid(extractDriveFileIdFromUrl(item.coverImageUrl));
+
+  if (item.playbackDisplay?.slides) {
+    for (const sl of item.playbackDisplay.slides) {
+      addIfValid(sl.imageDriveId);
+      addIfValid(extractDriveFileIdFromUrl(sl.imageUrl));
+    }
+  }
+
+  return Array.from(rawIds);
+}
+
+/**
+ * 呼叫 Google Apps Script 將指定的 Google 雲端硬碟檔案移至垃圾桶刪除
+ */
+export async function deleteFilesFromGoogleDrive(fileIds: string[]): Promise<{
+  deletedOnDrive: boolean;
+  deletedCount: number;
+  message?: string;
+}> {
+  if (!fileIds || fileIds.length === 0) {
+    return { deletedOnDrive: false, deletedCount: 0 };
+  }
+
+  const config = getCloudConfig();
+  if (!isGoogleDriveConfigured(config)) {
+    return {
+      deletedOnDrive: false,
+      deletedCount: 0,
+      message: '尚未設定 Google Apps Script 網址，僅刪除系統資料庫紀錄',
+    };
+  }
+
+  try {
+    const response = await fetch(config.googleDriveScriptUrl.trim(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        action: 'delete',
+        fileIds,
+      }),
+    });
+
+    const result = await response.json();
+    if (result && result.success && result.action === 'delete') {
+      return {
+        deletedOnDrive: true,
+        deletedCount: Array.isArray(result.deletedIds) ? result.deletedIds.length : fileIds.length,
+      };
+    }
+
+    if (result && String(result.error || '').includes('base64Decode')) {
+      return {
+        deletedOnDrive: false,
+        deletedCount: 0,
+        message:
+          '已刪除系統資料！但您的 Google Apps Script 尚為舊版，請點右上角「雲端連線設定」複製最新版 GAS 腳本並更新部署，即可支援同步刪除雲端硬碟檔案。',
+      };
+    }
+
+    return {
+      deletedOnDrive: false,
+      deletedCount: 0,
+      message: result?.error || '雲端硬碟檔案刪除未成功回應',
+    };
+  } catch (err: any) {
+    console.warn('刪除 Google 雲端硬碟檔案失敗:', err);
+    return {
+      deletedOnDrive: false,
+      deletedCount: 0,
+      message: err?.message || String(err),
+    };
+  }
+}
+
+export async function removeAudioItem(
+  itemId: string,
+  remainingItems: AudioItem[],
+  targetItem?: AudioItem
+): Promise<{
+  deletedOnDrive: boolean;
+  deletedCount: number;
+  message?: string;
+}> {
   try {
     localStorage.setItem(LOCAL_AUDIO_ITEMS_KEY, JSON.stringify(remainingItems));
   } catch (e) {
@@ -274,6 +392,15 @@ export async function removeAudioItem(itemId: string, remainingItems: AudioItem[
   if (db) {
     await deleteDoc(doc(db, 'audioItems', itemId));
   }
+
+  if (targetItem) {
+    const driveFileIds = collectDriveFileIdsFromItem(targetItem);
+    if (driveFileIds.length > 0) {
+      return await deleteFilesFromGoogleDrive(driveFileIds);
+    }
+  }
+
+  return { deletedOnDrive: false, deletedCount: 0 };
 }
 
 /**

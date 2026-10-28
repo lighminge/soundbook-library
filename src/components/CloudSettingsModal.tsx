@@ -43,6 +43,30 @@ function cleanFolderId(rawId) {
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
+
+    // 支援同步刪除 Google 雲端硬碟中的語音檔與圖片
+    if (payload.action === 'delete') {
+      const rawIds = payload.fileIds || (payload.fileId ? [payload.fileId] : []);
+      const deletedIds = [];
+      const errors = [];
+      for (var i = 0; i < rawIds.length; i++) {
+        var fId = String(rawIds[i] || '').trim();
+        if (!fId || fId.indexOf('demo_') === 0 || fId.indexOf('gdrive_local_') === 0) continue;
+        try {
+          DriveApp.getFileById(fId).setTrashed(true);
+          deletedIds.push(fId);
+        } catch (delErr) {
+          errors.push({ fileId: fId, error: delErr.toString() });
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'delete',
+        deletedIds: deletedIds,
+        errors: errors
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     const folderId = cleanFolderId(payload.folderId);
     const fileName = payload.fileName || ('soundbook_' + new Date().getTime());
     const mimeType = payload.mimeType || 'application/octet-stream';
@@ -62,6 +86,7 @@ function doPost(e) {
 
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
+      action: 'upload',
       fileId: fileId,
       viewUrl: file.getUrl(),
       directUrl: directUrl

@@ -30,7 +30,11 @@ interface AudioLibraryViewProps {
   editingItem: AudioItem | null;
   defaultUploadCategoryId?: string;
   onSaveAudioItem: (item: AudioItem) => Promise<void>;
-  onDeleteAudioItem: (itemId: string) => Promise<void>;
+  onDeleteAudioItem: (itemId: string) => Promise<{
+    deletedOnDrive: boolean;
+    deletedCount: number;
+    message?: string;
+  }>;
   onPlayInScreeningRoom: (item: AudioItem) => void;
   onClearEditing: () => void;
 }
@@ -635,13 +639,26 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         <span>編輯檔名與播放圖文</span>
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`確定要刪除「${item.title}」嗎？`)) {
-                            onDeleteAudioItem(item.id);
+                        onClick={async () => {
+                          if (
+                            confirm(
+                              `確定要刪除「${item.title}」嗎？\n（系統將一併刪除 Google 雲端硬碟中關聯的語音檔與圖片）`
+                            )
+                          ) {
+                            const res = await onDeleteAudioItem(item.id);
+                            if (res.deletedOnDrive) {
+                              showToast(
+                                `✅ 已刪除「${item.title}」，並同步從 Google 雲端硬碟移除 ${res.deletedCount} 個關聯檔案！`
+                              );
+                            } else if (res.message) {
+                              showToast(`⚠️ ${res.message}`);
+                            } else {
+                              showToast(`✅ 已刪除館藏「${item.title}」！`);
+                            }
                           }
                         }}
                         className="p-2 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
-                        title="刪除此語音檔"
+                        title="刪除此語音檔與雲端硬碟檔案"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
