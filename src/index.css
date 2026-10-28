@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #F6F1E7;
+    color: #2C221E;
+  }
+
+  h1, h2, h3, .font-serif-tc {
+    font-family: 'Noto Serif TC', Georgia, serif;
+  }
+}
+
+/* Custom library bookshelf wood textures & shadows */
+.wood-shelf {
+  background: linear-gradient(180deg, #4A3222 0%, #3A2518 65%, #2B1B11 100%);
+  box-shadow: 0 8px 16px -4px rgba(43, 27, 17, 0.45), inset 0 2px 3px rgba(255, 255, 255, 0.12);
+}
+
+.book-spine-effect {
+  box-shadow:
+    inset 6px 0 12px -4px rgba(0, 0, 0, 0.35),
+    inset -2px 0 4px rgba(255, 255, 255, 0.25),
+    4px 6px 14px rgba(44, 34, 30, 0.16);
+}
+
+.parchment-card {
+  background: linear-gradient(145deg, #FFFDF9 0%, #F7F1E5 100%);
+  border: 1px solid #E5D9C5;
+}
