@@ -7,9 +7,17 @@ import {
   Check,
   Save,
   ExternalLink,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import { CloudConfig } from '../types';
-import { getCloudConfig, saveCloudConfig } from '../services/storageService';
+import {
+  extractDriveFolderId,
+  getCloudConfig,
+  saveCloudConfig,
+  testGoogleDriveConnection,
+} from '../services/storageService';
 
 interface CloudSettingsModalProps {
   isOpen: boolean;
@@ -18,10 +26,24 @@ interface CloudSettingsModalProps {
 }
 
 const GAS_SCRIPT_CODE = `// 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟自動上傳代理腳本
+// 貼上後請先選取「testDrivePermission」按上方「執行」完成授權，再點右上角「部署 -> 新增部署作業 (網頁應用程式 / 所有人)」
+function testDrivePermission() {
+  const root = DriveApp.getRootFolder();
+  Logger.log('授權成功：' + root.getName());
+}
+
+function cleanFolderId(rawId) {
+  if (!rawId) return '';
+  const str = String(rawId).trim();
+  const match = str.match(/\\/folders\\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) return match[1];
+  return str.split('?')[0].split('/')[0].trim();
+}
+
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
-    const folderId = payload.folderId;
+    const folderId = cleanFolderId(payload.folderId);
     const fileName = payload.fileName || ('soundbook_' + new Date().getTime());
     const mimeType = payload.mimeType || 'application/octet-stream';
     const base64Data = payload.base64Data;
@@ -59,12 +81,18 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 }) => {
   const [config, setConfig] = useState<CloudConfig>(getCloudConfig());
   const [copiedGas, setCopiedGas] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    viewUrl?: string;
+  } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveCloudConfig(config);
+    await saveCloudConfig(config);
     onSaved();
     onClose();
   };
@@ -73,6 +101,17 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
     navigator.clipboard.writeText(GAS_SCRIPT_CODE);
     setCopiedGas(true);
     setTimeout(() => setCopiedGas(false), 2500);
+  };
+
+  const handleTestDrive = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    const res = await testGoogleDriveConnection(
+      config.googleDriveScriptUrl,
+      config.googleDriveFolderId
+    );
+    setTestResult(res);
+    setIsTesting(false);
   };
 
   return (
@@ -107,19 +146,30 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                 href="https://script.google.com/"
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-[#2B4C7E] hover:underline flex items-center gap-1"
+                className="text-xs text-[#2B4C7E] hover:underline flex items-center gap-1 font-semibold"
               >
                 <span>前往 Google Apps Script</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             </div>
 
-            <p className="text-xs text-[#5C4938] leading-relaxed">
-              將下方腳本複製貼到您的 Google Apps Script 並部署為「網頁應用程式 (誰可以存取：所有人)」，即可讓手機與電腦直接上傳語音檔與圖片至您的 Google 雲端硬碟：
-            </p>
+            <div className="text-xs text-[#5C4938] space-y-1 bg-white/80 p-3 rounded-lg border border-[#E2D5C1]">
+              <p className="font-bold text-[#2C221E]">為什麼檔案沒有進到雲端硬碟？請確認以下 3 步驟已完成：</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>
+                  點擊下方「複製 GAS 腳本」貼到 Google Apps Script 後，<strong>先按上方「執行 (testDrivePermission)」完成 Google 雲端硬碟權限核准</strong>（點「進階」➔「前往專案」➔「允許」）。
+                </li>
+                <li>
+                  點擊右上角「部署 ➔ 新增部署作業」，類型選「網頁應用程式」，<strong>「誰可以存取」務必選「所有人 (Anyone)」</strong>。
+                </li>
+                <li>
+                  將部署產生的「網頁應用程式網址 (`https://script.google.com/macros/s/.../exec`)」與「雲端硬碟資料夾網址或 ID」貼在下方欄位，並點擊<strong>「測試寫入雲端硬碟」</strong>確認！
+                </li>
+              </ol>
+            </div>
 
             <div className="flex items-center justify-between bg-[#2C221E] text-[#F3D5B5] px-3 py-2 rounded-lg text-xs">
-              <span className="font-mono truncate">google-drive-uploader.gs (點擊右側一鍵複製腳本)</span>
+              <span className="font-mono truncate">google-drive-uploader.gs (含授權檢測函式)</span>
               <button
                 type="button"
                 onClick={handleCopyGas}
@@ -133,7 +183,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div>
                 <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                  Google Apps Script 部署網址 (Web App URL)
+                  Google Apps Script 部署網址 (Web App URL) *
                 </label>
                 <input
                   type="url"
@@ -147,18 +197,73 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                  Google 雲端硬碟目標資料夾 ID (選填)
+                  Google 雲端硬碟資料夾 ID (可直接貼上資料夾網址)
                 </label>
                 <input
                   type="text"
                   value={config.googleDriveFolderId}
                   onChange={(e) =>
-                    setConfig({ ...config, googleDriveFolderId: e.target.value })
+                    setConfig({
+                      ...config,
+                      googleDriveFolderId: extractDriveFolderId(e.target.value),
+                    })
                   }
-                  placeholder="例如：1aBcDeFgHiJkLmNoPqRsTuVwXyZ"
+                  placeholder="貼上資料夾網址或 ID 皆可自動擷取"
                   className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono"
                 />
               </div>
+            </div>
+
+            {/* 測試連線按鈕與結果顯示 */}
+            <div className="pt-1 space-y-2">
+              <button
+                type="button"
+                disabled={isTesting}
+                onClick={handleTestDrive}
+                className="w-full py-2.5 px-4 rounded-xl bg-[#2B4C7E] hover:bg-[#1E385F] disabled:opacity-60 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+              >
+                {isTesting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>正在測試寫入您的 Google 雲端硬碟...</span>
+                  </>
+                ) : (
+                  <>
+                    <HardDrive className="w-4 h-4" />
+                    <span>點此測試寫入 Google 雲端硬碟（會在您的資料夾建立測試檔）</span>
+                  </>
+                )}
+              </button>
+
+              {testResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                    testResult.success
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-red-50 border-red-300 text-red-900'
+                  }`}
+                >
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <p className="font-medium leading-relaxed">{testResult.message}</p>
+                    {testResult.viewUrl && (
+                      <a
+                        href={testResult.viewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-emerald-700 font-bold underline"
+                      >
+                        <span>點此直接打開雲端硬碟查看剛建立的測試檔案</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -167,10 +272,10 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-[#8B5A2B] font-bold text-sm">
                 <Database className="w-4 h-4" />
-                <span>2. Firebase Firestore 資料庫設定 (soundbook-library-db)</span>
+                <span>2. Firebase Firestore 資料庫設定 (已自動綁定 soundbook-library-db)</span>
               </div>
               <a
-                href="https://console.firebase.google.com/"
+                href="https://console.firebase.google.com/project/soundbook-library-db/overview"
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-[#8B5A2B] hover:underline flex items-center gap-1"
@@ -209,34 +314,6 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                  Auth Domain
-                </label>
-                <input
-                  type="text"
-                  value={config.firebaseAuthDomain}
-                  onChange={(e) =>
-                    setConfig({ ...config, firebaseAuthDomain: e.target.value })
-                  }
-                  placeholder="soundbook-library-db.firebaseapp.com"
-                  className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                  App ID
-                </label>
-                <input
-                  type="text"
-                  value={config.firebaseAppId}
-                  onChange={(e) =>
-                    setConfig({ ...config, firebaseAppId: e.target.value })
-                  }
-                  placeholder="1:123456789:web:abcdef"
-                  className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono"
-                />
-              </div>
             </div>
           </div>
 
@@ -253,7 +330,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               className="px-5 py-2 rounded-xl bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center gap-1.5 shadow-md cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>儲存並套用連線設定</span>
+              <span>儲存並同步至所有裝置</span>
             </button>
           </div>
         </form>

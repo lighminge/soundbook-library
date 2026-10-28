@@ -174,8 +174,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       setActiveSubTab('editor');
       showToast(
         uploadRes.mode === 'google_drive'
-          ? '語音檔已成功上傳至 Google 雲端硬碟！現在可編輯封面與播放圖文。'
-          : '語音檔已上傳載入！現在可繼續編輯檔名、封面圖與播放時顯示的圖文。'
+          ? '✅ 語音檔已成功寫入您的 Google 雲端硬碟！現在可編輯封面與播放圖文。'
+          : `⚠️ 語音檔已暫存於網頁，但尚未寫入 Google 雲端硬碟（原因：${uploadRes.errorReason || '尚未完成雲端硬碟連線設定'}）。請點右上角「雲端連線設定」檢測！`
       );
     } catch (err) {
       console.error('上傳語音檔失敗:', err);

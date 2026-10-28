@@ -3,6 +3,7 @@ import {
   getFirestore,
   collection,
   getDocs,
+  getDoc,
   setDoc,
   deleteDoc,
   doc,
@@ -28,11 +29,34 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
 
 let firestoreDb: Firestore | null = null;
 
+/**
+ * 自動從使用者貼上的完整 Google Drive 網址或字串中擷取純粹的 Folder ID
+ */
+export function extractDriveFolderId(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  const folderMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folderMatch && folderMatch[1]) {
+    return folderMatch[1];
+  }
+  const idParamMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idParamMatch && idParamMatch[1]) {
+    return idParamMatch[1];
+  }
+  return trimmed.split('?')[0].split('/')[0].trim();
+}
+
 export function getCloudConfig(): CloudConfig {
   try {
     const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
     if (raw) {
-      return { ...DEFAULT_CLOUD_CONFIG, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_CLOUD_CONFIG,
+        ...parsed,
+        googleDriveScriptUrl: (parsed.googleDriveScriptUrl || DEFAULT_CLOUD_CONFIG.googleDriveScriptUrl).trim(),
+        googleDriveFolderId: extractDriveFolderId(parsed.googleDriveFolderId || DEFAULT_CLOUD_CONFIG.googleDriveFolderId),
+      };
     }
   } catch (e) {
     console.warn('無法讀取雲端設定:', e);
@@ -40,9 +64,36 @@ export function getCloudConfig(): CloudConfig {
   return DEFAULT_CLOUD_CONFIG;
 }
 
-export function saveCloudConfig(config: CloudConfig): void {
-  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+export async function saveCloudConfig(config: CloudConfig): Promise<void> {
+  const cleaned: CloudConfig = {
+    ...config,
+    googleDriveScriptUrl: (config.googleDriveScriptUrl || '').trim(),
+    googleDriveFolderId: extractDriveFolderId(config.googleDriveFolderId || ''),
+  };
+  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cleaned));
   firestoreDb = null; // 重新初始化
+
+  // 同步將 Google Drive 設定儲存至 Firebase Firestore，讓手機與電腦跨裝置自動共用！
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'categories', '__system_cloud_config__'), {
+        id: '__system_cloud_config__',
+        name: '__system_cloud_config__',
+        code: 'SYS-CFG',
+        description: JSON.stringify({
+          googleDriveScriptUrl: cleaned.googleDriveScriptUrl,
+          googleDriveFolderId: cleaned.googleDriveFolderId,
+        }),
+        themeColor: '#000000',
+        icon: 'Settings',
+        order: 9999,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('同步雲端硬碟設定至 Firestore 略過:', e);
+    }
+  }
 }
 
 export function isFirebaseConfigured(config: CloudConfig = getCloudConfig()): boolean {
@@ -99,7 +150,32 @@ export async function loadLibraryData(): Promise<{
       ]);
 
       let categories: Category[] = [];
-      catSnap.forEach((d) => categories.push(d.data() as Category));
+      catSnap.forEach((d) => {
+        const data = d.data() as Category;
+        if (data.id === '__system_cloud_config__') {
+          // 自動從 Firestore 同步 Google 雲端硬碟連線設定至當前裝置
+          try {
+            const remoteCfg = JSON.parse(data.description || '{}');
+            if (remoteCfg.googleDriveScriptUrl) {
+              const currentCfg = getCloudConfig();
+              if (!currentCfg.googleDriveScriptUrl) {
+                localStorage.setItem(
+                  CONFIG_STORAGE_KEY,
+                  JSON.stringify({
+                    ...currentCfg,
+                    googleDriveScriptUrl: remoteCfg.googleDriveScriptUrl,
+                    googleDriveFolderId: extractDriveFolderId(remoteCfg.googleDriveFolderId || ''),
+                  })
+                );
+              }
+            }
+          } catch {
+            // ignore parse error
+          }
+        } else {
+          categories.push(data);
+        }
+      });
 
       let audioItems: AudioItem[] = [];
       audioSnap.forEach((d) => audioItems.push(d.data() as AudioItem));
@@ -258,29 +334,44 @@ export async function uploadFileToGoogleDrive(
   directUrl: string;
   viewUrl?: string;
   mode: 'google_drive' | 'local_preview';
+  errorReason?: string;
 }> {
   const config = getCloudConfig();
   onProgress?.(15, `正在讀取檔案 ${file.name}...`);
   const { dataUrl, base64 } = await fileToDataUrl(file);
 
-  if (isGoogleDriveConfigured(config)) {
+  let errorReason: string | undefined;
+
+  if (!isGoogleDriveConfigured(config)) {
+    errorReason = '尚未在右上角「雲端連線設定」填入 Google Apps Script 部署網址 (Web App URL)';
+  } else {
     try {
       onProgress?.(45, '正在上傳至系統 Google 雲端硬碟...');
-      const response = await fetch(config.googleDriveScriptUrl, {
+      const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
+      const response = await fetch(config.googleDriveScriptUrl.trim(), {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain;charset=utf-8',
         },
         body: JSON.stringify({
-          folderId: config.googleDriveFolderId,
+          folderId: cleanFolderId,
           fileName: file.name,
           mimeType: file.type || 'application/octet-stream',
           base64Data: base64,
         }),
       });
 
-      onProgress?.(85, '正在取得雲端硬碟公開串流連結...');
-      const result = await response.json();
+      onProgress?.(85, '正在確認雲端硬碟寫入結果...');
+      const text = await response.text();
+      let result: any;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        throw new Error(
+          'Google Apps Script 未回傳正確格式。請確認部署時「執行身分」為「我」，且「誰可以存取」已設為「所有人 (Anyone)」，並已完成 Google 帳號授權核准。'
+        );
+      }
+
       if (result && result.success) {
         onProgress?.(100, 'Google 雲端硬碟上傳完成！');
         return {
@@ -292,8 +383,9 @@ export async function uploadFileToGoogleDrive(
       } else {
         throw new Error(result?.error || 'Google Drive 回傳失敗');
       }
-    } catch (err) {
-      console.warn('Google 雲端硬碟 API 上傳發生例外，已自動轉為本地預覽串流:', err);
+    } catch (err: any) {
+      errorReason = err?.message || String(err);
+      console.warn('Google 雲端硬碟 API 上傳失敗原因:', errorReason);
     }
   }
 
@@ -302,12 +394,83 @@ export async function uploadFileToGoogleDrive(
   await new Promise((r) => setTimeout(r, 350));
   onProgress?.(100, '檔案就緒！');
 
-  // 若檔案較大（> 2.5MB），使用 ObjectURL 確保播放流暢不爆 localStorage；小檔案則保留 DataURL
-  const finalUrl = file.size > 2.5 * 1024 * 1024 ? URL.createObjectURL(file) : dataUrl;
+  // 若檔案較大（> 600KB），使用 ObjectURL 確保播放流暢；小檔案則保留 DataURL
+  const finalUrl = file.size > 600 * 1024 ? URL.createObjectURL(file) : dataUrl;
 
   return {
     fileId: `gdrive_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     directUrl: finalUrl,
     mode: 'local_preview',
+    errorReason,
   };
+}
+
+/**
+ * 測試 Google Apps Script 與 Google 雲端硬碟資料夾是否可正常寫入檔案
+ */
+export async function testGoogleDriveConnection(
+  scriptUrl: string,
+  folderIdInput: string
+): Promise<{
+  success: boolean;
+  message: string;
+  viewUrl?: string;
+}> {
+  const cleanUrl = (scriptUrl || '').trim();
+  const cleanFolderId = extractDriveFolderId(folderIdInput || '');
+
+  if (!cleanUrl.startsWith('https://script.google.com/')) {
+    return {
+      success: false,
+      message: '請填入正確的 Google Apps Script 網頁應用程式網址（開頭為 https://script.google.com/macros/s/.../exec）',
+    };
+  }
+
+  try {
+    const sampleText = `聲書閣 (SoundBook Pavilion) 雲端硬碟連線測試成功！\n建立時間：${new Date().toLocaleString('zh-TW')}`;
+    const base64Data = btoa(unescape(encodeURIComponent(sampleText)));
+
+    const response = await fetch(cleanUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        folderId: cleanFolderId,
+        fileName: '聲書閣_雲端硬碟連線測試成功.txt',
+        mimeType: 'text/plain',
+        base64Data,
+      }),
+    });
+
+    const rawText = await response.text();
+    let result: any;
+    try {
+      result = JSON.parse(rawText);
+    } catch {
+      return {
+        success: false,
+        message:
+          '連線被拒絕或未授權！請確認在 Google Apps Script 中：1. 已先點選上方「執行 (testDrivePermission)」完成授權核准；2. 部署時「誰可以存取」已選取「所有人 (Anyone)」。',
+      };
+    }
+
+    if (result && result.success) {
+      return {
+        success: true,
+        message: '測試成功！已在您的 Google 雲端硬碟資料夾建立「聲書閣_雲端硬碟連線測試成功.txt」檔案。',
+        viewUrl: result.viewUrl,
+      };
+    } else {
+      return {
+        success: false,
+        message: `Google Apps Script 回傳錯誤：${result?.error || '未知錯誤'}（請檢查資料夾 ID 是否正確）`,
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `連線發生網路或權限錯誤：${err?.message || String(err)}。請確認部署網址結尾為 /exec 且權限設為「所有人」。`,
+    };
+  }
 }
