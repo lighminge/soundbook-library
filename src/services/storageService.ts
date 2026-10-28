@@ -11,7 +11,12 @@ import {
 } from 'firebase/firestore';
 import { AudioItem, Category, CloudConfig } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
-import { base64ToBlob, cacheMediaBlob, getCachedMediaBlobUrl } from '../utils/mediaCache';
+import {
+  base64ToBlob,
+  cacheMediaBlob,
+  getCachedMediaBlobUrl,
+  setMemoryBase64Payload,
+} from '../utils/mediaCache';
 
 const CONFIG_STORAGE_KEY = 'soundbook_cloud_config_v1';
 const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
@@ -200,6 +205,9 @@ export async function loadLibraryData(): Promise<{
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
 
+      // 背景自動檢查：若電腦端 IndexedDB 有已快取的語音檔尚未同步至 Firestore audioChunks，自動補齊分片以供手機播放
+      backfillLocalBlobsToFirestoreChunks(audioItems).catch(() => {});
+
       return { categories, audioItems, source: 'firebase' };
     } catch (err) {
       console.warn('從 Firebase 載入失敗，切換為本地儲存模式:', err);
@@ -264,6 +272,148 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
   }
 }
 
+const CHUNK_STR_LIMIT = 720000; // 每個分片 720KB，完全符合 Firestore 1MB 限制
+
+/**
+ * 自動檢查本機 IndexedDB 快取的音檔，若雲端 audioChunks 尚無分片則自動補齊上傳（讓先前在電腦上傳的音檔，手機也能立即播放）
+ */
+async function backfillLocalBlobsToFirestoreChunks(items: AudioItem[]): Promise<void> {
+  const db = getDbInstance();
+  if (!db) return;
+
+  for (const item of items) {
+    const fileId = item.audioDriveFileId || extractDriveFileIdFromUrl(item.audioUrl);
+    if (!fileId || fileId.startsWith('demo_') || fileId.startsWith('gdrive_local_')) {
+      continue;
+    }
+    if (item.audioUrl.startsWith('data:')) continue;
+
+    try {
+      const existingChunk = await getDoc(doc(db, 'audioChunks', `${fileId}_chunk_0`));
+      if (existingChunk.exists()) continue;
+
+      const localBlobUrl =
+        (await getCachedMediaBlobUrl(fileId)) ||
+        (await getCachedMediaBlobUrl(item.audioUrl));
+      if (!localBlobUrl) continue;
+
+      const res = await fetch(localBlobUrl);
+      const blob = await res.blob();
+      if (blob.size > 0) {
+        const { base64 } = await fileToDataUrl(
+          new File([blob], item.title || 'audio.mp3', {
+            type: item.mimeType || blob.type || 'audio/mpeg',
+          })
+        );
+        await saveAudioChunksToFirestore(
+          fileId,
+          base64,
+          item.mimeType || blob.type || 'audio/mpeg'
+        );
+      }
+    } catch {
+      // ignore background backfill error
+    }
+  }
+}
+
+/**
+ * 將大型語音檔的 Base64 分片寫入 Firestore audioChunks，讓手機跨裝置打開時不需額外設定即可秒速串流播放
+ */
+async function saveAudioChunksToFirestore(
+  fileId: string,
+  base64: string,
+  mimeType: string
+): Promise<void> {
+  const db = getDbInstance();
+  if (!db || !fileId || !base64) return;
+
+  const total = Math.ceil(base64.length / CHUNK_STR_LIMIT);
+  if (total > 60) return; // 超過約 32MB 則僅透過 GAS 串流
+
+  const now = new Date().toISOString();
+  const tasks: Promise<void>[] = [];
+
+  for (let i = 0; i < total; i++) {
+    const chunkData = base64.slice(i * CHUNK_STR_LIMIT, (i + 1) * CHUNK_STR_LIMIT);
+    const chunkDocId = `${fileId}_chunk_${i}`;
+    tasks.push(
+      setDoc(doc(db, 'audioChunks', chunkDocId), {
+        id: chunkDocId,
+        audioId: fileId,
+        index: i,
+        total,
+        mimeType: mimeType || 'audio/mpeg',
+        data: chunkData,
+        createdAt: now,
+      })
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
+/**
+ * 從 Firestore audioChunks 讀取並重組語音檔 Blob（讓手機端可跨裝置直接播放）
+ */
+async function loadAudioBlobFromFirestoreChunks(fileId: string): Promise<Blob | null> {
+  const db = getDbInstance();
+  if (!db || !fileId) return null;
+
+  try {
+    const firstChunkSnap = await getDoc(doc(db, 'audioChunks', `${fileId}_chunk_0`));
+    if (!firstChunkSnap.exists()) return null;
+
+    const firstData = firstChunkSnap.data();
+    const total = Number(firstData.total) || 1;
+    const mimeType = firstData.mimeType || 'audio/mpeg';
+
+    if (total === 1) {
+      return base64ToBlob(firstData.data, mimeType);
+    }
+
+    const restPromises = [];
+    for (let i = 1; i < total; i++) {
+      restPromises.push(getDoc(doc(db, 'audioChunks', `${fileId}_chunk_${i}`)));
+    }
+    const restSnaps = await Promise.all(restPromises);
+
+    let fullBase64 = firstData.data || '';
+    for (const snap of restSnaps) {
+      if (!snap.exists()) return null;
+      fullBase64 += snap.data().data || '';
+    }
+
+    return base64ToBlob(fullBase64, mimeType);
+  } catch (e) {
+    console.warn('從 Firestore audioChunks 讀取音訊分片失敗:', e);
+    return null;
+  }
+}
+
+/**
+ * 刪除語音檔時，一併清理 Firestore 中的 audioChunks 分片
+ */
+async function deleteAudioChunksFromFirestore(fileIds: string[]): Promise<void> {
+  const db = getDbInstance();
+  if (!db || !fileIds.length) return;
+
+  for (const fileId of fileIds) {
+    try {
+      const firstSnap = await getDoc(doc(db, 'audioChunks', `${fileId}_chunk_0`));
+      if (firstSnap.exists()) {
+        const total = Number(firstSnap.data().total) || 1;
+        const delTasks: Promise<void>[] = [];
+        for (let i = 0; i < total; i++) {
+          delTasks.push(deleteDoc(doc(db, 'audioChunks', `${fileId}_chunk_${i}`)));
+        }
+        await Promise.all(delTasks);
+      }
+    } catch {
+      // ignore cleanup error
+    }
+  }
+}
 /**
  * 從 Google Drive 串流網址或圖片網址中嘗試解析出 File ID
  */
@@ -397,6 +547,7 @@ export async function removeAudioItem(
   if (targetItem) {
     const driveFileIds = collectDriveFileIdsFromItem(targetItem);
     if (driveFileIds.length > 0) {
+      await deleteAudioChunksFromFirestore(driveFileIds);
       return await deleteFilesFromGoogleDrive(driveFileIds);
     }
   }
@@ -501,18 +652,32 @@ export async function uploadFileToGoogleDrive(
       }
 
       if (result && result.success) {
-        onProgress?.(100, 'Google 雲端硬碟上傳完成！');
-
-        // 立即將原始檔案存入瀏覽器 IndexedDB 與記憶體快取，確保「目前綁定語音檔」與「放映室」可 100% 立即播放，不受 Google Drive 跨域限制！
+        // 立即將原始檔案存入瀏覽器 IndexedDB 與記憶體快取
         await cacheMediaBlob(result.fileId, file);
+        setMemoryBase64Payload(result.fileId, base64, file.type || 'audio/mpeg');
         if (result.directUrl) {
           await cacheMediaBlob(result.directUrl, file);
         }
 
-        // 若音檔或圖片 Base64 小於 900KB，直接將 dataUrl 作為儲存網址，讓跨裝置無須額外下載也能秒播
         const isAudio = (file.type || '').startsWith('audio/');
+        // 若音檔 Base64 小於 850KB，直接內嵌 dataUrl；若大於 850KB，自動分片存入 Firestore audioChunks 讓手機端也能秒速跨裝置播放！
+        if (isAudio && dataUrl.length > 850000) {
+          onProgress?.(92, '正在建立手機跨裝置音訊串流快取...');
+          try {
+            await saveAudioChunksToFirestore(
+              result.fileId,
+              base64,
+              file.type || 'audio/mpeg'
+            );
+          } catch (chunkErr) {
+            console.warn('建立跨裝置音訊分片略過:', chunkErr);
+          }
+        }
+
+        onProgress?.(100, 'Google 雲端硬碟上傳完成！');
+
         const safeDirectUrl =
-          isAudio && dataUrl.length <= 900000 ? dataUrl : result.directUrl;
+          isAudio && dataUrl.length <= 850000 ? dataUrl : result.directUrl;
 
         return {
           fileId: result.fileId,
@@ -547,17 +712,43 @@ export async function uploadFileToGoogleDrive(
 }
 
 /**
- * 透過 Google Apps Script 讀取雲端硬碟中的音訊檔案並轉為可播放的本地 Blob URL
- * （用於跨裝置開啟、或重新整理後載入大於 900KB 的 Google Drive 語音檔）
+ * 透過 Firestore 跨裝置分片庫 (audioChunks) 或 Google Apps Script 讀取雲端硬碟中的音訊檔案並轉為手機/電腦皆可播放的本地 Blob URL
  */
-export async function fetchAudioBlobFromGoogleDrive(fileId: string): Promise<string | null> {
-  if (!fileId || fileId.startsWith('demo_') || fileId.startsWith('gdrive_local_')) {
-    return null;
+export async function fetchAudioBlobFromGoogleDrive(
+  fileId: string | null,
+  itemId?: string
+): Promise<string | null> {
+  const lookupId =
+    fileId && !fileId.startsWith('demo_') && !fileId.startsWith('gdrive_local_')
+      ? fileId.trim()
+      : null;
+
+  // 1. 先檢查本地快取
+  if (lookupId) {
+    const cached = await getCachedMediaBlobUrl(lookupId);
+    if (cached) return cached;
+  }
+  if (itemId) {
+    const cachedItem = await getCachedMediaBlobUrl(itemId);
+    if (cachedItem) return cachedItem;
   }
 
-  // 先檢查本地快取
-  const cached = await getCachedMediaBlobUrl(fileId);
-  if (cached) return cached;
+  // 2. 優先從 Firebase Firestore audioChunks 跨裝置分片庫載入（手機無須設定 GAS 也能直接串流播放！）
+  if (lookupId) {
+    const firestoreBlob = await loadAudioBlobFromFirestoreChunks(lookupId);
+    if (firestoreBlob) {
+      return await cacheMediaBlob(lookupId, firestoreBlob);
+    }
+  }
+  if (itemId) {
+    const firestoreBlobByItem = await loadAudioBlobFromFirestoreChunks(itemId);
+    if (firestoreBlobByItem) {
+      return await cacheMediaBlob(itemId, firestoreBlobByItem);
+    }
+  }
+
+  // 3. 若為早期上傳、尚未建立分片的檔案，透過 Google Apps Script (action: 'getFile') 從雲端硬碟取回音訊串流
+  if (!lookupId) return null;
 
   const config = getCloudConfig();
   if (!isGoogleDriveConfigured(config)) return null;
@@ -570,14 +761,20 @@ export async function fetchAudioBlobFromGoogleDrive(fileId: string): Promise<str
       },
       body: JSON.stringify({
         action: 'getFile',
-        fileId: fileId.trim(),
+        fileId: lookupId,
       }),
     });
 
     const result = await response.json();
     if (result && result.success && result.base64Data) {
       const blob = base64ToBlob(result.base64Data, result.mimeType || 'audio/mpeg');
-      return await cacheMediaBlob(fileId, blob);
+      // 順便自動補齊寫入 Firestore audioChunks，讓下次手機或其他裝置開啟秒速載入！
+      saveAudioChunksToFirestore(
+        lookupId,
+        result.base64Data,
+        result.mimeType || 'audio/mpeg'
+      ).catch(() => {});
+      return await cacheMediaBlob(lookupId, blob);
     }
   } catch (e) {
     console.warn('從 Google 雲端硬碟讀取音訊資料流失敗:', e);

@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Sparkles,
   Repeat,
+  Loader2,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -82,6 +83,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pendingAutoPlayRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (initialCategoryFilter) {
@@ -91,12 +93,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   const currentItem = activeAudio || audioItems[0] || null;
 
-  // 將 Google Drive 音訊自動解析為瀏覽器 100% 可播放的本地 Blob/Data URL
+  // 將 Google Drive 音訊自動解析為手機與電腦瀏覽器 100% 可播放的本地 Blob URL
   const { playableUrl: playableScreeningUrl, isLoadingAudio: isScreeningAudioLoading } =
     usePlayableAudioUrl(
       currentItem?.audioUrl || '',
       currentItem?.audioDriveFileId,
-      fetchAudioBlobFromGoogleDrive
+      fetchAudioBlobFromGoogleDrive,
+      currentItem?.id
     );
 
   // 當切換曲目時重置播放狀態
@@ -104,15 +107,24 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     setIsPlaying(false);
     setCurrentTime(0);
     setManualSlideIndex(null);
+    pendingAutoPlayRef.current = false;
     if (currentItem) {
       setDuration(currentItem.duration || 20);
     }
   }, [currentItem?.id]);
 
-  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源
+  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源；若手機使用者已按下播放則自動開始播放
   useEffect(() => {
-    if (audioRef.current && playableScreeningUrl) {
-      audioRef.current.load();
+    const audio = audioRef.current;
+    if (audio && playableScreeningUrl) {
+      audio.load();
+      if (pendingAutoPlayRef.current) {
+        pendingAutoPlayRef.current = false;
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch((err) => console.warn('自動開始播放失敗:', err));
+      }
     }
   }, [playableScreeningUrl]);
 
@@ -182,10 +194,21 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (isPlaying) {
       audio.pause();
       setIsPlaying(false);
+      pendingAutoPlayRef.current = false;
     } else {
       setManualSlideIndex(null); // 播放時恢復時間軸自動同步圖片
-      audio.play().catch((err) => console.warn('播放失敗:', err));
-      setIsPlaying(true);
+      if (isScreeningAudioLoading || !playableScreeningUrl) {
+        // 若手機正在從雲端下載音訊分片，標記待播放，載入完成即自動播放
+        pendingAutoPlayRef.current = true;
+        return;
+      }
+      audio
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch((err) => {
+          console.warn('播放失敗:', err);
+          setIsPlaying(false);
+        });
     }
   };
 
@@ -223,18 +246,22 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   return (
     <div className="space-y-6 pb-12">
-      {/* 隱藏的 HTML5 Audio 元件 */}
+      {/* 隱藏的 HTML5 Audio 元件（加入 playsInline 與 preload 支援手機 iOS/Android 播放） */}
       <audio
         ref={audioRef}
-        src={playableScreeningUrl}
+        src={playableScreeningUrl || undefined}
+        playsInline
+        preload="auto"
         loop={isLooping}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
         onTimeUpdate={() => {
           if (audioRef.current) {
             setCurrentTime(audioRef.current.currentTime);
           }
         }}
         onLoadedMetadata={() => {
-          if (audioRef.current && Number.isFinite(audioRef.current.duration)) {
+          if (audioRef.current && Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
             setDuration(audioRef.current.duration);
           }
         }}
@@ -469,8 +496,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   <button
                     onClick={togglePlay}
                     className="w-14 h-14 rounded-full bg-[#D4A373] hover:bg-[#E3B587] text-[#2B1B11] flex items-center justify-center shadow-lg transition transform active:scale-95 cursor-pointer"
+                    title={isScreeningAudioLoading ? '正在載入雲端音訊...' : isPlaying ? '暫停' : '播放'}
                   >
-                    {isPlaying ? (
+                    {isScreeningAudioLoading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : isPlaying ? (
                       <Pause className="w-6 h-6 fill-current" />
                     ) : (
                       <Play className="w-6 h-6 fill-current ml-0.5" />

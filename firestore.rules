@@ -44,6 +44,17 @@ rules_version = '2';
 //   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
+// Collection: audioChunks
+// Document ID: {chunkId} (matches field `id`, e.g., "{audioId}_chunk_0")
+// Fields:
+//   - id: string (required, immutable, 1..256 chars, must equal chunkId) - Unique audio chunk identifier
+//   - audioId: string (required, 1..256 chars) - Reference to parent audio item or file identifier
+//   - index: number (required, 0..500) - Zero-based chunk sequence index
+//   - total: number (required, 1..500) - Total number of chunks for this audio payload
+//   - mimeType: string (required, 1..128 chars) - Audio MIME type (e.g., "audio/mpeg", "audio/mp4")
+//   - data: string (required, 1..900000 chars) - Base64-encoded audio chunk payload
+//   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -241,6 +252,39 @@ service cloud.firestore {
         isValidDateString(data.updatedAt);
     }
 
+    // Validate AudioChunk document schema and field bounds
+    function isValidAudioChunk(data, chunkId) {
+      let requiredFields = [
+        'id',
+        'audioId',
+        'index',
+        'total',
+        'mimeType',
+        'data',
+        'createdAt'
+      ];
+      let allowedFields = [
+        'id',
+        'audioId',
+        'index',
+        'total',
+        'mimeType',
+        'data',
+        'createdAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == chunkId &&
+        validStringLength('id', 1, 256) &&
+        validStringLength('audioId', 1, 256) &&
+        data.index is number && data.index >= 0 && data.index <= 500 &&
+        data.total is number && data.total >= 1 && data.total <= 500 &&
+        validStringLength('mimeType', 1, 128) &&
+        validStringLength('data', 1, 900000) &&
+        isValidDateString(data.createdAt);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -259,6 +303,15 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isValidAudioItem(request.resource.data, audioId);
       allow update: if isValidAudioItem(request.resource.data, audioId) &&
+                       areImmutableFieldsUnchanged(['id']);
+      allow delete: if true;
+    }
+
+    // Chunked Audio Payloads (audioChunks/{chunkId})
+    match /audioChunks/{chunkId} {
+      allow read: if true;
+      allow create: if isValidAudioChunk(request.resource.data, chunkId);
+      allow update: if isValidAudioChunk(request.resource.data, chunkId) &&
                        areImmutableFieldsUnchanged(['id']);
       allow delete: if true;
     }

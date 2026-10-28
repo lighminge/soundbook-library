@@ -16,6 +16,8 @@ import {
   FolderOpen,
   Save,
   X,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import {
@@ -95,9 +97,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [newSlideTimeSec, setNewSlideTimeSec] = useState(0);
   const [newSlideUrl, setNewSlideUrl] = useState('');
 
+  // 圖書館風格「刪除確認視窗」狀態
+  const [itemPendingDelete, setItemPendingDelete] = useState<AudioItem | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+
   // 將編輯器中的 Google Drive 語音檔自動解析為瀏覽器 100% 可直接播放的 Blob/Data URL
   const { playableUrl: playableEditorAudioUrl, isLoadingAudio: isEditorAudioLoading } =
-    usePlayableAudioUrl(audioUrl, audioDriveFileId, fetchAudioBlobFromGoogleDrive);
+    usePlayableAudioUrl(audioUrl, audioDriveFileId, fetchAudioBlobFromGoogleDrive, formId);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -645,24 +651,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         <span>編輯檔名與播放圖文</span>
                       </button>
                       <button
-                        onClick={async () => {
-                          if (
-                            confirm(
-                              `確定要刪除「${item.title}」嗎？\n（系統將一併刪除 Google 雲端硬碟中關聯的語音檔與圖片）`
-                            )
-                          ) {
-                            const res = await onDeleteAudioItem(item.id);
-                            if (res.deletedOnDrive) {
-                              showToast(
-                                `✅ 已刪除「${item.title}」，並同步從 Google 雲端硬碟移除 ${res.deletedCount} 個關聯檔案！`
-                              );
-                            } else if (res.message) {
-                              showToast(`⚠️ ${res.message}`);
-                            } else {
-                              showToast(`✅ 已刪除館藏「${item.title}」！`);
-                            }
-                          }
-                        }}
+                        onClick={() => setItemPendingDelete(item)}
                         className="p-2 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
                         title="刪除此語音檔與雲端硬碟檔案"
                       >
@@ -1035,6 +1024,123 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             </div>
           </div>
         </form>
+      )}
+
+      {/* 圖書館典藏風格：刪除確認視窗 Modal */}
+      {itemPendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            {/* 木質深色標頭 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#3A2218] to-[#522D20] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-300/30 flex items-center justify-center text-red-200">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  館藏撤架與雲端檔案刪除確認
+                </h3>
+              </div>
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => setItemPendingDelete(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 視窗內容 */}
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-[#3A2D25] leading-relaxed">
+                您確定要從「聲書閣」撤下並刪除以下有聲書館藏嗎？
+              </p>
+
+              {/* 欲刪除的書籍預覽卡 */}
+              <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4]">
+                <img
+                  src={itemPendingDelete.coverImageUrl}
+                  alt={itemPendingDelete.title}
+                  className="w-14 h-18 rounded-lg object-cover border border-[#C8B294] shrink-0 shadow-xs"
+                />
+                <div className="min-w-0 space-y-1">
+                  <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-[#3A2518] text-[#F3D5B5]">
+                    {categories.find((c) => c.id === itemPendingDelete.categoryId)?.name ||
+                      '館藏作品'}
+                  </span>
+                  <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] truncate">
+                    {itemPendingDelete.title}
+                  </h4>
+                  <p className="text-xs text-[#7A6855] font-mono">
+                    時長：{formatDuration(itemPendingDelete.duration)} · 展演圖片{' '}
+                    {itemPendingDelete.playbackDisplay.slides.length} 張
+                  </p>
+                </div>
+              </div>
+
+              {/* 同步刪除提示 */}
+              <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-200/80 text-xs text-[#6E4720] space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <HardDrive className="w-3.5 h-3.5 text-[#8B5A2B] shrink-0" />
+                  <span>將同步執行以下清理作業：</span>
+                </p>
+                <ul className="list-disc list-inside pl-1 space-y-0.5 text-[11px] text-[#7A5835]">
+                  <li>移除 Firebase 資料庫中的館藏紀錄與圖文設定</li>
+                  <li>一併刪除 Google 雲端硬碟中關聯的語音檔與插圖檔案</li>
+                </ul>
+              </div>
+
+              {/* 底部按鈕 */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  disabled={isDeletingItem}
+                  onClick={() => setItemPendingDelete(null)}
+                  className="px-4 py-2.5 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] transition cursor-pointer"
+                >
+                  保留館藏 (取消)
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingItem}
+                  onClick={async () => {
+                    if (!itemPendingDelete) return;
+                    setIsDeletingItem(true);
+                    try {
+                      const target = itemPendingDelete;
+                      const res = await onDeleteAudioItem(target.id);
+                      setItemPendingDelete(null);
+                      if (res.deletedOnDrive) {
+                        showToast(
+                          `✅ 已刪除「${target.title}」，並同步從 Google 雲端硬碟移除 ${res.deletedCount} 個關聯檔案！`
+                        );
+                      } else if (res.message) {
+                        showToast(`⚠️ ${res.message}`);
+                      } else {
+                        showToast(`✅ 已刪除館藏「${target.title}」！`);
+                      }
+                    } finally {
+                      setIsDeletingItem(false);
+                    }
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 disabled:opacity-60 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  {isDeletingItem ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>正在同步刪除雲端檔案...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>確認撤架並刪除雲端檔案</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
