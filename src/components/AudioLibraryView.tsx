@@ -27,6 +27,8 @@ import {
   getAudioFileDuration,
   uploadFileToGoogleDrive,
   fetchAudioBlobFromGoogleDrive,
+  deleteFilesFromGoogleDrive,
+  extractDriveFileIdFromSlide,
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
 import {
@@ -154,6 +156,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     slide: PlaybackSlide;
     seqNumber: number;
   } | null>(null);
+  const [isDeletingSlide, setIsDeletingSlide] = useState(false);
 
   // 播放圖片列表「分頁」狀態 (以 10 的倍數選取)
   const [slidePageSize, setSlidePageSize] = useState<number>(10);
@@ -2451,11 +2454,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   <AlertTriangle className="w-4 h-4 text-amber-200" />
                 </div>
                 <h3 className="font-bold font-serif-tc text-base tracking-wide">
-                  移除播放展示圖片確認
+                  移除播放展示圖片與雲端檔案確認
                 </h3>
               </div>
               <button
                 type="button"
+                disabled={isDeletingSlide}
                 onClick={() => setSlidePendingDelete(null)}
                 className="p-1 rounded-lg hover:bg-white/10 text-white/80 transition cursor-pointer"
               >
@@ -2485,9 +2489,21 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 </div>
               </div>
 
+              <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-200/80 text-xs text-[#6E4720] space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <HardDrive className="w-3.5 h-3.5 text-[#8B5A2B] shrink-0" />
+                  <span>將同步執行以下刪除作業：</span>
+                </p>
+                <ul className="list-disc list-inside pl-1 space-y-0.5 text-[11px] text-[#7A5835]">
+                  <li>從 Firebase 資料庫移除此筆播放圖片與時間區段設定</li>
+                  <li>一併刪除 Google 雲端硬碟中對應的圖片檔案</li>
+                </ul>
+              </div>
+
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
                 <button
                   type="button"
+                  disabled={isDeletingSlide}
                   onClick={() => setSlidePendingDelete(null)}
                   className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] transition cursor-pointer"
                 >
@@ -2495,20 +2511,65 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={isDeletingSlide}
                   onClick={async () => {
-                    const targetId = slidePendingDelete.slide.id;
-                    const seq = slidePendingDelete.seqNumber;
-                    const nextSlides = slides.filter((s) => s.id !== targetId);
-                    setSlides(nextSlides);
-                    if (editingSlideId === targetId) setEditingSlideId(null);
-                    setSlidePendingDelete(null);
-                    await autoPersistToFirebase(srtSegments, nextSlides);
-                    showToast(`✅ 已移除第 #${seq} 筆播放展示圖片，並已同步更新至 Firebase！`);
+                    if (!slidePendingDelete) return;
+                    setIsDeletingSlide(true);
+                    try {
+                      const targetSlide = slidePendingDelete.slide;
+                      const targetId = targetSlide.id;
+                      const seq = slidePendingDelete.seqNumber;
+                      const nextSlides = slides.filter((s) => s.id !== targetId);
+
+                      setSlides(nextSlides);
+                      if (editingSlideId === targetId) setEditingSlideId(null);
+
+                      // 1. 先同步更新 Firebase 資料庫中的播放圖片清單
+                      await autoPersistToFirebase(srtSegments, nextSlides);
+
+                      // 2. 檢查此圖片是否有對應的 Google 雲端硬碟 File ID，並同步從 Google Drive 刪除
+                      const driveFileId = extractDriveFileIdFromSlide(targetSlide);
+                      // 確認沒有其他剩餘圖片或封面圖共用同一個 Drive File ID
+                      const stillUsedByOtherSlide =
+                        driveFileId &&
+                        (coverImageDriveId === driveFileId ||
+                          nextSlides.some(
+                            (s) => extractDriveFileIdFromSlide(s) === driveFileId
+                          ));
+
+                      if (driveFileId && !stillUsedByOtherSlide) {
+                        const driveRes = await deleteFilesFromGoogleDrive([driveFileId]);
+                        setSlidePendingDelete(null);
+                        if (driveRes.deletedOnDrive) {
+                          showToast(
+                            `✅ 已移除第 #${seq} 筆播放展示圖片，並已同步從 Google 雲端硬碟刪除該圖片檔案！`
+                          );
+                        } else if (driveRes.message) {
+                          showToast(`⚠️ 已從 Firebase 移除第 #${seq} 筆圖片（${driveRes.message}）`);
+                        } else {
+                          showToast(`✅ 已移除第 #${seq} 筆播放展示圖片，並已同步更新至 Firebase！`);
+                        }
+                      } else {
+                        setSlidePendingDelete(null);
+                        showToast(`✅ 已移除第 #${seq} 筆播放展示圖片，並已同步更新至 Firebase！`);
+                      }
+                    } finally {
+                      setIsDeletingSlide(false);
+                    }
                   }}
-                  className="px-5 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 transition cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-red-700 hover:bg-red-800 disabled:opacity-60 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 transition cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>確認刪除此圖片</span>
+                  {isDeletingSlide ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>正在同步刪除雲端圖片...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>確認刪除此圖片與雲端檔案</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

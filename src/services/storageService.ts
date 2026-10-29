@@ -9,7 +9,7 @@ import {
   doc,
   Firestore,
 } from 'firebase/firestore';
-import { AudioItem, Category, CloudConfig } from '../types';
+import { AudioItem, Category, CloudConfig, PlaybackSlide } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
 import {
   base64ToBlob,
@@ -426,6 +426,25 @@ function extractDriveFileIdFromUrl(url?: string): string | null {
   if (idParam && idParam[1]) return idParam[1];
   const dPath = url.match(/\/d\/([a-zA-Z0-9_-]{15,})/);
   if (dPath && dPath[1]) return dPath[1];
+  return null;
+}
+
+/**
+ * 從單筆 PlaybackSlide 中解析出真實的 Google Drive File ID (若有綁定雲端硬碟檔案)
+ */
+export function extractDriveFileIdFromSlide(slide: PlaybackSlide): string | null {
+  const candidates = [slide.imageDriveId, extractDriveFileIdFromUrl(slide.imageUrl)];
+  for (const id of candidates) {
+    if (!id) continue;
+    const trimmed = id.trim();
+    if (
+      trimmed.length >= 15 &&
+      !trimmed.startsWith('demo_') &&
+      !trimmed.startsWith('gdrive_local_')
+    ) {
+      return trimmed;
+    }
+  }
   return null;
 }
 
