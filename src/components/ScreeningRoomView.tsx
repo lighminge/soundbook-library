@@ -21,6 +21,7 @@ import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
 import { fetchAudioBlobFromGoogleDrive } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
+import { parseSrtContent, secondsToSrtTime } from '../utils/srtUtils';
 
 interface ScreeningRoomViewProps {
   categories: Category[];
@@ -174,14 +175,19 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       : autoSlideIndex;
   const activeSlide = slides[activeSlideIndex] || slides[0];
 
-  const paragraphs = parsePlaybackText(currentItem?.playbackDisplay.textContent || '');
+  const srtSegments = parseSrtContent(
+    currentItem?.playbackDisplay.textContent || '',
+    duration || currentItem?.duration || 20
+  );
 
-  // 計算當前對應的文字段落索引
+  // 計算當前對應的 SRT 段落索引
   const activeParagraphIndex = (() => {
     let idx = -1;
-    for (let i = 0; i < paragraphs.length; i++) {
-      const ts = paragraphs[i].timestampSec;
-      if (ts !== null && currentTime >= ts) {
+    for (let i = 0; i < srtSegments.length; i++) {
+      if (currentTime >= srtSegments[i].startSec && currentTime <= srtSegments[i].endSec) {
+        return i;
+      }
+      if (currentTime >= srtSegments[i].startSec) {
         idx = i;
       }
     }
@@ -578,47 +584,50 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               </p>
             </div>
 
-            {/* 播放時顯示的文字段落 */}
+            {/* 播放時顯示的 SRT 文字段落 */}
             <div className="space-y-3">
-              {paragraphs.length === 0 ? (
+              {srtSegments.length === 0 ? (
                 <p className="text-sm text-[#7A6855] italic py-4 text-center">
                   此語音檔尚未設定「播放時的文字顯示」，可點擊右上角「編輯此語音圖文設定」新增。
                 </p>
               ) : (
-                paragraphs.map((p, idx) => {
+                srtSegments.map((seg, idx) => {
                   const isActive = idx === activeParagraphIndex;
                   return (
                     <div
-                      key={idx}
-                      onClick={() => {
-                        if (p.timestampSec !== null) handleSeek(p.timestampSec);
-                      }}
-                      className={`p-4 rounded-xl border transition-all ${
-                        p.timestampSec !== null ? 'cursor-pointer' : ''
-                      } ${
+                      key={seg.id}
+                      onClick={() => handleSeek(seg.startSec)}
+                      className={`p-4 rounded-xl border transition-all cursor-pointer ${
                         isActive
                           ? 'bg-[#FFF9EE] border-[#8B5A2B] shadow-sm ring-1 ring-[#8B5A2B]/30'
                           : 'bg-white/70 border-[#E8DEC8] hover:border-[#C8B598]'
                       }`}
                     >
-                      {p.timeLabel && (
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-mono font-semibold ${
-                              isActive
-                                ? 'bg-[#8B5A2B] text-white'
-                                : 'bg-[#EFE6D5] text-[#5C3A1B]'
-                            }`}
-                          >
-                            {p.timeLabel}
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
+                            isActive
+                              ? 'bg-[#3A2518] text-white'
+                              : 'bg-[#EFE6D5] text-[#3A2518]'
+                          }`}
+                        >
+                          #{seg.index}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-mono font-semibold ${
+                            isActive
+                              ? 'bg-[#8B5A2B] text-white'
+                              : 'bg-[#EFE6D5] text-[#5C3A1B]'
+                          }`}
+                        >
+                          {secondsToSrtTime(seg.startSec)} {'-->'} {secondsToSrtTime(seg.endSec)}
+                        </span>
+                        {isActive && (
+                          <span className="text-xs font-medium text-[#8B5A2B]">
+                            ● 正在朗讀此區段
                           </span>
-                          {isActive && (
-                            <span className="text-xs font-medium text-[#8B5A2B]">
-                              ● 正在朗讀此段落
-                            </span>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                       <p
                         className={`text-[#2C221E] whitespace-pre-line leading-relaxed font-serif-tc ${
                           fontSize === 'sm'
@@ -628,7 +637,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                             : 'text-base'
                         }`}
                       >
-                        {p.content}
+                        {seg.text}
                       </p>
                     </div>
                   );
