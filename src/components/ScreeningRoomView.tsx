@@ -81,6 +81,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [isMuted, setIsMuted] = useState(false);
   const [isLooping, setIsLooping] = useState(false);
   const [manualSlideIndex, setManualSlideIndex] = useState<number | null>(null);
+  const [manualSegmentIndex, setManualSegmentIndex] = useState<number | null>(null);
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -108,6 +109,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     setIsPlaying(false);
     setCurrentTime(0);
     setManualSlideIndex(null);
+    setManualSegmentIndex(null);
     pendingAutoPlayRef.current = false;
     if (currentItem) {
       setDuration(currentItem.duration || 20);
@@ -190,22 +192,23 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     duration || currentItem?.duration || 20
   );
 
-  // 計算當前對應的單一 SRT 段落索引 (當秒數到達時自動切換至下一筆區段，初始為第 1 筆)
-  const activeParagraphIndex = (() => {
+  // 根據播放秒數自動計算當前對應的單一 SRT 段落索引 (由後往前比對 startSec，避免邊界秒數重疊卡住)
+  const autoParagraphIndex = (() => {
     if (srtSegments.length === 0) return -1;
-    for (let i = 0; i < srtSegments.length; i++) {
-      if (currentTime >= srtSegments[i].startSec && currentTime <= srtSegments[i].endSec) {
+    for (let i = srtSegments.length - 1; i >= 0; i--) {
+      if (currentTime >= srtSegments[i].startSec) {
         return i;
       }
     }
-    let idx = 0;
-    for (let i = 0; i < srtSegments.length; i++) {
-      if (currentTime >= srtSegments[i].startSec) {
-        idx = i;
-      }
-    }
-    return idx;
+    return 0;
   })();
+
+  const activeParagraphIndex =
+    manualSegmentIndex !== null &&
+    manualSegmentIndex >= 0 &&
+    manualSegmentIndex < srtSegments.length
+      ? manualSegmentIndex
+      : autoParagraphIndex;
 
   const activeSegment =
     activeParagraphIndex >= 0 && activeParagraphIndex < srtSegments.length
@@ -220,9 +223,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setIsPlaying(false);
       pendingAutoPlayRef.current = false;
     } else {
-      setManualSlideIndex(null); // 播放時恢復時間軸自動同步圖片
+      setManualSlideIndex(null);
+      setManualSegmentIndex(null); // 播放時恢復依時間軸自動切換區段
       if (isScreeningAudioLoading || !playableScreeningUrl) {
-        // 若手機正在從雲端下載音訊分片，標記待播放，載入完成即自動播放
         pendingAutoPlayRef.current = true;
         return;
       }
@@ -236,13 +239,28 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
-  const handleSeek = (newTime: number) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const clamped = Math.max(0, Math.min(duration || 1, newTime));
-    audio.currentTime = clamped;
+  const handleSeek = (newTime: number, targetSegIdx?: number) => {
+    const maxSrtEnd =
+      srtSegments.length > 0 ? srtSegments[srtSegments.length - 1].endSec : 0;
+    const maxAllowed = Math.max(duration || 1, maxSrtEnd, newTime);
+    const clamped = Math.max(0, Math.min(maxAllowed, newTime));
+
     setCurrentTime(clamped);
     setManualSlideIndex(null);
+    if (targetSegIdx !== undefined) {
+      setManualSegmentIndex(targetSegIdx);
+    } else {
+      setManualSegmentIndex(null);
+    }
+
+    const audio = audioRef.current;
+    if (audio) {
+      try {
+        audio.currentTime = clamped;
+      } catch {
+        // ignore if audio metadata not yet ready
+      }
+    }
   };
 
   const handleRateChange = () => {
@@ -281,7 +299,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         onPause={() => setIsPlaying(false)}
         onTimeUpdate={() => {
           if (audioRef.current) {
-            setCurrentTime(audioRef.current.currentTime);
+            const t = audioRef.current.currentTime;
+            setCurrentTime(t);
+            // 當音訊實際播放推進超過手動選取的區段結束時間時，自動交回時間軸控制
+            if (
+              manualSegmentIndex !== null &&
+              srtSegments[manualSegmentIndex] &&
+              (t < srtSegments[manualSegmentIndex].startSec ||
+                t >= srtSegments[manualSegmentIndex].endSec)
+            ) {
+              setManualSegmentIndex(null);
+            }
           }
         }}
         onLoadedMetadata={() => {
@@ -631,8 +659,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                           type="button"
                           disabled={activeParagraphIndex <= 0}
                           onClick={() => {
-                            const prevSeg = srtSegments[Math.max(0, activeParagraphIndex - 1)];
-                            if (prevSeg) handleSeek(prevSeg.startSec);
+                            const prevIdx = Math.max(0, activeParagraphIndex - 1);
+                            const prevSeg = srtSegments[prevIdx];
+                            if (prevSeg) handleSeek(prevSeg.startSec, prevIdx);
                           }}
                           className="px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-xs font-medium text-[#5C3A1B] flex items-center gap-1 cursor-pointer"
                         >
@@ -643,11 +672,12 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                           type="button"
                           disabled={activeParagraphIndex >= srtSegments.length - 1}
                           onClick={() => {
-                            const nextSeg =
-                              srtSegments[
-                                Math.min(srtSegments.length - 1, activeParagraphIndex + 1)
-                              ];
-                            if (nextSeg) handleSeek(nextSeg.startSec);
+                            const nextIdx = Math.min(
+                              srtSegments.length - 1,
+                              activeParagraphIndex + 1
+                            );
+                            const nextSeg = srtSegments[nextIdx];
+                            if (nextSeg) handleSeek(nextSeg.startSec, nextIdx);
                           }}
                           className="px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-xs font-medium text-[#5C3A1B] flex items-center gap-1 cursor-pointer"
                         >

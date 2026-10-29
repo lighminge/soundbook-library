@@ -11,10 +11,8 @@ import {
   FileText,
   CheckCircle2,
   HardDrive,
-  Sparkles,
   Clock,
   FolderOpen,
-  Save,
   X,
   AlertTriangle,
   Loader2,
@@ -162,6 +160,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [itemPendingDelete, setItemPendingDelete] = useState<AudioItem | null>(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
 
+  // 即時儲存狀態指示器 ('idle' | 'saving' | 'saved')
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('saved');
+  const autoSaveTimerRef = useRef<number | null>(null);
+
   // 將編輯器中的 Google Drive 語音檔自動解析為瀏覽器 100% 可直接播放的 Blob/Data URL
   const { playableUrl: playableEditorAudioUrl, isLoadingAudio: isEditorAudioLoading } =
     usePlayableAudioUrl(audioUrl, audioDriveFileId, fetchAudioBlobFromGoogleDrive, formId);
@@ -186,6 +188,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   }, [defaultUploadCategoryId]);
 
   const loadItemIntoEditor = (item: AudioItem) => {
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     setFormId(item.id);
     setTitle(item.title);
     setCategoryId(item.categoryId);
@@ -198,6 +204,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setItemCreatedAt(item.createdAt || new Date().toISOString());
     setItemFileSize(item.fileSize);
     setItemMimeType(item.mimeType);
+    setAutoSaveStatus('saved');
 
     const parsedSegments = parseSrtContent(
       item.playbackDisplay.textContent || '',
@@ -223,7 +230,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 立即將目前編輯器中的變更寫入 Firebase Firestore (解決新增圖片或修改區段後未同步存入 Firebase 的問題)
+   * 立即將目前編輯器中的變更寫入 Firebase Firestore (每個區域單獨修改後皆即時儲存)
    */
   const autoPersistToFirebase = async (
     overrideSegments?: SrtSegment[],
@@ -232,20 +239,29 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     overrideCoverDriveId?: string,
     overrideAudioUrl?: string,
     overrideAudioDriveId?: string,
-    overrideDuration?: number
+    overrideDuration?: number,
+    overrideMeta?: {
+      title?: string;
+      categoryId?: string;
+      description?: string;
+    }
   ) => {
     if (!formId) return;
+    setAutoSaveStatus('saving');
     const finalSegments = overrideSegments ?? srtSegments;
     const finalSlides = syncSlidesWithSrtSegments(
       overrideSlides ?? slides,
       finalSegments
     );
+    const finalTitle = (overrideMeta?.title ?? title).trim() || '未命名語音館藏';
+    const finalCategoryId = overrideMeta?.categoryId ?? categoryId;
+    const finalDescription = (overrideMeta?.description ?? description).trim();
 
     const itemToSave: AudioItem = {
       id: formId,
-      title: title.trim() || '未命名語音館藏',
-      categoryId,
-      description: description.trim(),
+      title: finalTitle,
+      categoryId: finalCategoryId,
+      description: finalDescription,
       duration: overrideDuration ?? (Number(duration) || 20),
       ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
       ...(itemMimeType ? { mimeType: itemMimeType } : {}),
@@ -266,6 +282,41 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     };
 
     await onSaveAudioItem(itemToSave);
+    setAutoSaveStatus('saved');
+  };
+
+  /**
+   * 當使用者在區塊 1 (標題/說明) 或區塊 2 (封面圖網址) 輸入時，防抖動 (600ms) 自動即時儲存至 Firebase
+   */
+  const scheduleMetaAutoSave = (
+    nextMeta: {
+      title?: string;
+      categoryId?: string;
+      description?: string;
+      coverImageUrl?: string;
+    }
+  ) => {
+    if (!formId) return;
+    setAutoSaveStatus('saving');
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      autoPersistToFirebase(
+        undefined,
+        undefined,
+        nextMeta.coverImageUrl,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          title: nextMeta.title,
+          categoryId: nextMeta.categoryId,
+          description: nextMeta.description,
+        }
+      );
+    }, 600);
   };
 
   /**
@@ -729,53 +780,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     )} --> ${secondsToSrtTime(endSec)}]`;
   };
 
-  const handleSaveEditorForm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-
-    const syncedSlides = syncSlidesWithSrtSegments(slides, srtSegments);
-    const serializedSrt = serializeSrtSegments(srtSegments);
-    const firstRange = getCaptionForSegmentRange(srtSegments, 1, 1);
-
-    const updatedItem: AudioItem = {
-      id: formId || `audio_${Date.now()}`,
-      title: title.trim(),
-      categoryId,
-      description: description.trim(),
-      duration: Number(duration) || 20,
-      ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
-      ...(itemMimeType ? { mimeType: itemMimeType } : {}),
-      ...(audioDriveFileId ? { audioDriveFileId } : {}),
-      audioUrl,
-      ...(coverImageDriveId ? { coverImageDriveId } : {}),
-      coverImageUrl: coverImageUrl || DEFAULT_COVER_IMAGES[0],
-      playbackDisplay: {
-        textContent: serializedSrt,
-        slides:
-          syncedSlides.length > 0
-            ? syncedSlides
-            : [
-                {
-                  id: `slide_default_${Date.now()}`,
-                  imageUrl: coverImageUrl || DEFAULT_COVER_IMAGES[0],
-                  caption: firstRange.caption || title.trim(),
-                  timestampSec: firstRange.startSec,
-                  endTimestampSec: firstRange.endSec,
-                  startSegmentIndex: 1,
-                  endSegmentIndex: 1,
-                },
-              ],
-      },
-      createdAt: itemCreatedAt || editingItem?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await onSaveAudioItem(updatedItem);
-    showToast('✅ 語音檔案、SRT 時間區段與播放圖片設定已全部儲存至 Firebase！');
-    onClearEditing();
-    setActiveSubTab('list');
-  };
-
   const filteredList =
     filterCategoryId === 'all'
       ? audioItems
@@ -809,6 +813,41 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3.5 rounded-xl bg-[#2E5A44] text-white shadow-2xl border border-emerald-400/30 animate-bounce max-w-md">
           <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
           <span className="text-sm font-medium">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* 2b. 固定於當前畫面正中央的上傳檔案進度條視窗 Modal */}
+      {isUploading && (
+        <div className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full p-6 border-2 border-[#8B5A2B] shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#8B5A2B]/15 border border-[#8B5A2B]/30 flex items-center justify-center shrink-0">
+                <HardDrive className="w-6 h-6 animate-spin text-[#8B5A2B]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h4 className="font-bold font-serif-tc text-base text-[#2C221E]">
+                  雲端檔案上傳與同步中
+                </h4>
+                <p className="text-xs text-[#6E5D4F] truncate mt-0.5">
+                  {uploadStatusText || '正在上傳檔案至 Google 雲端硬碟...'}
+                </p>
+              </div>
+              <span className="font-mono text-lg font-bold text-[#8B5A2B] shrink-0">
+                {uploadProgress}%
+              </span>
+            </div>
+
+            <div className="w-full h-3.5 rounded-full bg-[#E5D9C5] overflow-hidden p-0.5 border border-[#D5C5AE]">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-[#8B5A2B] to-[#2E5A44] transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+
+            <p className="text-[11px] text-center text-[#7A6855]">
+              請稍候，上傳完成後系統將自動即時儲存至雲端硬碟與 Firebase 資料庫
+            </p>
+          </div>
         </div>
       )}
 
@@ -854,25 +893,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
           )}
         </div>
       </div>
-
-      {/* 上傳進度橫幅 */}
-      {isUploading && (
-        <div className="parchment-card rounded-2xl p-5 border-2 border-[#8B5A2B] shadow-lg space-y-2">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#5C3A1B]">
-            <span className="flex items-center gap-2">
-              <HardDrive className="w-4 h-4 animate-spin text-[#8B5A2B]" />
-              {uploadStatusText}
-            </span>
-            <span>{uploadProgress}%</span>
-          </div>
-          <div className="w-full h-2.5 rounded-full bg-[#E5D9C5] overflow-hidden">
-            <div
-              className="h-full bg-[#8B5A2B] transition-all duration-300"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-        </div>
-      )}
 
       {activeSubTab === 'list' ? (
         <div className="space-y-8">
@@ -1097,20 +1117,41 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
           </div>
         </div>
       ) : (
-        /* 功能 b-(2)：語音檔案完整編輯器 */
-        <form onSubmit={handleSaveEditorForm} className="space-y-6">
+        /* 功能 b-(2)：語音檔案完整編輯器 (2a: 每個區域修改皆即時儲存，無須儲存全部變更按鈕) */
+        <div className="space-y-6">
           <div className="parchment-card rounded-2xl p-6 shadow-lg space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E5D9C5] pb-4">
               <div>
                 <span className="text-xs font-semibold text-[#8B5A2B] uppercase tracking-wider">
-                  AUDIO ITEM EDITOR · 館藏語音全功能編輯器
+                  AUDIO ITEM EDITOR · 館藏語音全功能編輯器（各區塊獨立即時儲存）
                 </span>
                 <h3 className="text-xl font-bold font-serif-tc text-[#2C221E] mt-0.5">
                   編輯語音檔：{title || '未命名語音'}
                 </h3>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* 即時儲存狀態標章 */}
+                <div
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border ${
+                    autoSaveStatus === 'saving'
+                      ? 'bg-amber-50 text-[#8B5A2B] border-amber-300'
+                      : 'bg-emerald-50 text-[#2E5A44] border-emerald-200'
+                  }`}
+                >
+                  {autoSaveStatus === 'saving' ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#8B5A2B]" />
+                      <span>正在即時儲存變更至雲端...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-[#2E5A44]" />
+                      <span>所有區塊修改皆已即時儲存</span>
+                    </>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -1120,14 +1161,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   className="px-4 py-2 rounded-xl border border-[#D5C5AE] text-xs font-medium text-[#5C3A1B] hover:bg-[#EFE6D5] cursor-pointer flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
-                  <span>返回列表</span>
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold shadow-md cursor-pointer flex items-center gap-1.5"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>儲存全部變更</span>
+                  <span>返回館藏列表</span>
                 </button>
               </div>
             </div>
@@ -1135,9 +1169,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             {/* 第一與第二區塊：基本資訊 & 封面圖 */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-7 space-y-4">
-                <h4 className="font-bold font-serif-tc text-base text-[#3A2518] border-l-4 border-[#8B5A2B] pl-3">
-                  1. 語音檔名、分類與說明內容
-                </h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold font-serif-tc text-base text-[#3A2518] border-l-4 border-[#8B5A2B] pl-3">
+                    1. 語音檔名、分類與說明內容
+                  </h4>
+                  <span className="text-[11px] text-[#2E5A44] font-medium">
+                    ✓ 修改後自動即時儲存
+                  </span>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="sm:col-span-2">
@@ -1148,7 +1187,27 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       type="text"
                       required
                       value={title}
-                      onChange={(e) => setTitle(e.target.value)}
+                      onChange={(e) => {
+                        const nextTitle = e.target.value;
+                        setTitle(nextTitle);
+                        scheduleMetaAutoSave({ title: nextTitle });
+                      }}
+                      onBlur={() => {
+                        if (autoSaveTimerRef.current) {
+                          window.clearTimeout(autoSaveTimerRef.current);
+                          autoSaveTimerRef.current = null;
+                        }
+                        autoPersistToFirebase(
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          { title }
+                        );
+                      }}
                       placeholder="請輸入語音標題..."
                       className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm font-medium focus:outline-none focus:border-[#8B5A2B]"
                     />
@@ -1160,7 +1219,21 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     </label>
                     <select
                       value={categoryId}
-                      onChange={(e) => setCategoryId(e.target.value)}
+                      onChange={async (e) => {
+                        const nextCatId = e.target.value;
+                        setCategoryId(nextCatId);
+                        await autoPersistToFirebase(
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          { categoryId: nextCatId }
+                        );
+                        showToast('✅ 已即時更新所屬圖書館分類！');
+                      }}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm font-medium focus:outline-none focus:border-[#8B5A2B]"
                     >
                       {categories.map((cat) => (
@@ -1179,7 +1252,27 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   <textarea
                     rows={3}
                     value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    onChange={(e) => {
+                      const nextDesc = e.target.value;
+                      setDescription(nextDesc);
+                      scheduleMetaAutoSave({ description: nextDesc });
+                    }}
+                    onBlur={() => {
+                      if (autoSaveTimerRef.current) {
+                        window.clearTimeout(autoSaveTimerRef.current);
+                        autoSaveTimerRef.current = null;
+                      }
+                      autoPersistToFirebase(
+                        undefined,
+                        undefined,
+                        undefined,
+                        undefined,
+                        undefined,
+                        undefined,
+                        undefined,
+                        { description }
+                      );
+                    }}
                     placeholder="輸入這段語音的背景說明、錄製者或摘要介紹..."
                     className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm focus:outline-none focus:border-[#8B5A2B]"
                   />
@@ -1222,9 +1315,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
               {/* 第二區塊：封面圖設定 */}
               <div className="lg:col-span-5 space-y-4">
-                <h4 className="font-bold font-serif-tc text-base text-[#3A2518] border-l-4 border-[#8B5A2B] pl-3">
-                  2. 語音檔案封面圖 (Cover Image)
-                </h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold font-serif-tc text-base text-[#3A2518] border-l-4 border-[#8B5A2B] pl-3">
+                    2. 語音檔案封面圖 (Cover Image)
+                  </h4>
+                  <span className="text-[11px] text-[#2E5A44] font-medium">
+                    ✓ 修改後自動即時儲存
+                  </span>
+                </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 items-center p-4 rounded-xl bg-white border border-[#E2D5C1]">
                   <img
@@ -1250,12 +1348,27 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
                     <div>
                       <label className="block text-[11px] text-[#7A6855] mb-1">
-                        或直接貼上封面圖片網址：
+                        或直接貼上封面圖片網址（輸入後自動即時儲存）：
                       </label>
                       <input
                         type="url"
                         value={coverImageUrl}
-                        onChange={(e) => setCoverImageUrl(e.target.value)}
+                        onChange={(e) => {
+                          const nextUrl = e.target.value;
+                          setCoverImageUrl(nextUrl);
+                          scheduleMetaAutoSave({ coverImageUrl: nextUrl });
+                        }}
+                        onBlur={() => {
+                          if (autoSaveTimerRef.current) {
+                            window.clearTimeout(autoSaveTimerRef.current);
+                            autoSaveTimerRef.current = null;
+                          }
+                          autoPersistToFirebase(
+                            undefined,
+                            undefined,
+                            coverImageUrl
+                          );
+                        }}
                         placeholder="https://..."
                         className="w-full px-3 py-1.5 rounded-lg border border-[#D5C5AE] text-xs focus:outline-none focus:border-[#8B5A2B]"
                       />
@@ -1970,28 +2083,26 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
               </div>
             </div>
 
-            {/* 底部儲存按鈕列 */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E5D9C5]">
+            {/* 底部即時儲存狀態提示與返回列表列 */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#E5D9C5]">
+              <span className="text-xs text-[#2E5A44] font-medium flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>上方 1 ~ 4 各區域所做的任何修改皆已即時自動儲存至 Firebase 雲端資料庫</span>
+              </span>
               <button
                 type="button"
                 onClick={() => {
                   onClearEditing();
                   setActiveSubTab('list');
                 }}
-                className="px-5 py-2.5 rounded-xl border border-[#D5C5AE] text-xs font-semibold text-[#5C3A1B] hover:bg-[#EFE6D5] cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-[#3A2518] hover:bg-[#27180F] text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5 shadow-sm"
               >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-6 py-2.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-sm font-semibold shadow-md cursor-pointer flex items-center gap-2"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>儲存語音檔案設定</span>
+                <FolderOpen className="w-4 h-4" />
+                <span>完成並返回館藏列表</span>
               </button>
             </div>
           </div>
-        </form>
+        </div>
       )}
 
       {/* ========================================================================
