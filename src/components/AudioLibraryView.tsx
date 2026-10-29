@@ -190,6 +190,48 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     }
   }, [defaultUploadCategoryId]);
 
+  /**
+   * 取得目前已設定的播放圖片所佔用的所有 SRT 時間區段序號集合
+   */
+  const getUsedSegmentIndicesSet = (currentSlides: PlaybackSlide[]): Set<number> => {
+    const used = new Set<number>();
+    for (const sl of currentSlides) {
+      const s = sl.startSegmentIndex || 1;
+      const e = sl.endSegmentIndex || s;
+      const low = Math.min(s, e);
+      const high = Math.max(s, e);
+      for (let idx = low; idx <= high; idx++) {
+        used.add(idx);
+      }
+    }
+    return used;
+  };
+
+  /**
+   * 找出目前尚未被任何圖片選取使用的 SRT 時間區段中，序號最小的那一個
+   */
+  const getSmallestUnusedSegmentIndex = (
+    segments: SrtSegment[],
+    currentSlides: PlaybackSlide[]
+  ): number => {
+    if (segments.length === 0) return 1;
+    const used = getUsedSegmentIndicesSet(currentSlides);
+    for (const seg of segments) {
+      if (!used.has(seg.index)) {
+        return seg.index;
+      }
+    }
+    // 若所有時間區段都已被選取使用，則預設選取最後一個區段（或第 1 區段）
+    return segments[segments.length - 1]?.index || 1;
+  };
+
+  // 當 SRT 時間區段或已設定的圖片清單變動時，步驟 2 自動選取「尚未被選取的時間區段中最小的那一個」
+  useEffect(() => {
+    const smallestUnused = getSmallestUnusedSegmentIndex(srtSegments, slides);
+    setNewSlideStartSegIdx(smallestUnused);
+    setNewSlideEndSegIdx(smallestUnused);
+  }, [srtSegments, slides]);
+
   const loadItemIntoEditor = (item: AudioItem) => {
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -228,8 +270,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setPendingSlideFile(null);
     setPendingSlidePreviewUrl('');
     setNewSlideUrlInput('');
-    setNewSlideStartSegIdx(1);
-    setNewSlideEndSegIdx(1);
+
+    const smallestUnused = getSmallestUnusedSegmentIndex(initialSegments, syncedSlides);
+    setNewSlideStartSegIdx(smallestUnused);
+    setNewSlideEndSegIdx(smallestUnused);
   };
 
   /**
@@ -464,8 +508,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       setSrtSegments(parsed);
       setSlides(syncedSlides);
       setEditingSegmentId(null);
-      setNewSlideStartSegIdx(1);
-      setNewSlideEndSegIdx(1);
+      const smallestUnused = getSmallestUnusedSegmentIndex(parsed, syncedSlides);
+      setNewSlideStartSegIdx(smallestUnused);
+      setNewSlideEndSegIdx(smallestUnused);
 
       await autoPersistToFirebase(parsed, syncedSlides);
       showToast(
@@ -825,6 +870,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     editSlideStartSegIdx,
     editSlideEndSegIdx
   );
+
+  // 計算目前已被圖片選取使用的 SRT 區段集合，以及尚未被選取的最小區段序號
+  const usedSegmentIndicesSet = getUsedSegmentIndicesSet(slides);
+  const smallestUnusedSegIdx = getSmallestUnusedSegmentIndex(srtSegments, slides);
+  const hasUnusedSegment = srtSegments.some((seg) => !usedSegmentIndicesSet.has(seg.index));
 
   return (
     <div className="space-y-6 pb-12">
@@ -1747,6 +1797,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                                   URL.revokeObjectURL(pendingSlidePreviewUrl);
                                 setPendingSlideFile(f);
                                 setPendingSlidePreviewUrl(URL.createObjectURL(f));
+                                const nextSmallest = getSmallestUnusedSegmentIndex(
+                                  srtSegments,
+                                  slides
+                                );
+                                setNewSlideStartSegIdx(nextSmallest);
+                                setNewSlideEndSegIdx(nextSmallest);
                               }
                               e.target.value = '';
                             }}
@@ -1756,7 +1812,18 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         <input
                           type="url"
                           value={newSlideUrlInput}
-                          onChange={(e) => setNewSlideUrlInput(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNewSlideUrlInput(val);
+                            if (val.trim()) {
+                              const nextSmallest = getSmallestUnusedSegmentIndex(
+                                srtSegments,
+                                slides
+                              );
+                              setNewSlideStartSegIdx(nextSmallest);
+                              setNewSlideEndSegIdx(nextSmallest);
+                            }
+                          }}
                           placeholder="或直接貼上外部圖片網址 https://..."
                           className="w-full px-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs"
                         />
@@ -1766,9 +1833,24 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
                   {/* 步驟 2：選取要放入的起迄 SRT 時間區段範圍 */}
                   <div className="space-y-2 pt-2 border-t border-[#DFCEB4]">
-                    <label className="block text-xs font-bold text-[#2B4C7E]">
-                      步驟 2：選取此圖片要放入的「起迄 SRT 時間區段範圍」*
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="block text-xs font-bold text-[#2B4C7E]">
+                        步驟 2：選取此圖片要放入的「起迄 SRT 時間區段範圍」*
+                      </label>
+                      {srtSegments.length > 0 && (
+                        <span
+                          className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                            hasUnusedSegment
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-amber-100 text-amber-800 border border-amber-200'
+                          }`}
+                        >
+                          {hasUnusedSegment
+                            ? `✓ 已自動選取尚未被使用的最小區段 #${smallestUnusedSegIdx}`
+                            : '所有時間區段皆已有圖片使用'}
+                        </span>
+                      )}
+                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -1786,12 +1868,16 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           }}
                           className="w-full px-2.5 py-2 rounded-lg border border-[#C8B598] bg-white text-xs font-medium text-[#2C221E]"
                         >
-                          {srtSegments.map((seg) => (
-                            <option key={seg.id} value={seg.index}>
-                              #{seg.index} [{secondsToSrtTime(seg.startSec)}] —{' '}
-                              {(seg.text || '').replace(/\n/g, ' ').slice(0, 18)}
-                            </option>
-                          ))}
+                          {srtSegments.map((seg) => {
+                            const isUsed = usedSegmentIndicesSet.has(seg.index);
+                            return (
+                              <option key={seg.id} value={seg.index}>
+                                #{seg.index} {isUsed ? '(已被選取)' : '(尚未選取)'} [
+                                {secondsToSrtTime(seg.startSec)}] —{' '}
+                                {(seg.text || '').replace(/\n/g, ' ').slice(0, 16)}
+                              </option>
+                            );
+                          })}
                         </select>
                       </div>
 
@@ -1809,12 +1895,16 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         >
                           {srtSegments
                             .filter((seg) => seg.index >= newSlideStartSegIdx)
-                            .map((seg) => (
-                              <option key={seg.id} value={seg.index}>
-                                #{seg.index} [至 {secondsToSrtTime(seg.endSec)}] —{' '}
-                                {(seg.text || '').replace(/\n/g, ' ').slice(0, 18)}
-                              </option>
-                            ))}
+                            .map((seg) => {
+                              const isUsed = usedSegmentIndicesSet.has(seg.index);
+                              return (
+                                <option key={seg.id} value={seg.index}>
+                                  #{seg.index} {isUsed ? '(已被選取)' : '(尚未選取)'} [至{' '}
+                                  {secondsToSrtTime(seg.endSec)}] —{' '}
+                                  {(seg.text || '').replace(/\n/g, ' ').slice(0, 16)}
+                                </option>
+                              );
+                            })}
                         </select>
                       </div>
                     </div>
