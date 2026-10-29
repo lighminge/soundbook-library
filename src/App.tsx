@@ -253,6 +253,7 @@ export function App() {
               setEditingAudioItem(item);
               setActiveTab('library');
             }}
+            onSaveAudioItem={handleSaveAudioItem}
           />
         )}
 
