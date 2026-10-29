@@ -126,6 +126,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [batchMode, setBatchMode] = useState<'add' | 'subtract' | 'insert_gap'>('add');
   const [batchSeconds, setBatchSeconds] = useState<number>(2);
 
+  // 「刪除所有時間區段」確認視窗 Modal 狀態
+  const [showDeleteAllSegmentsModal, setShowDeleteAllSegmentsModal] = useState<boolean>(false);
+
   // ============================================================================
   // 區塊 4：播放時的圖片顯示
   // (1a: 先選取圖片 -> 再選取起迄 SRT 時間區段範圍；1b: 新增後立即寫入 Firebase；1c: 圖說文字即為 SRT 內容)
@@ -425,6 +428,23 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     }
     await autoPersistToFirebase(remaining, syncedSlides);
     showToast(`已移除第 #${targetIdx + 1} 時間區段，並已同步更新至 Firebase。`);
+  };
+
+  /**
+   * 確認一次刪除所有 SRT 時間區段，並即時同步儲存至 Firebase
+   */
+  const handleConfirmDeleteAllSegments = async () => {
+    const count = srtSegments.length;
+    const syncedSlides = syncSlidesWithSrtSegments(slides, []);
+    setSrtSegments([]);
+    setSlides(syncedSlides);
+    setEditingSegmentId(null);
+    setNewSlideStartSegIdx(1);
+    setNewSlideEndSegIdx(1);
+    setShowDeleteAllSegmentsModal(false);
+
+    await autoPersistToFirebase([], syncedSlides);
+    showToast(`✅ 已刪除全部 ${count} 個時間區段，並已即時同步儲存至 Firebase！`);
   };
 
   /**
@@ -1435,6 +1455,22 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         }}
                       />
                     </label>
+
+                    {/* 刪除所有時間區段按鈕 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (srtSegments.length === 0) {
+                          showToast('目前尚無任何時間區段可刪除！');
+                          return;
+                        }
+                        setShowDeleteAllSegmentsModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-red-700/15 hover:bg-red-700 text-red-800 hover:text-white border border-red-700/30 text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>刪除所有時間區段</span>
+                    </button>
                   </div>
                 </div>
 
@@ -2245,6 +2281,69 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 >
                   <Check className="w-4 h-4" />
                   <span>確認執行批次修改</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 圖書館典藏風格：「刪除所有時間區段」確認視窗 Modal */}
+      {showDeleteAllSegmentsModal && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#3A2218] to-[#522D20] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-300/30 flex items-center justify-center text-red-200">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  刪除所有時間區段確認
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllSegmentsModal(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-[#3A2D25] leading-relaxed">
+                確定要將「<strong>{title || '目前語音館藏'}</strong>」中全部{' '}
+                <strong className="text-red-700 font-mono">{srtSegments.length}</strong>{' '}
+                筆 SRT 時間區段與文字內容一次清空嗎？
+              </p>
+
+              <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] space-y-1.5 text-xs text-[#5C4938]">
+                <div className="flex items-center gap-2 font-semibold text-[#3A2518]">
+                  <FileText className="w-4 h-4 text-[#8B5A2B] shrink-0" />
+                  <span>即將清除的內容摘要：</span>
+                </div>
+                <ul className="list-disc list-inside pl-1 space-y-0.5 text-[11px] text-[#7A5835]">
+                  <li>共 {srtSegments.length} 個 SRT 時間段落與對應講稿文字</li>
+                  <li>確認刪除後將立即同步儲存至 Firebase 雲端資料庫</li>
+                  <li>刪除後您仍可隨時重新「匯入SRT檔案」或手動新增區段</li>
+                </ul>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteAllSegmentsModal(false)}
+                  className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] transition cursor-pointer"
+                >
+                  保留時間區段 (取消)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteAllSegments}
+                  className="px-5 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>確認刪除所有時間區段</span>
                 </button>
               </div>
             </div>
