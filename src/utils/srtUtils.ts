@@ -1,3 +1,5 @@
+import { PlaybackSlide } from '../types';
+
 export interface SrtSegment {
   id: string;
   index: number; // 1-based 序號
@@ -303,4 +305,145 @@ export function insertSegmentAt(
 
   list.splice(clampedIdx, 0, newSeg);
   return reindexSegments(list);
+}
+
+/**
+ * 批次修改所有時間區段的秒數：
+ * - 'add': 全部區段時間增加 N 秒
+ * - 'subtract': 全部區段時間減少 N 秒 (最低為 0 秒)
+ * - 'insert_gap': 在每個時間區段中間加入 N 秒的空白間隔
+ */
+export function batchModifySegments(
+  segments: SrtSegment[],
+  mode: 'add' | 'subtract' | 'insert_gap',
+  secondsValue: number
+): SrtSegment[] {
+  const val = Math.max(0, Number(secondsValue) || 0);
+  if (val === 0 || segments.length === 0) return segments;
+
+  const list = segments.map((s) => ({ ...s }));
+
+  if (mode === 'add') {
+    for (let i = 0; i < list.length; i++) {
+      list[i].startSec = Math.round((list[i].startSec + val) * 1000) / 1000;
+      list[i].endSec = Math.round((list[i].endSec + val) * 1000) / 1000;
+    }
+  } else if (mode === 'subtract') {
+    for (let i = 0; i < list.length; i++) {
+      const dur = Math.max(0.5, list[i].endSec - list[i].startSec);
+      const newStart = Math.max(0, Math.round((list[i].startSec - val) * 1000) / 1000);
+      const rawEnd = Math.round((list[i].endSec - val) * 1000) / 1000;
+      list[i].startSec = newStart;
+      list[i].endSec = rawEnd > newStart ? rawEnd : Math.round((newStart + dur) * 1000) / 1000;
+    }
+  } else if (mode === 'insert_gap') {
+    for (let i = 1; i < list.length; i++) {
+      const dur = Math.max(0.5, list[i].endSec - list[i].startSec);
+      const shift = i * val;
+      const candidateStart = Math.round((list[i].startSec + shift) * 1000) / 1000;
+      const minStartAfterPrev = Math.round((list[i - 1].endSec + val) * 1000) / 1000;
+      const finalStart = Math.max(candidateStart, minStartAfterPrev);
+      list[i].startSec = finalStart;
+      list[i].endSec = Math.round((finalStart + dur) * 1000) / 1000;
+    }
+  }
+
+  return reindexSegments(list);
+}
+
+/**
+ * 依據選取的起迄 SRT 區段序號 (1-based)，自動組合對應的 SRT 文字作為「圖說文字 (caption)」
+ */
+export function getCaptionForSegmentRange(
+  segments: SrtSegment[],
+  startIndex1Based: number,
+  endIndex1Based: number
+): {
+  caption: string;
+  startSec: number;
+  endSec: number;
+  startIdx: number;
+  endIdx: number;
+} {
+  if (!segments || segments.length === 0) {
+    return {
+      caption: '',
+      startSec: 0,
+      endSec: 5,
+      startIdx: 1,
+      endIdx: 1,
+    };
+  }
+
+  const sIdx = Math.max(1, Math.min(segments.length, startIndex1Based || 1));
+  const eIdx = Math.max(sIdx, Math.min(segments.length, endIndex1Based || sIdx));
+
+  const startSeg = segments[sIdx - 1];
+  const endSeg = segments[eIdx - 1];
+
+  const selectedTexts = segments
+    .slice(sIdx - 1, eIdx)
+    .map((seg) => seg.text.trim())
+    .filter(Boolean);
+
+  return {
+    caption: selectedTexts.join('\n').slice(0, 4500),
+    startSec: startSeg.startSec,
+    endSec: endSeg.endSec,
+    startIdx: sIdx,
+    endIdx: eIdx,
+  };
+}
+
+/**
+ * 當匯入 SRT、修改 SRT 內容或批次修改時間區段時，
+ * 自動同步更新所有「播放時圖片 (slides)」的起迄秒數與圖說文字（圖說文字即為 SRT 區段內容）！
+ */
+export function syncSlidesWithSrtSegments(
+  slides: PlaybackSlide[],
+  segments: SrtSegment[]
+): PlaybackSlide[] {
+  if (!segments || segments.length === 0) return slides;
+
+  return slides
+    .map((sl) => {
+      // 若圖片已有明確綁定 startSegmentIndex / endSegmentIndex
+      if (sl.startSegmentIndex) {
+        const rangeInfo = getCaptionForSegmentRange(
+          segments,
+          sl.startSegmentIndex,
+          sl.endSegmentIndex || sl.startSegmentIndex
+        );
+        return {
+          ...sl,
+          timestampSec: rangeInfo.startSec,
+          endTimestampSec: rangeInfo.endSec,
+          startSegmentIndex: rangeInfo.startIdx,
+          endSegmentIndex: rangeInfo.endIdx,
+          caption: rangeInfo.caption || sl.caption,
+        };
+      }
+
+      // 若為既有圖片（尚未有 startSegmentIndex），自動尋找最接近其 timestampSec 的 SRT 區段進行綁定
+      let bestIdx = 1;
+      let minDiff = Infinity;
+      for (let i = 0; i < segments.length; i++) {
+        const diff = Math.abs(segments[i].startSec - sl.timestampSec);
+        if (diff < minDiff) {
+          minDiff = diff;
+          bestIdx = i + 1;
+        }
+      }
+
+      const rangeInfo = getCaptionForSegmentRange(segments, bestIdx, bestIdx);
+      return {
+        ...sl,
+        timestampSec: rangeInfo.startSec,
+        endTimestampSec: rangeInfo.endSec,
+        startSegmentIndex: rangeInfo.startIdx,
+        endSegmentIndex: rangeInfo.endIdx,
+        caption: rangeInfo.caption || sl.caption,
+      };
+    })
+    .sort((a, b) => a.timestampSec - b.timestampSec);
 }

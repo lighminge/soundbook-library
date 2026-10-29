@@ -13,8 +13,11 @@ export interface PlaybackSlide {
   id: string;
   imageDriveId?: string;
   imageUrl: string;
-  caption: string;
-  timestampSec: number; // 對應播放秒數 (0 代表全程或起始)
+  caption: string; // 自動對應 SRT 時間區段的文字內容
+  timestampSec: number; // 起始秒數
+  endTimestampSec?: number; // 結束秒數
+  startSegmentIndex?: number; // 起始 SRT 區段序號 (1-based)
+  endSegmentIndex?: number; // 結束 SRT 區段序號 (1-based)
 }
 
 export interface PlaybackDisplay {

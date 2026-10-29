@@ -157,9 +157,19 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         ]
       : [];
 
-  // 根據播放進度自動計算當前對應的投影片索引
+  // 根據播放進度自動計算當前對應的投影片索引 (支援起迄時間區段範圍)
   const autoSlideIndex = (() => {
     if (slides.length <= 1) return 0;
+    for (let i = 0; i < slides.length; i++) {
+      const sl = slides[i];
+      if (
+        sl.endTimestampSec !== undefined &&
+        currentTime >= sl.timestampSec &&
+        currentTime <= sl.endTimestampSec
+      ) {
+        return i;
+      }
+    }
     let idx = 0;
     for (let i = 0; i < slides.length; i++) {
       if (currentTime >= slides[i].timestampSec) {
@@ -180,19 +190,27 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     duration || currentItem?.duration || 20
   );
 
-  // 計算當前對應的 SRT 段落索引
+  // 計算當前對應的單一 SRT 段落索引 (當秒數到達時自動切換至下一筆區段，初始為第 1 筆)
   const activeParagraphIndex = (() => {
-    let idx = -1;
+    if (srtSegments.length === 0) return -1;
     for (let i = 0; i < srtSegments.length; i++) {
       if (currentTime >= srtSegments[i].startSec && currentTime <= srtSegments[i].endSec) {
         return i;
       }
+    }
+    let idx = 0;
+    for (let i = 0; i < srtSegments.length; i++) {
       if (currentTime >= srtSegments[i].startSec) {
         idx = i;
       }
     }
     return idx;
   })();
+
+  const activeSegment =
+    activeParagraphIndex >= 0 && activeParagraphIndex < srtSegments.length
+      ? srtSegments[activeParagraphIndex]
+      : null;
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -413,8 +431,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       </span>
                     )}
                   </div>
-                  <p className="text-sm md:text-base font-medium text-white">
-                    {activeSlide?.caption || currentItem.description}
+                  <p className="text-sm md:text-base font-medium text-white whitespace-pre-line line-clamp-2">
+                    {activeSegment?.text || activeSlide?.caption || currentItem.description}
                   </p>
                 </div>
 
@@ -547,7 +565,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     播放時的文字顯示與導讀講稿
                   </h3>
                   <p className="text-xs text-[#7A6855]">
-                    點擊任一段落可跳轉至對應播放秒數，亦可於「語音檔案庫」隨時編輯文字內容
+                    依播放秒數自動切換顯示當前時間區段內容
                   </p>
                 </div>
               </div>
@@ -584,64 +602,77 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               </p>
             </div>
 
-            {/* 播放時顯示的 SRT 文字段落 */}
-            <div className="space-y-3">
-              {srtSegments.length === 0 ? (
-                <p className="text-sm text-[#7A6855] italic py-4 text-center">
+            {/* 3a. 播放時顯示的 SRT 文字段落（一次只顯示一筆時間區段內容，當秒數到達時自動切換下一筆） */}
+            <div>
+              {!activeSegment ? (
+                <p className="text-sm text-[#7A6855] italic py-6 text-center">
                   此語音檔尚未設定「播放時的文字顯示」，可點擊右上角「編輯此語音圖文設定」新增。
                 </p>
               ) : (
-                srtSegments.map((seg, idx) => {
-                  const isActive = idx === activeParagraphIndex;
-                  return (
-                    <div
-                      key={seg.id}
-                      onClick={() => handleSeek(seg.startSec)}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-[#FFF9EE] border-[#8B5A2B] shadow-sm ring-1 ring-[#8B5A2B]/30'
-                          : 'bg-white/70 border-[#E8DEC8] hover:border-[#C8B598]'
+                <div className="p-6 rounded-2xl bg-[#FFF9EE] border-2 border-[#8B5A2B] shadow-md transition-all duration-300 space-y-4">
+                  {/* 頂部：當前區段序號、SRT 起迄時間與前後區段快速跳轉 */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E5D9C5]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2.5 py-1 rounded-md text-xs font-mono font-bold bg-[#3A2518] text-white">
+                        區段 #{activeSegment.index} / {srtSegments.length}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md text-xs font-mono font-semibold bg-[#8B5A2B] text-white">
+                        {secondsToSrtTime(activeSegment.startSec)} {'-->'}{' '}
+                        {secondsToSrtTime(activeSegment.endSec)}
+                      </span>
+                      <span className="text-xs font-medium text-[#8B5A2B] animate-pulse">
+                        ● 隨播放秒數自動切換
+                      </span>
+                    </div>
+
+                    {srtSegments.length > 1 && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={activeParagraphIndex <= 0}
+                          onClick={() => {
+                            const prevSeg = srtSegments[Math.max(0, activeParagraphIndex - 1)];
+                            if (prevSeg) handleSeek(prevSeg.startSec);
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-xs font-medium text-[#5C3A1B] flex items-center gap-1 cursor-pointer"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                          <span>上一區段</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={activeParagraphIndex >= srtSegments.length - 1}
+                          onClick={() => {
+                            const nextSeg =
+                              srtSegments[
+                                Math.min(srtSegments.length - 1, activeParagraphIndex + 1)
+                              ];
+                            if (nextSeg) handleSeek(nextSeg.startSec);
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-xs font-medium text-[#5C3A1B] flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>下一區段</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 單筆時間區段的文字內容 */}
+                  <div className="py-2 min-h-[96px] flex items-center">
+                    <p
+                      className={`text-[#2C221E] whitespace-pre-line leading-relaxed font-serif-tc w-full ${
+                        fontSize === 'sm'
+                          ? 'text-sm'
+                          : fontSize === 'lg'
+                          ? 'text-xl'
+                          : 'text-lg'
                       }`}
                     >
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span
-                          className={`px-2 py-0.5 rounded text-xs font-mono font-bold ${
-                            isActive
-                              ? 'bg-[#3A2518] text-white'
-                              : 'bg-[#EFE6D5] text-[#3A2518]'
-                          }`}
-                        >
-                          #{seg.index}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded text-xs font-mono font-semibold ${
-                            isActive
-                              ? 'bg-[#8B5A2B] text-white'
-                              : 'bg-[#EFE6D5] text-[#5C3A1B]'
-                          }`}
-                        >
-                          {secondsToSrtTime(seg.startSec)} {'-->'} {secondsToSrtTime(seg.endSec)}
-                        </span>
-                        {isActive && (
-                          <span className="text-xs font-medium text-[#8B5A2B]">
-                            ● 正在朗讀此區段
-                          </span>
-                        )}
-                      </div>
-                      <p
-                        className={`text-[#2C221E] whitespace-pre-line leading-relaxed font-serif-tc ${
-                          fontSize === 'sm'
-                            ? 'text-sm'
-                            : fontSize === 'lg'
-                            ? 'text-lg'
-                            : 'text-base'
-                        }`}
-                      >
-                        {seg.text}
-                      </p>
-                    </div>
-                  );
-                })
+                      {activeSegment.text}
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
           </div>

@@ -260,6 +260,9 @@ export async function deleteCategoryItem(categoryId: string, remainingCategories
 }
 
 export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Promise<void> {
+  // 移除所有 undefined 欄位，避免 Firebase setDoc 拋出 Unsupported field value: undefined 錯誤
+  const sanitizedItem: AudioItem = JSON.parse(JSON.stringify(item));
+
   try {
     localStorage.setItem(LOCAL_AUDIO_ITEMS_KEY, JSON.stringify(allItems));
   } catch (e) {
@@ -268,7 +271,7 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
 
   const db = getDbInstance();
   if (db) {
-    await setDoc(doc(db, 'audioItems', item.id), item);
+    await setDoc(doc(db, 'audioItems', sanitizedItem.id), sanitizedItem);
   }
 }
 
@@ -660,9 +663,9 @@ export async function uploadFileToGoogleDrive(
         }
 
         const isAudio = (file.type || '').startsWith('audio/');
-        // 若音檔 Base64 小於 850KB，直接內嵌 dataUrl；若大於 850KB，自動分片存入 Firestore audioChunks 讓手機端也能秒速跨裝置播放！
-        if (isAudio && dataUrl.length > 850000) {
-          onProgress?.(92, '正在建立手機跨裝置音訊串流快取...');
+        // 將所有上傳的音檔皆分片寫入 Firestore audioChunks，讓手機跨裝置秒播，同時保持 audioItems 主文件輕量不超載！
+        if (isAudio) {
+          onProgress?.(92, '正在同步跨裝置雲端音訊串流...');
           try {
             await saveAudioChunksToFirestore(
               result.fileId,
@@ -676,12 +679,9 @@ export async function uploadFileToGoogleDrive(
 
         onProgress?.(100, 'Google 雲端硬碟上傳完成！');
 
-        const safeDirectUrl =
-          isAudio && dataUrl.length <= 850000 ? dataUrl : result.directUrl;
-
         return {
           fileId: result.fileId,
-          directUrl: safeDirectUrl,
+          directUrl: result.directUrl,
           viewUrl: result.viewUrl,
           mode: 'google_drive',
         };

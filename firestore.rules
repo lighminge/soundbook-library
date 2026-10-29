@@ -39,8 +39,11 @@ rules_version = '2';
 //           - id: string (required, 1..128 chars)
 //           - imageDriveId: string (optional, 0..256 chars)
 //           - imageUrl: string (required, 1..950000 chars, valid http/https/data/blob URL)
-//           - caption: string (required, 0..500 chars)
+//           - caption: string (required, 0..5000 chars)
 //           - timestampSec: number (required, 0..86400)
+//           - endTimestampSec: number (optional, 0..86400)
+//           - startSegmentIndex: number (optional, 1..10000)
+//           - endSegmentIndex: number (optional, 1..10000)
 //   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
@@ -166,12 +169,15 @@ service cloud.firestore {
     function isValidPlaybackSlide(slide) {
       return slide is map &&
         slide.keys().hasAll(['id', 'imageUrl', 'caption', 'timestampSec']) &&
-        slide.keys().hasOnly(['id', 'imageDriveId', 'imageUrl', 'caption', 'timestampSec']) &&
+        slide.keys().hasOnly(['id', 'imageDriveId', 'imageUrl', 'caption', 'timestampSec', 'endTimestampSec', 'startSegmentIndex', 'endSegmentIndex']) &&
         slide.id is string && slide.id.size() >= 1 && slide.id.size() <= 128 &&
         (!('imageDriveId' in slide) || (slide.imageDriveId is string && slide.imageDriveId.size() <= 256)) &&
         isValidMediaUrl(slide.imageUrl) &&
-        slide.caption is string && slide.caption.size() <= 500 &&
-        slide.timestampSec is number && slide.timestampSec >= 0 && slide.timestampSec <= 86400;
+        slide.caption is string && slide.caption.size() <= 5000 &&
+        slide.timestampSec is number && slide.timestampSec >= 0 && slide.timestampSec <= 86400 &&
+        (!('endTimestampSec' in slide) || (slide.endTimestampSec is number && slide.endTimestampSec >= 0 && slide.endTimestampSec <= 86400)) &&
+        (!('startSegmentIndex' in slide) || (slide.startSegmentIndex is number && slide.startSegmentIndex >= 1 && slide.startSegmentIndex <= 10000)) &&
+        (!('endSegmentIndex' in slide) || (slide.endSegmentIndex is number && slide.endSegmentIndex >= 1 && slide.endSegmentIndex <= 10000));
     }
 
     // Validate the playbackDisplay map on an AudioItem
