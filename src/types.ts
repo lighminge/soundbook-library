@@ -30,6 +30,7 @@ export interface AudioItem {
   title: string;
   categoryId: string;
   description: string;
+  tags?: string[]; // 類別標籤（例如：['繪本', '小說', '童話', '科普']）
   duration: number; // 秒數
   fileSize?: number; // bytes
   mimeType?: string;

@@ -25,6 +25,7 @@ rules_version = '2';
 //   - id: string (required, immutable, 1..128 chars, must equal audioId) - Unique audio item identifier
 //   - title: string (required, 1..200 chars) - Audio book/recording title
 //   - categoryId: string (required, 1..128 chars) - Reference to categories/{categoryId}
+//   - tags: list (optional, 0..50 string items) - Category/genre tags for the audio item (e.g., ["繪本", "小說"])
 //   - description: string (required, 0..5000 chars) - Description and background notes
 //   - duration: number (required, 0..86400) - Audio duration in seconds
 //   - fileSize: number (optional, 0..1073741824) - File size in bytes
@@ -226,6 +227,7 @@ service cloud.firestore {
         'id',
         'title',
         'categoryId',
+        'tags',
         'description',
         'duration',
         'fileSize',
@@ -245,6 +247,7 @@ service cloud.firestore {
         validStringLength('id', 1, 128) &&
         validStringLength('title', 1, 200) &&
         validStringLength('categoryId', 1, 128) &&
+        (!('tags' in data) || (isValidList(data.tags, 50) && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 100)))) &&
         validStringLength('description', 0, 5000) &&
         data.duration is number && data.duration >= 0 && data.duration <= 86400 &&
         (!('fileSize' in data) || (data.fileSize is number && data.fileSize >= 0 && data.fileSize <= 1073741824)) &&

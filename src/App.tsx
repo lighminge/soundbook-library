@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Radio,
   FolderKanban,
+  Tags,
   Settings,
   Github,
   Database,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { AudioItem, Category } from './types';
 import {
+  deleteCategoryItem,
   isGoogleDriveConfigured,
   loadLibraryData,
   removeAudioItem,
@@ -20,9 +22,10 @@ import {
 import { DashboardView } from './components/DashboardView';
 import { ScreeningRoomView } from './components/ScreeningRoomView';
 import { AudioLibraryView } from './components/AudioLibraryView';
+import { CatalogManagementView } from './components/CatalogManagementView';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 
-type NavTab = 'dashboard' | 'screening' | 'library';
+type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
@@ -72,6 +75,72 @@ export function App() {
     const nextCats = [...categories, newCat];
     setCategories(nextCats);
     await saveCategoryItem(newCat, nextCats);
+  };
+
+  // 修改館藏分類
+  const handleUpdateCategory = async (updatedCat: Category) => {
+    const nextCats = categories.map((c) => (c.id === updatedCat.id ? updatedCat : c));
+    setCategories(nextCats);
+    await saveCategoryItem(updatedCat, nextCats);
+  };
+
+  // 移動館藏分類排列順序
+  const handleReorderCategories = async (nextCategories: Category[]) => {
+    setCategories(nextCategories);
+    await Promise.all(
+      nextCategories.map((cat) => saveCategoryItem(cat, nextCategories))
+    );
+  };
+
+  // 刪除館藏分類（並將該分類下的語音檔自動遷移至指定分類）
+  const handleDeleteCategory = async (
+    categoryId: string,
+    migrateToCategoryId?: string
+  ) => {
+    const remainingCats = categories
+      .filter((c) => c.id !== categoryId)
+      .map((c, idx) => ({ ...c, order: idx + 1 }));
+    setCategories(remainingCats);
+    await deleteCategoryItem(categoryId, remainingCats);
+
+    const fallbackCatId = migrateToCategoryId || remainingCats[0]?.id;
+    if (fallbackCatId) {
+      const affectedItems = audioItems.filter((a) => a.categoryId === categoryId);
+      if (affectedItems.length > 0) {
+        const nextItems = audioItems.map((a) =>
+          a.categoryId === categoryId
+            ? {
+                ...a,
+                categoryId: fallbackCatId,
+                updatedAt: new Date().toISOString(),
+              }
+            : a
+        );
+        setAudioItems(nextItems);
+        await Promise.all(
+          nextItems
+            .filter((a) => affectedItems.some((old) => old.id === a.id))
+            .map((item) => saveAudioItem(item, nextItems))
+        );
+      }
+    }
+  };
+
+  // 批次移動語音檔至指定館藏分類
+  const handleBatchMoveAudioCategory = async (
+    itemIds: string[],
+    targetCategoryId: string
+  ) => {
+    const idSet = new Set(itemIds);
+    const now = new Date().toISOString();
+    const nextItems = audioItems.map((a) =>
+      idSet.has(a.id)
+        ? { ...a, categoryId: targetCategoryId, updatedAt: now }
+        : a
+    );
+    setAudioItems(nextItems);
+    const updatedList = nextItems.filter((a) => idSet.has(a.id));
+    await Promise.all(updatedList.map((item) => saveAudioItem(item, nextItems)));
   };
 
   // 儲存（新增或更新）語音檔
@@ -162,6 +231,18 @@ export function App() {
               <FolderKanban className="w-4 h-4" />
               <span>3. 語音檔案庫 (上傳與編輯)</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('catalog')}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'catalog'
+                  ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
+                  : 'text-[#E6D7C3] hover:bg-white/10'
+              }`}
+            >
+              <Tags className="w-4 h-4" />
+              <span>4. 館藏資料管理</span>
+            </button>
           </nav>
 
           {/* 右側雲端連線設定按鈕 */}
@@ -206,6 +287,15 @@ export function App() {
         >
           <FolderKanban className="w-3.5 h-3.5" />
           <span>語音檔案庫</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('catalog')}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
+            activeTab === 'catalog' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
+          }`}
+        >
+          <Tags className="w-3.5 h-3.5" />
+          <span>館藏資料管理</span>
         </button>
       </div>
 
@@ -270,6 +360,27 @@ export function App() {
               setActiveTab('screening');
             }}
             onClearEditing={() => setEditingAudioItem(null)}
+          />
+        )}
+
+        {activeTab === 'catalog' && (
+          <CatalogManagementView
+            categories={categories}
+            audioItems={audioItems}
+            onAddCategory={handleAddCategory}
+            onUpdateCategory={handleUpdateCategory}
+            onReorderCategories={handleReorderCategories}
+            onDeleteCategory={handleDeleteCategory}
+            onSaveAudioItem={handleSaveAudioItem}
+            onBatchMoveAudioCategory={handleBatchMoveAudioCategory}
+            onPlayInScreeningRoom={(item) => {
+              setActiveAudioForPlayback(item);
+              setActiveTab('screening');
+            }}
+            onEditInAudioLibrary={(item) => {
+              setEditingAudioItem(item);
+              setActiveTab('library');
+            }}
           />
         )}
       </main>

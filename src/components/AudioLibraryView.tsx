@@ -111,6 +111,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [itemCreatedAt, setItemCreatedAt] = useState<string>('');
   const [itemFileSize, setItemFileSize] = useState<number | undefined>(undefined);
   const [itemMimeType, setItemMimeType] = useState<string | undefined>(undefined);
+  const [itemTags, setItemTags] = useState<string[]>([]);
 
   // ============================================================================
   // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段)
@@ -252,6 +253,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setItemCreatedAt(item.createdAt || new Date().toISOString());
     setItemFileSize(item.fileSize);
     setItemMimeType(item.mimeType);
+    setItemTags(item.tags || []);
     setAutoSaveStatus('saved');
 
     const parsedSegments = parseSrtContent(
@@ -312,6 +314,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       title: finalTitle,
       categoryId: finalCategoryId,
       description: finalDescription,
+      ...(itemTags.length > 0 ? { tags: itemTags } : {}),
       duration: overrideDuration ?? (Number(duration) || 20),
       ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
       ...(itemMimeType ? { mimeType: itemMimeType } : {}),
