@@ -29,6 +29,7 @@ import {
   fetchAudioBlobFromGoogleDrive,
   deleteFilesFromGoogleDrive,
   extractDriveFileIdFromSlide,
+  renameFileInGoogleDrive,
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
 import {
@@ -151,6 +152,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [editSlideImageDriveId, setEditSlideImageDriveId] = useState<string | undefined>(
     undefined
   );
+  const [editSlideFileName, setEditSlideFileName] = useState<string>('');
+  const [isRenamingSlide, setIsRenamingSlide] = useState<boolean>(false);
+  const lastSyncedTitleRef = useRef<string>('');
 
   // 單筆播放圖片的「刪除確認視窗」狀態
   const [slidePendingDelete, setSlidePendingDelete] = useState<{
@@ -243,6 +247,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     }
     setFormId(item.id);
     setTitle(item.title);
+    lastSyncedTitleRef.current = item.title;
     setCategoryId(item.categoryId);
     setDescription(item.description);
     setDuration(item.duration);
@@ -701,6 +706,29 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
+   * 取得單筆播放圖片的「使用圖片檔案名稱」（若尚未設定則自動給予定義檔名）
+   */
+  const getSlideDisplayFileName = (sl: PlaybackSlide, seqNumber = 1): string => {
+    if (sl.imageFileName && sl.imageFileName.trim()) {
+      return sl.imageFileName.trim();
+    }
+    const driveId = extractDriveFileIdFromSlide(sl);
+    if (driveId) {
+      return `${title || '播放圖片'}_圖片_${seqNumber}.jpg`;
+    }
+    try {
+      const cleanPath = (sl.imageUrl || '').split('?')[0];
+      const lastSeg = cleanPath.split('/').pop() || '';
+      if (lastSeg && /\.[a-zA-Z0-9]{2,5}$/.test(lastSeg)) {
+        return decodeURIComponent(lastSeg);
+      }
+    } catch {
+      // ignore URI decode error
+    }
+    return `${title || '播放圖片'}_圖片_${seqNumber}.jpg`;
+  };
+
+  /**
    * 1a, 1b, 1c：使用者先選取好要上傳的圖片，再選取起迄 SRT 時間區段範圍後，
    * 點擊確認按鈕：上傳圖片至 Google 雲端硬碟 + 自動帶入 SRT 區段文字作為圖說 + 立即儲存至 Firebase！
    */
@@ -720,6 +748,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     try {
       let finalImageUrl = newSlideUrlInput.trim();
       let finalImageDriveId: string | undefined = undefined;
+      let finalImageFileName = pendingSlideFile
+        ? pendingSlideFile.name
+        : `${title || '播放圖片'}_圖片_${slides.length + 1}.jpg`;
 
       if (pendingSlideFile) {
         const res = await uploadFileToGoogleDrive(pendingSlideFile, (pct, text) => {
@@ -733,6 +764,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       const newSlide: PlaybackSlide = {
         id: `slide_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
         ...(finalImageDriveId ? { imageDriveId: finalImageDriveId } : {}),
+        imageFileName: finalImageFileName,
         imageUrl: finalImageUrl,
         caption: rangeInfo.caption || title || '播放展示圖片',
         timestampSec: rangeInfo.startSec,
@@ -756,7 +788,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       await autoPersistToFirebase(srtSegments, nextSlides);
 
       showToast(
-        `✅ 圖片已上傳至雲端硬碟，並已綁定 SRT 區段 #${rangeInfo.startIdx} ~ #${rangeInfo.endIdx} 同步儲存至 Firebase！`
+        `✅ 圖片「${finalImageFileName}」已上傳至雲端硬碟，並已綁定 SRT 區段 #${rangeInfo.startIdx} ~ #${rangeInfo.endIdx} 同步儲存至 Firebase！`
       );
     } catch (err) {
       console.error('儲存播放圖片至 Firebase 失敗:', err);
@@ -767,12 +799,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 啟動單筆「播放時圖片」的修改模式
+   * 啟動單筆「播放時圖片」的修改模式（包含顯示與修改「使用圖片的檔案名稱」）
    */
-  const startEditSlide = (sl: PlaybackSlide) => {
+  const startEditSlide = (sl: PlaybackSlide, seqNumber = 1) => {
     setEditingSlideId(sl.id);
     setEditSlideImageUrl(sl.imageUrl);
     setEditSlideImageDriveId(sl.imageDriveId);
+    setEditSlideFileName(getSlideDisplayFileName(sl, seqNumber));
 
     const sIdx = sl.startSegmentIndex || 1;
     const eIdx = sl.endSegmentIndex || sIdx;
@@ -781,39 +814,82 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 儲存單筆「播放時圖片」的修改（圖說文字自動由所選 SRT 起迄區段帶入，並立即同步至 Firebase）
+   * 儲存單筆「播放時圖片」的修改（同步將修改後的「使用圖片的檔案名稱」更新至 Google 雲端硬碟與 Firebase）
    */
-  const confirmEditSlide = async (slideId: string) => {
+  const confirmEditSlide = async (slideId: string, seqNumber = 1) => {
+    if (isRenamingSlide) return;
+    const targetSlide = slides.find((s) => s.id === slideId);
+    if (!targetSlide) return;
+
     const rangeInfo = getCaptionForSegmentRange(
       srtSegments,
       editSlideStartSegIdx,
       editSlideEndSegIdx
     );
 
-    const nextSlides = slides
-      .map((sl) =>
-        sl.id === slideId
-          ? {
-              ...sl,
-              imageUrl: editSlideImageUrl.trim() || sl.imageUrl,
-              ...(editSlideImageDriveId ? { imageDriveId: editSlideImageDriveId } : {}),
-              timestampSec: rangeInfo.startSec,
-              endTimestampSec: rangeInfo.endSec,
-              startSegmentIndex: rangeInfo.startIdx,
-              endSegmentIndex: rangeInfo.endIdx,
-              caption: rangeInfo.caption || sl.caption,
-            }
-          : sl
-      )
-      .sort((a, b) => a.timestampSec - b.timestampSec);
+    const oldFileName = getSlideDisplayFileName(targetSlide, seqNumber);
+    const requestedFileName = editSlideFileName.trim() || oldFileName;
+    const candidateDriveId =
+      editSlideImageDriveId || extractDriveFileIdFromSlide(targetSlide);
 
-    setSlides(nextSlides);
-    setEditingSlideId(null);
+    setIsRenamingSlide(true);
+    try {
+      let finalFileName = requestedFileName;
+      let finalDriveId = editSlideImageDriveId ?? targetSlide.imageDriveId;
+      let finalImageUrl = editSlideImageUrl.trim() || targetSlide.imageUrl;
+      let syncedDriveRename = false;
 
-    await autoPersistToFirebase(srtSegments, nextSlides);
-    showToast(
-      `✅ 已修改播放圖片時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}）並同步儲存至 Firebase！`
-    );
+      // 當使用者修改了圖片檔案名稱（或此圖片有綁定雲端硬碟檔案 ID）時，同步修改 Google 雲端硬碟中的檔案名稱
+      if (candidateDriveId && requestedFileName) {
+        const renameRes = await renameFileInGoogleDrive(
+          candidateDriveId,
+          requestedFileName,
+          {
+            fallbackUrl: finalImageUrl,
+            mimeType: 'image/jpeg',
+            isAudio: false,
+          }
+        );
+        finalFileName = renameRes.finalFileName || requestedFileName;
+        if (renameRes.newFileId) {
+          finalDriveId = renameRes.newFileId;
+        }
+        if (renameRes.newDirectUrl) {
+          finalImageUrl = renameRes.newDirectUrl;
+        }
+        syncedDriveRename = renameRes.renamedOnDrive;
+      }
+
+      const nextSlides = slides
+        .map((sl) =>
+          sl.id === slideId
+            ? {
+                ...sl,
+                imageUrl: finalImageUrl,
+                imageFileName: finalFileName,
+                ...(finalDriveId ? { imageDriveId: finalDriveId } : {}),
+                timestampSec: rangeInfo.startSec,
+                endTimestampSec: rangeInfo.endSec,
+                startSegmentIndex: rangeInfo.startIdx,
+                endSegmentIndex: rangeInfo.endIdx,
+                caption: rangeInfo.caption || sl.caption,
+              }
+            : sl
+        )
+        .sort((a, b) => a.timestampSec - b.timestampSec);
+
+      setSlides(nextSlides);
+      setEditingSlideId(null);
+
+      await autoPersistToFirebase(srtSegments, nextSlides);
+      showToast(
+        syncedDriveRename
+          ? `✅ 已修改圖片檔案名稱為「${finalFileName}」（已同步更新 Google 雲端硬碟檔名）與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}），並已儲存至 Firebase！`
+          : `✅ 已更新圖片檔案名稱「${finalFileName}」與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}）並同步儲存至 Firebase！`
+      );
+    } finally {
+      setIsRenamingSlide(false);
+    }
   };
 
   /**
@@ -828,7 +904,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       });
       setEditSlideImageUrl(res.directUrl);
       setEditSlideImageDriveId(res.fileId);
-      showToast('已上傳新圖片，請點擊「確認修改」完成套用！');
+      setEditSlideFileName(file.name);
+      showToast(`已上傳新圖片「${file.name}」，請點擊「確認修改」完成套用！`);
     } finally {
       setIsUploading(false);
     }
@@ -1257,7 +1334,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                      語音檔案名稱 / 標題 *
+                      語音檔案名稱 / 標題（修改後自動同步雲端硬碟檔案名稱）*
                     </label>
                     <input
                       type="text"
@@ -1268,23 +1345,61 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         setTitle(nextTitle);
                         scheduleMetaAutoSave({ title: nextTitle });
                       }}
-                      onBlur={() => {
+                      onBlur={async () => {
                         if (autoSaveTimerRef.current) {
                           window.clearTimeout(autoSaveTimerRef.current);
                           autoSaveTimerRef.current = null;
                         }
-                        autoPersistToFirebase(
-                          undefined,
-                          undefined,
-                          undefined,
-                          undefined,
-                          undefined,
-                          undefined,
-                          undefined,
-                          { title }
-                        );
+                        const trimmedTitle = title.trim();
+                        if (
+                          trimmedTitle &&
+                          trimmedTitle !== lastSyncedTitleRef.current
+                        ) {
+                          lastSyncedTitleRef.current = trimmedTitle;
+                          const renameRes = await renameFileInGoogleDrive(
+                            audioDriveFileId,
+                            trimmedTitle,
+                            {
+                              fallbackUrl: audioUrl,
+                              mimeType: itemMimeType || 'audio/mpeg',
+                              isAudio: true,
+                              itemId: formId,
+                            }
+                          );
+                          const nextDriveId = renameRes.newFileId || audioDriveFileId;
+                          const nextAudioUrl = renameRes.newDirectUrl || audioUrl;
+                          if (renameRes.newFileId) setAudioDriveFileId(renameRes.newFileId);
+                          if (renameRes.newDirectUrl) setAudioUrl(renameRes.newDirectUrl);
+
+                          await autoPersistToFirebase(
+                            undefined,
+                            undefined,
+                            undefined,
+                            undefined,
+                            nextAudioUrl,
+                            nextDriveId,
+                            undefined,
+                            { title: trimmedTitle }
+                          );
+                          if (renameRes.renamedOnDrive) {
+                            showToast(
+                              `✅ 已將語音檔案名稱修改為「${trimmedTitle}」，並已同步更新 Google 雲端硬碟檔案名稱（${renameRes.finalFileName}）！`
+                            );
+                          }
+                        } else {
+                          await autoPersistToFirebase(
+                            undefined,
+                            undefined,
+                            undefined,
+                            undefined,
+                            undefined,
+                            undefined,
+                            undefined,
+                            { title }
+                          );
+                        }
                       }}
-                      placeholder="請輸入語音標題..."
+                      placeholder="請輸入語音檔案名稱..."
                       className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm font-medium focus:outline-none focus:border-[#8B5A2B]"
                     />
                   </div>
@@ -2015,9 +2130,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               />
 
                               <div className="min-w-0 flex-1 space-y-1">
-                                <span className="inline-block px-2 py-0.5 rounded bg-[#2B4C7E]/10 text-[#2B4C7E] font-mono text-[11px] font-semibold">
-                                  {formatSlideRangeBadge(sl)}
-                                </span>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="inline-block px-2 py-0.5 rounded bg-[#2B4C7E]/10 text-[#2B4C7E] font-mono text-[11px] font-semibold">
+                                    {formatSlideRangeBadge(sl)}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F4ECE0] border border-[#DFCEB4] text-[#5C3A1B] text-[11px] font-semibold">
+                                    <ImageIcon className="w-3 h-3 text-[#8B5A2B]" />
+                                    <span>
+                                      圖片檔名：{getSlideDisplayFileName(sl, globalSeq)}
+                                    </span>
+                                  </span>
+                                </div>
                                 <p className="text-xs font-serif-tc text-[#2C221E] line-clamp-2 whitespace-pre-line">
                                   {sl.caption || '（對應 SRT 區段文字）'}
                                 </p>
@@ -2029,7 +2152,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               {!isEditingThisSlide && (
                                 <button
                                   type="button"
-                                  onClick={() => startEditSlide(sl)}
+                                  onClick={() => startEditSlide(sl, globalSeq)}
                                   className="px-2.5 py-1.5 rounded-lg bg-[#2B4C7E]/15 hover:bg-[#2B4C7E] text-[#2B4C7E] hover:text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
@@ -2049,9 +2172,26 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                             </div>
                           </div>
 
-                          {/* 單筆圖片的「修改」展開面板（可修改起迄 SRT 時間區段範圍與更換圖片） */}
+                          {/* 單筆圖片的「修改」展開面板（顯示並可修改「使用圖片的檔案名稱」、起迄 SRT 時間區段範圍與更換圖片） */}
                           {isEditingThisSlide && (
-                            <div className="mt-3 pt-3 border-t border-[#EFE6D5] space-y-3 bg-[#FAF6EE] p-3 rounded-lg">
+                            <div className="mt-3 pt-3 border-t border-[#EFE6D5] space-y-3 bg-[#FAF6EE] p-3.5 rounded-lg">
+                              {/* 2a-(1)：顯示並可修改「使用圖片的檔案名稱」，修改後同步至 Google 雲端硬碟 */}
+                              <div className="p-3 rounded-lg bg-white border border-[#C8B598] space-y-1.5">
+                                <label className="block text-xs font-bold text-[#2B4C7E] flex items-center gap-1.5">
+                                  <ImageIcon className="w-3.5 h-3.5" />
+                                  <span>
+                                    使用圖片的檔案名稱（可修改，確認後自動同步至 Google 雲端硬碟檔案名稱）：
+                                  </span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={editSlideFileName}
+                                  onChange={(e) => setEditSlideFileName(e.target.value)}
+                                  placeholder="請輸入此圖片的檔案名稱（例如：插畫01.jpg）..."
+                                  className="w-full px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#2B4C7E]"
+                                />
+                              </div>
+
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                 <div>
                                   <label className="block text-[11px] font-semibold text-[#2B4C7E] mb-1">
@@ -2142,18 +2282,29 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               <div className="flex items-center justify-end gap-2 pt-1">
                                 <button
                                   type="button"
+                                  disabled={isRenamingSlide}
                                   onClick={() => setEditingSlideId(null)}
-                                  className="px-3 py-1.5 rounded-lg border border-[#D5C5AE] text-xs font-medium text-[#5C3A1B] hover:bg-[#EFE6D5] cursor-pointer"
+                                  className="px-3 py-1.5 rounded-lg border border-[#D5C5AE] text-xs font-medium text-[#5C3A1B] hover:bg-[#EFE6D5] cursor-pointer disabled:opacity-50"
                                 >
                                   取消
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => confirmEditSlide(sl.id)}
-                                  className="px-3.5 py-1.5 rounded-lg bg-[#2B4C7E] hover:bg-[#1E385F] text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                  disabled={isRenamingSlide}
+                                  onClick={() => confirmEditSlide(sl.id, globalSeq)}
+                                  className="px-3.5 py-1.5 rounded-lg bg-[#2B4C7E] hover:bg-[#1E385F] disabled:opacity-60 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                                 >
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>確認修改並儲存至 Firebase</span>
+                                  {isRenamingSlide ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <span>正在同步雲端硬碟檔名與儲存...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>確認修改（同步雲端硬碟檔名與 Firebase）</span>
+                                    </>
+                                  )}
                                 </button>
                               </div>
                             </div>

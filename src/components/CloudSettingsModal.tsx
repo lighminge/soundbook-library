@@ -80,6 +80,33 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // 3. 支援同步修改 Google 雲端硬碟中的檔案名稱 (語音檔或圖片)
+    if (payload.action === 'rename') {
+      var renameId = String(payload.fileId || '').trim();
+      var newName = String(payload.newFileName || '').trim();
+      if (!renameId || !newName) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          action: 'rename',
+          error: '缺少 fileId 或 newFileName'
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+      var targetFile = DriveApp.getFileById(renameId);
+      var oldName = targetFile.getName();
+      var extMatch = oldName.match(/(\\.[a-zA-Z0-9]{2,5})$/);
+      if (extMatch && extMatch[1] && !/\\.[a-zA-Z0-9]{2,5}$/.test(newName)) {
+        newName = newName + extMatch[1];
+      }
+      targetFile.setName(newName);
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'rename',
+        fileId: renameId,
+        oldFileName: oldName,
+        fileName: newName
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     const folderId = cleanFolderId(payload.folderId);
     const fileName = payload.fileName || ('soundbook_' + new Date().getTime());
     const mimeType = payload.mimeType || 'application/octet-stream';

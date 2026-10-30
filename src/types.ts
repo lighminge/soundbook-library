@@ -12,6 +12,7 @@ export interface Category {
 export interface PlaybackSlide {
   id: string;
   imageDriveId?: string;
+  imageFileName?: string; // 使用圖片的檔案名稱（修改後同步至 Google 雲端硬碟）
   imageUrl: string;
   caption: string; // 自動對應 SRT 時間區段的文字內容
   timestampSec: number; // 起始秒數

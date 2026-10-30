@@ -20,6 +20,36 @@ import {
   Sun,
   Moon,
   Trees,
+  Book,
+  Bookmark,
+  Crown,
+  Gem,
+  Flame,
+  Cloud,
+  Umbrella,
+  Anchor,
+  Ship,
+  Plane,
+  Train,
+  Car,
+  Bike,
+  Camera,
+  Video,
+  Radio,
+  Tv,
+  Speaker,
+  Bell,
+  Gift,
+  Key,
+  Lock,
+  Shield,
+  Trophy,
+  Flag,
+  Map,
+  Navigation,
+  Mountain,
+  Flower2,
+  Leaf,
   Play,
   Edit3,
   Plus,
@@ -53,6 +83,36 @@ export const THEME_COLOR_OPTIONS = [
   { label: '18. 午夜星空藍 (#1B263B)', value: '#1B263B' },
   { label: '19. 赭石陶土橘 (#A44A3F)', value: '#A44A3F' },
   { label: '20. 黑檀墨玉色 (#3A2518)', value: '#3A2518' },
+  { label: '21. 勃艮第酒紅 (#722F37)', value: '#722F37' },
+  { label: '22. 普魯士深藍 (#003153)', value: '#003153' },
+  { label: '23. 帝王祖母綠 (#046307)', value: '#046307' },
+  { label: '24. 拜占庭皇紫 (#702963)', value: '#702963' },
+  { label: '25. 蜜蠟琥珀黃 (#C68B2C)', value: '#C68B2C' },
+  { label: '26. 鐵鏽赤銅紅 (#8B3103)', value: '#8B3103' },
+  { label: '27. 鼠尾草灰綠 (#4F6D5A)', value: '#4F6D5A' },
+  { label: '28. 牛津學院藍 (#14213D)', value: '#14213D' },
+  { label: '29. 丁香煙燻紫 (#6D597A)', value: '#6D597A' },
+  { label: '30. 珊瑚暖茜紅 (#B56576)', value: '#B56576' },
+  { label: '31. 焦糖瑪奇朵 (#7F4F24)', value: '#7F4F24' },
+  { label: '32. 摩卡咖啡褐 (#582F0E)', value: '#582F0E' },
+  { label: '33. 迷迭香深綠 (#333D29)', value: '#333D29' },
+  { label: '34. 柏樹青苔綠 (#414833)', value: '#414833' },
+  { label: '35. 愛琴海湛藍 (#1D4E89)', value: '#1D4E89' },
+  { label: '36. 冰河鋼鐵藍 (#3D5A80)', value: '#3D5A80' },
+  { label: '37. 丹霞赤岩紅 (#9B2226)', value: '#9B2226' },
+  { label: '38. 金秋楓葉橘 (#BB3E03)', value: '#BB3E03' },
+  { label: '39. 桂花薑黃色 (#CA6702)', value: '#CA6702' },
+  { label: '40. 碧波松石綠 (#0A9396)', value: '#0A9396' },
+  { label: '41. 墨池深海青 (#005F73)', value: '#005F73' },
+  { label: '42. 桑椹漿果紫 (#5A189A)', value: '#5A189A' },
+  { label: '43. 鳶尾花藍紫 (#3C096C)', value: '#3C096C' },
+  { label: '44. 櫻桃木深紅 (#641220)', value: '#641220' },
+  { label: '45. 玫瑰木棕紅 (#85182A)', value: '#85182A' },
+  { label: '46. 檀香金棕色 (#99582A)', value: '#99582A' },
+  { label: '47. 亞麻古董褐 (#6C584C)', value: '#6C584C' },
+  { label: '48. 鉛錫典藏灰 (#4A4E69)', value: '#4A4E69' },
+  { label: '49. 玄武岩深灰 (#2B2D42)', value: '#2B2D42' },
+  { label: '50. 曜石黑金棕 (#261A13)', value: '#261A13' },
 ];
 
 export const ICON_OPTIONS = [
@@ -76,6 +136,36 @@ export const ICON_OPTIONS = [
   { label: '18. 晨光暖陽 (Sun)', value: 'Sun' },
   { label: '19. 夜讀月光 (Moon)', value: 'Moon' },
   { label: '20. 自然山林 (Trees)', value: 'Trees' },
+  { label: '21. 精裝書冊 (Book)', value: 'Book' },
+  { label: '22. 典藏書籤 (Bookmark)', value: 'Bookmark' },
+  { label: '23. 皇家王冠 (Crown)', value: 'Crown' },
+  { label: '24. 璀璨寶石 (Gem)', value: 'Gem' },
+  { label: '25. 熱情火炬 (Flame)', value: 'Flame' },
+  { label: '26. 雲端漫遊 (Cloud)', value: 'Cloud' },
+  { label: '27. 雨天故事 (Umbrella)', value: 'Umbrella' },
+  { label: '28. 航海船錨 (Anchor)', value: 'Anchor' },
+  { label: '29. 遠洋帆船 (Ship)', value: 'Ship' },
+  { label: '30. 環球飛行 (Plane)', value: 'Plane' },
+  { label: '31. 鐵道列車 (Train)', value: 'Train' },
+  { label: '32. 公路旅行 (Car)', value: 'Car' },
+  { label: '33. 單車漫遊 (Bike)', value: 'Bike' },
+  { label: '34. 攝影紀實 (Camera)', value: 'Camera' },
+  { label: '35. 影音錄像 (Video)', value: 'Video' },
+  { label: '36. 廣播電台 (Radio)', value: 'Radio' },
+  { label: '37. 電視頻道 (Tv)', value: 'Tv' },
+  { label: '38. 音響劇院 (Speaker)', value: 'Speaker' },
+  { label: '39. 館藏鐘聲 (Bell)', value: 'Bell' },
+  { label: '40. 驚喜禮盒 (Gift)', value: 'Gift' },
+  { label: '41. 智慧之鑰 (Key)', value: 'Key' },
+  { label: '42. 秘藏封印 (Lock)', value: 'Lock' },
+  { label: '43. 守護盾牌 (Shield)', value: 'Shield' },
+  { label: '44. 冠軍獎盃 (Trophy)', value: 'Trophy' },
+  { label: '45. 領航旗幟 (Flag)', value: 'Flag' },
+  { label: '46. 探索地圖 (Map)', value: 'Map' },
+  { label: '47. 方向導航 (Navigation)', value: 'Navigation' },
+  { label: '48. 壯麗山岳 (Mountain)', value: 'Mountain' },
+  { label: '49. 花園綻放 (Flower2)', value: 'Flower2' },
+  { label: '50. 綠葉生態 (Leaf)', value: 'Leaf' },
 ];
 
 interface DashboardViewProps {
@@ -131,6 +221,66 @@ export function getCategoryIcon(iconName: string, className = 'w-5 h-5') {
       return <Moon className={className} />;
     case 'Trees':
       return <Trees className={className} />;
+    case 'Book':
+      return <Book className={className} />;
+    case 'Bookmark':
+      return <Bookmark className={className} />;
+    case 'Crown':
+      return <Crown className={className} />;
+    case 'Gem':
+      return <Gem className={className} />;
+    case 'Flame':
+      return <Flame className={className} />;
+    case 'Cloud':
+      return <Cloud className={className} />;
+    case 'Umbrella':
+      return <Umbrella className={className} />;
+    case 'Anchor':
+      return <Anchor className={className} />;
+    case 'Ship':
+      return <Ship className={className} />;
+    case 'Plane':
+      return <Plane className={className} />;
+    case 'Train':
+      return <Train className={className} />;
+    case 'Car':
+      return <Car className={className} />;
+    case 'Bike':
+      return <Bike className={className} />;
+    case 'Camera':
+      return <Camera className={className} />;
+    case 'Video':
+      return <Video className={className} />;
+    case 'Radio':
+      return <Radio className={className} />;
+    case 'Tv':
+      return <Tv className={className} />;
+    case 'Speaker':
+      return <Speaker className={className} />;
+    case 'Bell':
+      return <Bell className={className} />;
+    case 'Gift':
+      return <Gift className={className} />;
+    case 'Key':
+      return <Key className={className} />;
+    case 'Lock':
+      return <Lock className={className} />;
+    case 'Shield':
+      return <Shield className={className} />;
+    case 'Trophy':
+      return <Trophy className={className} />;
+    case 'Flag':
+      return <Flag className={className} />;
+    case 'Map':
+      return <Map className={className} />;
+    case 'Navigation':
+      return <Navigation className={className} />;
+    case 'Mountain':
+      return <Mountain className={className} />;
+    case 'Flower2':
+      return <Flower2 className={className} />;
+    case 'Leaf':
+      return <Leaf className={className} />;
     case 'BookOpen':
     default:
       return <BookOpen className={className} />;

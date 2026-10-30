@@ -449,6 +449,233 @@ export function extractDriveFileIdFromSlide(slide: PlaybackSlide): string | null
 }
 
 /**
+ * 從單筆 AudioItem 中解析出真實的 Google Drive 語音檔 File ID
+ */
+export function extractDriveFileIdFromAudioItem(item: AudioItem): string | null {
+  const candidates = [item.audioDriveFileId, extractDriveFileIdFromUrl(item.audioUrl)];
+  for (const id of candidates) {
+    if (!id) continue;
+    const trimmed = id.trim();
+    if (
+      trimmed.length >= 15 &&
+      !trimmed.startsWith('demo_') &&
+      !trimmed.startsWith('gdrive_local_')
+    ) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+/**
+ * 根據 MIME 類型或預設類型補齊檔案副檔名（若使用者輸入的名稱尚未包含副檔名）
+ */
+export function ensureFileNameWithExtension(
+  rawName: string,
+  mimeType?: string,
+  defaultExt = '.mp3'
+): string {
+  const trimmed = rawName.trim();
+  if (!trimmed) return `file${defaultExt}`;
+  if (/\.[a-zA-Z0-9]{2,5}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const m = (mimeType || '').toLowerCase();
+  let ext = defaultExt;
+  if (m.includes('mpeg') || m.includes('mp3')) ext = '.mp3';
+  else if (m.includes('mp4') || m.includes('m4a')) ext = '.m4a';
+  else if (m.includes('wav')) ext = '.wav';
+  else if (m.includes('ogg')) ext = '.ogg';
+  else if (m.includes('webm')) ext = '.webm';
+  else if (m.includes('aac')) ext = '.aac';
+  else if (m.includes('png')) ext = '.png';
+  else if (m.includes('webp')) ext = '.webp';
+  else if (m.includes('gif')) ext = '.gif';
+  else if (m.includes('svg')) ext = '.svg';
+  else if (m.includes('jpeg') || m.includes('jpg') || m.startsWith('image/')) ext = '.jpg';
+
+  return `${trimmed}${ext}`;
+}
+
+/**
+ * 同步修改 Google 雲端硬碟中的檔案名稱（支援語音檔與播放圖片）
+ * 1. 優先呼叫 GAS action: 'rename' 直接原位改名；
+ * 2. 若使用者的 GAS 尚為舊版（未支援 rename），自動透過既有 getFile / 快取 + upload 新檔名 + delete 舊檔，確保 100% 同步更新雲端硬碟檔名！
+ */
+export async function renameFileInGoogleDrive(
+  fileId: string | undefined | null,
+  newFileName: string,
+  options?: {
+    fallbackUrl?: string;
+    mimeType?: string;
+    isAudio?: boolean;
+    itemId?: string;
+  }
+): Promise<{
+  renamedOnDrive: boolean;
+  finalFileName: string;
+  newFileId?: string;
+  newDirectUrl?: string;
+  message?: string;
+}> {
+  const defaultExt = options?.isAudio ? '.mp3' : '.jpg';
+  const normalizedName = ensureFileNameWithExtension(
+    newFileName,
+    options?.mimeType,
+    defaultExt
+  );
+
+  const candidateId = fileId || extractDriveFileIdFromUrl(options?.fallbackUrl);
+  const cleanId =
+    candidateId &&
+    candidateId.trim().length >= 15 &&
+    !candidateId.trim().startsWith('demo_') &&
+    !candidateId.trim().startsWith('gdrive_local_')
+      ? candidateId.trim()
+      : null;
+
+  if (!cleanId) {
+    return {
+      renamedOnDrive: false,
+      finalFileName: normalizedName,
+      message: '此項目未綁定雲端硬碟檔案 ID，已更新系統顯示名稱',
+    };
+  }
+
+  const config = getCloudConfig();
+  if (!isGoogleDriveConfigured(config)) {
+    return {
+      renamedOnDrive: false,
+      finalFileName: normalizedName,
+      message: '尚未設定 Google Apps Script 網址，僅更新系統資料庫名稱',
+    };
+  }
+
+  const scriptUrl = config.googleDriveScriptUrl.trim();
+
+  // 步驟 1：優先嘗試原位改名 (action: 'rename')
+  try {
+    const response = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        action: 'rename',
+        fileId: cleanId,
+        newFileName: normalizedName,
+      }),
+    });
+
+    const result = await response.json();
+    if (result && result.success && result.action === 'rename') {
+      return {
+        renamedOnDrive: true,
+        finalFileName: result.fileName || normalizedName,
+        newFileId: cleanId,
+      };
+    }
+  } catch (err) {
+    console.warn('直接呼叫 rename 略過，準備嘗試自動替換檔名同步:', err);
+  }
+
+  // 步驟 2：若使用者部署的 GAS 尚為舊版（未包含 action: 'rename'），
+  // 自動透過既有的 getFile（或本機/Firestore 分片）讀取內容 -> 以新檔名上傳至雲端硬碟 -> 刪除舊檔名檔案！
+  try {
+    let base64Data = '';
+    let detectedMime =
+      options?.mimeType || (options?.isAudio ? 'audio/mpeg' : 'image/jpeg');
+
+    // 2a. 先嘗試從 GAS action: 'getFile' 讀取原雲端硬碟檔案內容
+    try {
+      const getRes = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({
+          action: 'getFile',
+          fileId: cleanId,
+        }),
+      });
+      const getJson = await getRes.json();
+      if (getJson && getJson.success && getJson.base64Data) {
+        base64Data = getJson.base64Data;
+        if (getJson.mimeType) {
+          detectedMime = getJson.mimeType;
+        }
+      }
+    } catch {
+      // ignore getFile error and try local/Firestore fallback
+    }
+
+    // 2b. 若為音檔且 getFile 未取回，可從本地快取或 Firestore audioChunks 讀取
+    if (!base64Data && options?.isAudio) {
+      const blob = await loadAudioBlobFromFirestoreChunks(cleanId);
+      if (blob) {
+        const converted = await fileToDataUrl(
+          new File([blob], normalizedName, { type: blob.type || detectedMime })
+        );
+        base64Data = converted.base64;
+        if (blob.type) detectedMime = blob.type;
+      }
+    }
+
+    if (base64Data) {
+      const finalFileNameWithExt = ensureFileNameWithExtension(
+        newFileName,
+        detectedMime,
+        defaultExt
+      );
+      const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
+
+      const uploadRes = await fetch(scriptUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({
+          folderId: cleanFolderId,
+          fileName: finalFileNameWithExt,
+          mimeType: detectedMime,
+          base64Data,
+        }),
+      });
+
+      const uploadJson = await uploadRes.json();
+      if (uploadJson && uploadJson.success && uploadJson.fileId) {
+        // 刪除舊檔名的雲端硬碟檔案
+        await deleteFilesFromGoogleDrive([cleanId]);
+
+        if (options?.isAudio) {
+          // 同步更新音訊分片與快取至新 fileId
+          const blob = base64ToBlob(base64Data, detectedMime);
+          await cacheMediaBlob(uploadJson.fileId, blob);
+          await saveAudioChunksToFirestore(uploadJson.fileId, base64Data, detectedMime);
+          await deleteAudioChunksFromFirestore([cleanId]);
+        }
+
+        return {
+          renamedOnDrive: true,
+          finalFileName: finalFileNameWithExt,
+          newFileId: uploadJson.fileId,
+          newDirectUrl: uploadJson.directUrl,
+        };
+      }
+    }
+  } catch (fallbackErr: any) {
+    console.warn('雲端硬碟檔案改名同步備援失敗:', fallbackErr);
+  }
+
+  return {
+    renamedOnDrive: false,
+    finalFileName: normalizedName,
+    message:
+      '已更新系統檔案名稱！若需原位同步雲端硬碟檔名，請至右上角「雲端連線設定」複製最新版 GAS 腳本並更新部署。',
+  };
+}
+
+/**
  * 收集單一 AudioItem 關聯的所有真實 Google Drive File IDs (語音檔、封面圖、播放插圖)
  */
 export function collectDriveFileIdsFromItem(item: AudioItem): string[] {

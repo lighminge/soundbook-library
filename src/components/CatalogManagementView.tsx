@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Loader2,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import {
@@ -29,6 +30,7 @@ import {
   THEME_COLOR_OPTIONS,
   ICON_OPTIONS,
 } from './DashboardView';
+import { renameFileInGoogleDrive } from '../services/storageService';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -132,12 +134,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [categoryDestForMove, setCategoryDestForMove] = useState<string>('');
 
   // ============================================================================
-  // 語音檔案館藏資料管理：三欄查詢（語音檔案名稱、館藏分類、說明內容）、分頁、編輯狀態
+  // 語音檔案館藏資料管理：四欄查詢（語音檔案名稱、館藏分類、說明內容、標籤）、分頁、編輯狀態
   // ============================================================================
   const [searchTitle, setSearchTitle] = useState<string>('');
   const [filterCategoryId, setFilterCategoryId] = useState<string>('all');
   const [searchDescription, setSearchDescription] = useState<string>('');
   const [filterTag, setFilterTag] = useState<string>('all');
+  const [searchTag, setSearchTag] = useState<string>('');
 
   // 分頁狀態（以 10 的倍數選取）
   const [pageSize, setPageSize] = useState<number>(10);
@@ -149,8 +152,9 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     categories[0]?.id || ''
   );
 
-  // 單筆語音檔「語音檔案名稱」即時編輯暫存 (key: item.id)
+  // 單筆語音檔「語音檔案名稱」即時編輯暫存 (key: item.id) 與雲端改名進行中狀態
   const [editingTitles, setEditingTitles] = useState<Record<string, string>>({});
+  const [renamingItemIds, setRenamingItemIds] = useState<Record<string, boolean>>({});
   // 單筆語音檔「說明內容」即時編輯暫存 (key: item.id)
   const [editingDescriptions, setEditingDescriptions] = useState<Record<string, string>>({});
   // 單筆語音檔「自訂類別標籤」輸入框暫存 (key: item.id)
@@ -348,9 +352,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   };
 
   // ============================================================================
-  // 管理每筆語音檔的 語音檔案名稱、館藏分類、說明內容、類別標籤
+  // 管理每筆語音檔的 語音檔案名稱（含同步雲端硬碟檔案名稱）、館藏分類、說明內容、類別標籤
   // ============================================================================
   const handleSaveItemTitle = async (item: AudioItem, nextTitle: string) => {
+    if (renamingItemIds[item.id]) return;
     const trimmed = nextTitle.trim();
     if (!trimmed) {
       // 若清空則還原為原有名稱
@@ -363,13 +368,40 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }
     if (trimmed === item.title) return;
 
-    const updated: AudioItem = {
-      ...item,
-      title: trimmed,
-      updatedAt: new Date().toISOString(),
-    };
-    await onSaveAudioItem(updated);
-    showToast(`✅ 已將語音檔案名稱修改為「${trimmed}」並即時儲存至 Firebase！`);
+    setRenamingItemIds((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      const renameRes = await renameFileInGoogleDrive(
+        item.audioDriveFileId,
+        trimmed,
+        {
+          fallbackUrl: item.audioUrl,
+          mimeType: item.mimeType || 'audio/mpeg',
+          isAudio: true,
+          itemId: item.id,
+        }
+      );
+
+      const updated: AudioItem = {
+        ...item,
+        title: trimmed,
+        ...(renameRes.newFileId ? { audioDriveFileId: renameRes.newFileId } : {}),
+        ...(renameRes.newDirectUrl ? { audioUrl: renameRes.newDirectUrl } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      await onSaveAudioItem(updated);
+
+      if (renameRes.renamedOnDrive) {
+        showToast(
+          `✅ 已將語音檔案名稱修改為「${trimmed}」，並已同步更新 Google 雲端硬碟檔案名稱（${renameRes.finalFileName}）與 Firebase！`
+        );
+      } else {
+        showToast(
+          `✅ 已將語音檔案名稱修改為「${trimmed}」並即時儲存至 Firebase！`
+        );
+      }
+    } finally {
+      setRenamingItemIds((prev) => ({ ...prev, [item.id]: false }));
+    }
   };
 
   const handleSingleItemCategoryChange = async (item: AudioItem, nextCategoryId: string) => {
@@ -488,19 +520,23 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   };
 
   // ============================================================================
-  // 篩選語音檔清單（分成：語音檔案名稱、館藏分類、說明內容、以及類別標籤篩選）
+  // 篩選語音檔清單（分成：語音檔案名稱、館藏分類、說明內容、以及標籤查詢）
   // ============================================================================
   const filteredAudioItems = audioItems.filter((item) => {
     const matchCategory =
       filterCategoryId === 'all' || item.categoryId === filterCategoryId;
 
     const itemTags = item.tags || [];
-    const matchTag =
+    const matchTagSelect =
       filterTag === 'all'
         ? true
         : filterTag === '__untagged__'
         ? itemTags.length === 0
         : itemTags.includes(filterTag);
+
+    const qTag = searchTag.trim().toLowerCase();
+    const matchTagInput =
+      !qTag || itemTags.some((t) => t.toLowerCase().includes(qTag));
 
     const qTitle = searchTitle.trim().toLowerCase();
     const matchTitle = !qTitle || item.title.toLowerCase().includes(qTitle);
@@ -508,7 +544,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     const qDesc = searchDescription.trim().toLowerCase();
     const matchDesc = !qDesc || item.description.toLowerCase().includes(qDesc);
 
-    return matchCategory && matchTag && matchTitle && matchDesc;
+    return (
+      matchCategory &&
+      matchTagSelect &&
+      matchTagInput &&
+      matchTitle &&
+      matchDesc
+    );
   });
 
   // 分頁計算（10 的倍數）
@@ -524,7 +566,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   // 當篩選條件或每頁筆數改變時，自動回到第 1 頁
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTitle, filterCategoryId, searchDescription, filterTag, pageSize]);
+  }, [searchTitle, filterCategoryId, searchDescription, filterTag, searchTag, pageSize]);
 
   const allFilteredSelected =
     filteredAudioItems.length > 0 &&
@@ -1059,18 +1101,19 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
           </p>
         </div>
 
-        {/* 查詢區塊：分成 語音檔案名稱、館藏分類、說明內容 三個查詢欄位 */}
+        {/* 查詢區塊：分成 語音檔案名稱、館藏分類、說明內容、標籤 四個查詢欄位 */}
         <div className="p-4 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4] space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-bold text-[#3A2518] flex items-center gap-1.5">
               <Search className="w-3.5 h-3.5 text-[#8B5A2B]" />
-              <span>館藏清單多欄位查詢（語音檔案名稱 · 館藏分類 · 說明內容）：</span>
+              <span>館藏清單多欄位查詢（語音檔案名稱 · 館藏分類 · 說明內容 · 標籤）：</span>
             </span>
 
             {(searchTitle ||
               filterCategoryId !== 'all' ||
               searchDescription ||
-              filterTag !== 'all') && (
+              filterTag !== 'all' ||
+              searchTag) && (
               <button
                 type="button"
                 onClick={() => {
@@ -1078,6 +1121,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   setFilterCategoryId('all');
                   setSearchDescription('');
                   setFilterTag('all');
+                  setSearchTag('');
                 }}
                 className="px-2.5 py-1 rounded-lg bg-[#8B5A2B]/15 hover:bg-[#8B5A2B] text-[#8B5A2B] hover:text-white text-xs font-semibold transition cursor-pointer"
               >
@@ -1086,7 +1130,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* 欄位 1：語音檔案名稱 */}
             <div>
               <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
@@ -1140,22 +1184,73 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 />
               </div>
             </div>
+
+            {/* 欄位 4：標籤（支援下拉選取與關鍵字查詢） */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                4. 標籤（類別標籤）
+              </label>
+              <div className="flex flex-col gap-1.5">
+                <select
+                  value={filterTag}
+                  onChange={(e) => setFilterTag(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#2E5A44]"
+                >
+                  <option value="all">所有類別標籤 ({audioItems.length})</option>
+                  {sortedTagStats.map(({ tag, count }) => (
+                    <option key={tag} value={tag}>
+                      {tag} ({count} 筆)
+                    </option>
+                  ))}
+                  {untaggedCount > 0 && (
+                    <option value="__untagged__">
+                      尚未標記類別 ({untaggedCount} 筆)
+                    </option>
+                  )}
+                </select>
+                <div className="relative">
+                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchTag}
+                    onChange={(e) => setSearchTag(e.target.value)}
+                    placeholder="或輸入標籤關鍵字查詢..."
+                    className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          {filterTag !== 'all' && (
-            <div className="flex items-center gap-2 pt-1 text-xs">
+          {(filterTag !== 'all' || searchTag.trim() !== '') && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
               <span className="text-[#5C3A1B] font-semibold">目前篩選類別標籤：</span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#2E5A44] text-white font-semibold">
-                <Tag className="w-3 h-3" />
-                <span>{filterTag === '__untagged__' ? '尚未標記類別' : filterTag}</span>
-                <button
-                  type="button"
-                  onClick={() => setFilterTag('all')}
-                  className="ml-1 hover:text-amber-200 cursor-pointer"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
+              {filterTag !== 'all' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#2E5A44] text-white font-semibold">
+                  <Tag className="w-3 h-3" />
+                  <span>{filterTag === '__untagged__' ? '尚未標記類別' : filterTag}</span>
+                  <button
+                    type="button"
+                    onClick={() => setFilterTag('all')}
+                    className="ml-1 hover:text-amber-200 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {searchTag.trim() !== '' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#2E5A44] text-white font-semibold">
+                  <Tag className="w-3 h-3" />
+                  <span>關鍵字：{searchTag.trim()}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSearchTag('')}
+                    className="ml-1 hover:text-amber-200 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -1362,7 +1457,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           </span>
                         </div>
 
-                        {/* 語音檔案名稱直接修改欄位 */}
+                        {/* 語音檔案名稱直接修改欄位（同步更新 Google 雲端硬碟檔名） */}
                         <div className="flex flex-wrap items-center gap-2">
                           <label className="text-[11px] font-bold text-[#5C3A1B] shrink-0">
                             語音檔案名稱：
@@ -1370,6 +1465,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           <div className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-xl">
                             <input
                               type="text"
+                              disabled={Boolean(renamingItemIds[item.id])}
                               value={titleValue}
                               onChange={(e) =>
                                 setEditingTitles((prev) => ({
@@ -1384,10 +1480,16 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                   handleSaveItemTitle(item, titleValue);
                                 }
                               }}
-                              placeholder="輸入語音檔案名稱..."
-                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                              placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
+                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] disabled:opacity-60"
                             />
-                            {editingTitles[item.id] !== undefined &&
+                            {renamingItemIds[item.id] ? (
+                              <span className="px-2.5 py-1.5 rounded-lg bg-amber-100 text-[#8B5A2B] text-xs font-semibold flex items-center gap-1 shrink-0">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>同步雲端硬碟檔名中...</span>
+                              </span>
+                            ) : (
+                              editingTitles[item.id] !== undefined &&
                               editingTitles[item.id].trim() !== '' &&
                               editingTitles[item.id].trim() !== item.title && (
                                 <button
@@ -1396,9 +1498,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                   className="px-2.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
                                 >
                                   <Check className="w-3.5 h-3.5" />
-                                  <span>儲存名稱</span>
+                                  <span>儲存並同步雲端檔名</span>
                                 </button>
-                              )}
+                              )
+                            )}
                           </div>
                         </div>
                       </div>

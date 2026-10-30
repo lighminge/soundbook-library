@@ -39,6 +39,7 @@ rules_version = '2';
 //       - slides: list (required, 0..100 items) - List of PlaybackSlide maps:
 //           - id: string (required, 1..128 chars)
 //           - imageDriveId: string (optional, 0..256 chars)
+//           - imageFileName: string (optional, 0..256 chars) - Display/file name of the slide image
 //           - imageUrl: string (required, 1..950000 chars, valid http/https/data/blob URL)
 //           - caption: string (required, 0..5000 chars)
 //           - timestampSec: number (required, 0..86400)
@@ -170,9 +171,10 @@ service cloud.firestore {
     function isValidPlaybackSlide(slide) {
       return slide is map &&
         slide.keys().hasAll(['id', 'imageUrl', 'caption', 'timestampSec']) &&
-        slide.keys().hasOnly(['id', 'imageDriveId', 'imageUrl', 'caption', 'timestampSec', 'endTimestampSec', 'startSegmentIndex', 'endSegmentIndex']) &&
+        slide.keys().hasOnly(['id', 'imageDriveId', 'imageFileName', 'imageUrl', 'caption', 'timestampSec', 'endTimestampSec', 'startSegmentIndex', 'endSegmentIndex']) &&
         slide.id is string && slide.id.size() >= 1 && slide.id.size() <= 128 &&
         (!('imageDriveId' in slide) || (slide.imageDriveId is string && slide.imageDriveId.size() <= 256)) &&
+        (!('imageFileName' in slide) || (slide.imageFileName is string && slide.imageFileName.size() <= 256)) &&
         isValidMediaUrl(slide.imageUrl) &&
         slide.caption is string && slide.caption.size() <= 5000 &&
         slide.timestampSec is number && slide.timestampSec >= 0 && slide.timestampSec <= 86400 &&
