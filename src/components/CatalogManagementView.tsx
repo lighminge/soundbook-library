@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   FolderKanban,
   Plus,
@@ -18,9 +18,17 @@ import {
   BookOpen,
   Play,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
-import { formatDuration, getCategoryIcon } from './DashboardView';
+import {
+  formatDuration,
+  getCategoryIcon,
+  THEME_COLOR_OPTIONS,
+  ICON_OPTIONS,
+} from './DashboardView';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -31,11 +39,12 @@ interface CatalogManagementViewProps {
   onDeleteCategory: (categoryId: string, migrateToCategoryId?: string) => Promise<void>;
   onSaveAudioItem: (item: AudioItem) => Promise<void>;
   onBatchMoveAudioCategory: (itemIds: string[], targetCategoryId: string) => Promise<void>;
+  onRemoveTagFromAllAudioItems?: (tagToRemove: string) => Promise<void>;
   onPlayInScreeningRoom: (item: AudioItem) => void;
   onEditInAudioLibrary: (item: AudioItem) => void;
 }
 
-const PRESET_GENRE_TAGS = [
+const DEFAULT_QUICK_TAGS = [
   '繪本',
   '小說',
   '經典童話',
@@ -48,23 +57,7 @@ const PRESET_GENRE_TAGS = [
   '生活手札',
 ];
 
-const THEME_COLOR_OPTIONS = [
-  { label: '古銅胡桃棕', value: '#8B5A2B' },
-  { label: '典藏松針綠', value: '#2E5A44' },
-  { label: '深海學院藍', value: '#2B4C7E' },
-  { label: '胭脂紫檀紅', value: '#7A3E65' },
-  { label: '琥珀焦糖金', value: '#B46528' },
-  { label: '沉穩石墨灰', value: '#3E4C59' },
-];
-
-const ICON_OPTIONS = [
-  { label: '書籍 (BookOpen)', value: 'BookOpen' },
-  { label: '歷史殿堂 (Landmark)', value: 'Landmark' },
-  { label: '探索羅盤 (Compass)', value: 'Compass' },
-  { label: '羽毛筆 (Feather)', value: 'Feather' },
-  { label: '音樂 (Music)', value: 'Music' },
-  { label: '全球 (Globe)', value: 'Globe' },
-];
+const QUICK_TAGS_STORAGE_KEY = 'soundbook_quick_tags_v1';
 
 export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   categories,
@@ -75,13 +68,45 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   onDeleteCategory,
   onSaveAudioItem,
   onBatchMoveAudioCategory,
+  onRemoveTagFromAllAudioItems,
   onPlayInScreeningRoom,
   onEditInAudioLibrary,
 }) => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const audioListSectionRef = useRef<HTMLElement | null>(null);
 
   // ============================================================================
-  // (a) & (c) 館藏分類：新增、修改、刪除、移動排序 狀態
+  // 快速標記 (Quick Tags) 狀態：支援新增自訂標籤同步加入、以及刪除確認視窗
+  // ============================================================================
+  const [quickTags, setQuickTags] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(QUICK_TAGS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return DEFAULT_QUICK_TAGS;
+  });
+
+  // 待刪除的快速標記類別標籤（控制系統風格確認視窗）
+  const [quickTagPendingDelete, setQuickTagPendingDelete] = useState<string | null>(null);
+
+  const saveQuickTags = (nextTags: string[]) => {
+    setQuickTags(nextTags);
+    try {
+      localStorage.setItem(QUICK_TAGS_STORAGE_KEY, JSON.stringify(nextTags));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  // ============================================================================
+  // 館藏分類：新增、修改、刪除、移動排序 狀態
   // ============================================================================
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
   const [newCatName, setNewCatName] = useState('');
@@ -107,11 +132,16 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [categoryDestForMove, setCategoryDestForMove] = useState<string>('');
 
   // ============================================================================
-  // (b) & (c) 語音檔館藏分類、說明內容、類別標籤管理 & 批次移動館藏分類 狀態
+  // 語音檔案館藏資料管理：三欄查詢（語音檔案名稱、館藏分類、說明內容）、分頁、編輯狀態
   // ============================================================================
+  const [searchTitle, setSearchTitle] = useState<string>('');
   const [filterCategoryId, setFilterCategoryId] = useState<string>('all');
+  const [searchDescription, setSearchDescription] = useState<string>('');
   const [filterTag, setFilterTag] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // 分頁狀態（以 10 的倍數選取）
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // 勾選批次移動館藏分類的語音檔 ID 集合
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -119,6 +149,8 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     categories[0]?.id || ''
   );
 
+  // 單筆語音檔「語音檔案名稱」即時編輯暫存 (key: item.id)
+  const [editingTitles, setEditingTitles] = useState<Record<string, string>>({});
   // 單筆語音檔「說明內容」即時編輯暫存 (key: item.id)
   const [editingDescriptions, setEditingDescriptions] = useState<Record<string, string>>({});
   // 單筆語音檔「自訂類別標籤」輸入框暫存 (key: item.id)
@@ -129,10 +161,19 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // 平滑捲動跳至下方「語音檔案館藏資料管理」清單
+  const scrollToAudioList = () => {
+    setTimeout(() => {
+      audioListSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 60);
+  };
+
   // ============================================================================
-  // (d) 統計各個館藏分類，各類別總數
+  // 統計各個館藏分類，各類別總數
   // ============================================================================
-  // 1. 全館各類別標籤 (tags) 總數統計
   const tagCountsMap = new Map<string, number>();
   let untaggedCount = 0;
 
@@ -150,9 +191,9 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }
   }
 
-  // 合併預設常用標籤與使用者自訂標籤，依數量由高至低排序
+  // 合併快速標記與目前語音檔已使用的標籤，依數量由高至低排序
   const allKnownTags = Array.from(
-    new Set([...PRESET_GENRE_TAGS, ...Array.from(tagCountsMap.keys())])
+    new Set([...quickTags, ...Array.from(tagCountsMap.keys())])
   );
   const sortedTagStats = allKnownTags
     .map((tag) => ({
@@ -161,7 +202,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'zh-Hant'));
 
-  // 2. 各個館藏分類統計（含該分類下的語音總數、總時長、以及該分類內各類別標籤的細項數量）
+  // 各個館藏分類統計（含該分類下的語音總數、總時長、以及該分類內各類別標籤的細項數量）
   const categoryStats = categories.map((cat) => {
     const itemsInCat = audioItems.filter((a) => a.categoryId === cat.id);
     const totalDuration = itemsInCat.reduce((sum, a) => sum + (a.duration || 0), 0);
@@ -196,7 +237,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   });
 
   // ============================================================================
-  // (a) 新增、修改、刪除館藏分類 處理函式
+  // 新增、修改、刪除、排序館藏分類 處理函式
   // ============================================================================
   const handleConfirmAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -246,9 +287,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     showToast(`✅ 已修改館藏分類「${updated.name}」並即時儲存至 Firebase！`);
   };
 
-  /**
-   * (c) 移動館藏分類排序（上移 / 下移）
-   */
   const handleMoveCategoryOrder = async (index: number, direction: 'up' | 'down') => {
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= categories.length) return;
@@ -267,9 +305,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     showToast(`✅ 已移動館藏分類「${temp.name}」的排列順序並同步儲存至 Firebase！`);
   };
 
-  /**
-   * (a) 確認刪除館藏分類（若有語音檔則自動遷移至指定分類）
-   */
   const handleConfirmDeleteCategory = async () => {
     if (!categoryPendingDelete) return;
     if (categories.length <= 1) {
@@ -291,9 +326,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     showToast(`✅ 已刪除館藏分類「${delName}」並同步更新 Firebase！`);
   };
 
-  /**
-   * (c) 將某個館藏分類下的所有語音檔，一次移動至另一個館藏分類
-   */
   const handleConfirmMoveAllCategoryItems = async () => {
     if (!categorySourceForMove || !categoryDestForMove) return;
     if (categorySourceForMove.id === categoryDestForMove) {
@@ -316,8 +348,30 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   };
 
   // ============================================================================
-  // (b) & (c) 管理每筆語音檔的 館藏分類、說明內容、類別標籤
+  // 管理每筆語音檔的 語音檔案名稱、館藏分類、說明內容、類別標籤
   // ============================================================================
+  const handleSaveItemTitle = async (item: AudioItem, nextTitle: string) => {
+    const trimmed = nextTitle.trim();
+    if (!trimmed) {
+      // 若清空則還原為原有名稱
+      setEditingTitles((prev) => {
+        const copy = { ...prev };
+        delete copy[item.id];
+        return copy;
+      });
+      return;
+    }
+    if (trimmed === item.title) return;
+
+    const updated: AudioItem = {
+      ...item,
+      title: trimmed,
+      updatedAt: new Date().toISOString(),
+    };
+    await onSaveAudioItem(updated);
+    showToast(`✅ 已將語音檔案名稱修改為「${trimmed}」並即時儲存至 Firebase！`);
+  };
+
   const handleSingleItemCategoryChange = async (item: AudioItem, nextCategoryId: string) => {
     if (item.categoryId === nextCategoryId) return;
     const targetCat = categories.find((c) => c.id === nextCategoryId);
@@ -378,6 +432,12 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     const currentTags = item.tags || [];
     const mergedTags = Array.from(new Set([...currentTags, ...splitTags]));
 
+    // 同步將新增的自訂類別標籤加入到「快速標記」清單中
+    const nextQuickTags = Array.from(new Set([...quickTags, ...splitTags]));
+    if (nextQuickTags.length !== quickTags.length) {
+      saveQuickTags(nextQuickTags);
+    }
+
     const updated: AudioItem = {
       ...item,
       tags: mergedTags,
@@ -387,13 +447,29 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     setCustomTagInputs((prev) => ({ ...prev, [item.id]: '' }));
     await onSaveAudioItem(updated);
     showToast(
-      `✅ 已為「${item.title}」新增類別標籤「${splitTags.join('、')}」並同步儲存至 Firebase！`
+      `✅ 已為「${item.title}」新增類別標籤「${splitTags.join('、')}」，並已同步加入至快速標記！`
     );
   };
 
-  /**
-   * (c) 批次移動已勾選的語音檔至指定館藏分類
-   */
+  // 確認刪除「快速標記」中的類別標籤
+  const handleConfirmDeleteQuickTag = async () => {
+    if (!quickTagPendingDelete) return;
+    const targetTag = quickTagPendingDelete;
+    const nextQuickTags = quickTags.filter((t) => t !== targetTag);
+    saveQuickTags(nextQuickTags);
+
+    if (onRemoveTagFromAllAudioItems) {
+      await onRemoveTagFromAllAudioItems(targetTag);
+    }
+
+    if (filterTag === targetTag) {
+      setFilterTag('all');
+    }
+
+    setQuickTagPendingDelete(null);
+    showToast(`✅ 已從快速標記中刪除類別標籤「${targetTag}」！`);
+  };
+
   const handleBatchMoveSelectedItems = async () => {
     if (selectedItemIds.length === 0) {
       showToast('請先在下方清單勾選要移動館藏分類的語音檔！');
@@ -411,10 +487,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     );
   };
 
-  // 篩選語音檔清單
+  // ============================================================================
+  // 篩選語音檔清單（分成：語音檔案名稱、館藏分類、說明內容、以及類別標籤篩選）
+  // ============================================================================
   const filteredAudioItems = audioItems.filter((item) => {
     const matchCategory =
       filterCategoryId === 'all' || item.categoryId === filterCategoryId;
+
     const itemTags = item.tags || [];
     const matchTag =
       filterTag === 'all'
@@ -422,15 +501,30 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         : filterTag === '__untagged__'
         ? itemTags.length === 0
         : itemTags.includes(filterTag);
-    const q = searchQuery.trim().toLowerCase();
-    const matchSearch =
-      !q ||
-      item.title.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q) ||
-      itemTags.some((t) => t.toLowerCase().includes(q));
 
-    return matchCategory && matchTag && matchSearch;
+    const qTitle = searchTitle.trim().toLowerCase();
+    const matchTitle = !qTitle || item.title.toLowerCase().includes(qTitle);
+
+    const qDesc = searchDescription.trim().toLowerCase();
+    const matchDesc = !qDesc || item.description.toLowerCase().includes(qDesc);
+
+    return matchCategory && matchTag && matchTitle && matchDesc;
   });
+
+  // 分頁計算（10 的倍數）
+  const totalItems = filteredAudioItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const paginatedAudioItems = filteredAudioItems.slice(
+    startIndex,
+    startIndex + pageSize
+  );
+
+  // 當篩選條件或每頁筆數改變時，自動回到第 1 頁
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTitle, filterCategoryId, searchDescription, filterTag, pageSize]);
 
   const allFilteredSelected =
     filteredAudioItems.length > 0 &&
@@ -457,7 +551,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             館藏資料管理（分類維護 · 類別標籤 · 館藏遷移 · 總數統計）
           </h2>
           <p className="text-xs text-[#6E5D4F] mt-1">
-            在此集中管理所有「館藏分類（新增 / 修改 / 刪除 / 移動排序）」與每筆語音檔的「館藏分類、說明內容、類別標籤（如：繪本、小說等）」，所有變更皆即時同步儲存至 Firebase。
+            在此集中管理所有「館藏分類（新增 / 修改 / 刪除 / 移動排序）」與每筆語音檔的「語音檔案名稱、館藏分類、說明內容、類別標籤（如：繪本、小說等）」，所有變更皆即時同步儲存至 Firebase。
           </p>
         </div>
 
@@ -472,7 +566,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       </div>
 
       {/* ========================================================================
-          區塊 (d)：統計各個館藏分類，各類別總數
+          區塊 1：館藏分類與各類別標籤總數統計
          ======================================================================== */}
       <section className="parchment-card rounded-2xl p-6 shadow-md space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5D9C5] pb-4">
@@ -482,7 +576,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             </div>
             <div>
               <h3 className="text-lg font-bold font-serif-tc text-[#2C221E]">
-                (d) 館藏分類與各類別標籤總數統計
+                館藏分類與各類別標籤總數統計
               </h3>
               <p className="text-xs text-[#7A6855]">
                 即時統計全館 {categories.length} 個館藏分類、共 {audioItems.length} 部語音檔之分類分佈與各「類別標籤（繪本、小說等）」總數
@@ -503,11 +597,11 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
           </div>
         </div>
 
-        {/* 1. 各個館藏分類統計卡 (含分類內各類別標籤統計) */}
+        {/* 1. 各個館藏分類統計卡 (點擊後篩選並跳至下方清單) */}
         <div className="space-y-3">
           <h4 className="text-xs font-bold text-[#5C3A1B] uppercase tracking-wider flex items-center gap-1.5">
             <BookOpen className="w-3.5 h-3.5 text-[#8B5A2B]" />
-            <span>1. 各個館藏分類總數與分類內「類別標籤」分佈統計（點擊卡片可篩選下方清單）</span>
+            <span>1. 各個館藏分類總數與分類內「類別標籤」分佈統計（點擊卡片可篩選並跳至下方清單）</span>
           </h4>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -521,9 +615,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               return (
                 <div
                   key={stat.category.id}
-                  onClick={() =>
-                    setFilterCategoryId(isSelectedCat ? 'all' : stat.category.id)
-                  }
+                  onClick={() => {
+                    setFilterCategoryId(isSelectedCat ? 'all' : stat.category.id);
+                    scrollToAudioList();
+                  }}
                   className={`rounded-xl p-4 border transition cursor-pointer flex flex-col justify-between gap-3 ${
                     isSelectedCat
                       ? 'bg-[#FFFDF7] border-2 border-[#8B5A2B] shadow-md'
@@ -599,17 +694,20 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
           </div>
         </div>
 
-        {/* 2. 全館各「類別標籤 (如：繪本、小說...)」總數統計 */}
+        {/* 2. 全館各「類別標籤 (如：繪本、小說...)」總數統計 (點擊後篩選並跳至下方清單) */}
         <div className="p-4 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-bold text-[#3A2518] flex items-center gap-1.5">
               <Tag className="w-3.5 h-3.5 text-[#2E5A44]" />
-              <span>2. 全館各「類別標籤（繪本、小說、童話、科普...）」總數統計（點擊標籤可快速篩選）：</span>
+              <span>2. 全館各「類別標籤（繪本、小說、童話、科普...）」總數統計（點擊標籤可篩選並跳至下方清單）：</span>
             </h4>
             {filterTag !== 'all' && (
               <button
                 type="button"
-                onClick={() => setFilterTag('all')}
+                onClick={() => {
+                  setFilterTag('all');
+                  scrollToAudioList();
+                }}
                 className="text-xs text-[#8B5A2B] hover:underline font-semibold cursor-pointer"
               >
                 清除類別篩選 (顯示全部)
@@ -620,7 +718,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setFilterTag('all')}
+              onClick={() => {
+                setFilterTag('all');
+                scrollToAudioList();
+              }}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
                 filterTag === 'all'
                   ? 'bg-[#3A2518] text-white shadow-xs'
@@ -639,7 +740,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 <button
                   key={tag}
                   type="button"
-                  onClick={() => setFilterTag(active ? 'all' : tag)}
+                  onClick={() => {
+                    setFilterTag(active ? 'all' : tag);
+                    scrollToAudioList();
+                  }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
                     active
                       ? 'bg-[#2E5A44] text-white shadow-xs'
@@ -668,9 +772,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             {untaggedCount > 0 && (
               <button
                 type="button"
-                onClick={() =>
-                  setFilterTag(filterTag === '__untagged__' ? 'all' : '__untagged__')
-                }
+                onClick={() => {
+                  setFilterTag(filterTag === '__untagged__' ? 'all' : '__untagged__');
+                  scrollToAudioList();
+                }}
                 className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
                   filterTag === '__untagged__'
                     ? 'bg-amber-700 text-white'
@@ -688,13 +793,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       </section>
 
       {/* ========================================================================
-          區塊 (a) & (c)：館藏分類管理（新增、修改、刪除、移動排序、整館遷移）
+          區塊 2：館藏分類管理（新增、修改、刪除、移動排序、整館遷移）
          ======================================================================== */}
       <section className="parchment-card rounded-2xl p-6 shadow-md space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5D9C5] pb-4">
           <div>
             <h3 className="text-lg font-bold font-serif-tc text-[#2C221E]">
-              (a) & (c) 館藏分類管理（新增 · 修改 · 刪除 · 移動分類順序與整館遷移）
+              館藏分類管理（新增 · 修改 · 刪除 · 移動分類順序與整館遷移）
             </h3>
             <p className="text-xs text-[#7A6855]">
               可隨時新增館藏分類、修改分類名稱與索書號代碼、上下移動館藏分類排列順序，或將整個分類的館藏移動至其他分類
@@ -782,7 +887,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <div>
                         <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
-                          代表色系
+                          代表色系（共 {THEME_COLOR_OPTIONS.length} 種）
                         </label>
                         <select
                           value={editCatColor}
@@ -798,7 +903,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       </div>
                       <div>
                         <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
-                          館廳圖示
+                          館廳圖示（共 {ICON_OPTIONS.length} 種）
                         </label>
                         <select
                           value={editCatIcon}
@@ -939,111 +1044,267 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       </section>
 
       {/* ========================================================================
-          區塊 (b) & (c)：管理每筆語音檔的 館藏分類、說明內容、類別標籤 (如：繪本、小說...)
+          區塊 3：語音檔案館藏資料管理（語音檔案名稱 · 館藏分類 · 說明內容 · 類別標籤設定）
          ======================================================================== */}
-      <section className="parchment-card rounded-2xl p-6 shadow-md space-y-5">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[#E5D9C5] pb-4">
-          <div>
-            <h3 className="text-lg font-bold font-serif-tc text-[#2C221E]">
-              (b) & (c) 語音檔案館藏資料管理（館藏分類 · 說明內容 · 類別標籤設定）
-            </h3>
-            <p className="text-xs text-[#7A6855]">
-              可直接調整每筆語音檔的「館藏分類」、修改「說明內容」，並為每個檔案標記「類別標籤（如：繪本、小說、童話、科普等）」，修改後立即自動儲存
-            </p>
-          </div>
-
-          {/* 搜尋與過濾控制列 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={filterCategoryId}
-              onChange={(e) => setFilterCategoryId(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E]"
-            >
-              <option value="all">所有館藏分類 ({audioItems.length})</option>
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  [{cat.code}] {cat.name} (
-                  {audioItems.filter((a) => a.categoryId === cat.id).length})
-                </option>
-              ))}
-            </select>
-
-            <div className="relative w-full sm:w-60">
-              <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜尋標題、說明或類別標籤..."
-                className="w-full pl-8 pr-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
-              />
-            </div>
-          </div>
+      <section
+        ref={audioListSectionRef}
+        className="parchment-card rounded-2xl p-6 shadow-md space-y-5 scroll-mt-20"
+      >
+        <div className="border-b border-[#E5D9C5] pb-4">
+          <h3 className="text-lg font-bold font-serif-tc text-[#2C221E]">
+            語音檔案館藏資料管理（語音檔案名稱 · 館藏分類 · 說明內容 · 類別標籤設定）
+          </h3>
+          <p className="text-xs text-[#7A6855] mt-1">
+            可直接修改每筆語音檔的「語音檔案名稱」、調整「館藏分類」、編輯「說明內容」，並為每個檔案標記「類別標籤（如：繪本、小說、童話、科普等）」，修改後立即自動儲存
+          </p>
         </div>
 
-        {/* 批次勾選移動館藏分類工具列 */}
-        <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-xs font-semibold text-[#3A2518] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allFilteredSelected}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedItemIds(filteredAudioItems.map((i) => i.id));
-                  } else {
-                    setSelectedItemIds([]);
-                  }
+        {/* 查詢區塊：分成 語音檔案名稱、館藏分類、說明內容 三個查詢欄位 */}
+        <div className="p-4 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4] space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold text-[#3A2518] flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-[#8B5A2B]" />
+              <span>館藏清單多欄位查詢（語音檔案名稱 · 館藏分類 · 說明內容）：</span>
+            </span>
+
+            {(searchTitle ||
+              filterCategoryId !== 'all' ||
+              searchDescription ||
+              filterTag !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTitle('');
+                  setFilterCategoryId('all');
+                  setSearchDescription('');
+                  setFilterTag('all');
                 }}
-                className="w-4 h-4 accent-[#8B5A2B] rounded cursor-pointer"
-              />
-              <span>全選目前清單 ({filteredAudioItems.length} 筆)</span>
-            </label>
-            {selectedItemIds.length > 0 && (
-              <span className="px-2.5 py-0.5 rounded-full bg-[#8B5A2B] text-white text-xs font-semibold">
-                已勾選 {selectedItemIds.length} 筆語音檔
-              </span>
+                className="px-2.5 py-1 rounded-lg bg-[#8B5A2B]/15 hover:bg-[#8B5A2B] text-[#8B5A2B] hover:text-white text-xs font-semibold transition cursor-pointer"
+              >
+                清除所有查詢條件
+              </button>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-[#5C3A1B]">
-              將勾選項目移動至館藏分類：
-            </span>
-            <select
-              value={batchTargetCategoryId || categories[0]?.id || ''}
-              onChange={(e) => setBatchTargetCategoryId(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs font-medium text-[#2C221E]"
-            >
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  [{cat.code}] {cat.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={selectedItemIds.length === 0}
-              onClick={handleBatchMoveSelectedItems}
-              className="px-3.5 py-1.5 rounded-lg bg-[#2B4C7E] hover:bg-[#1E385F] disabled:opacity-45 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-            >
-              <ArrowRightLeft className="w-3.5 h-3.5" />
-              <span>批次移動館藏分類</span>
-            </button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* 欄位 1：語音檔案名稱 */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                1. 語音檔案名稱
+              </label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchTitle}
+                  onChange={(e) => setSearchTitle(e.target.value)}
+                  placeholder="輸入語音檔案名稱查詢..."
+                  className="w-full pl-8 pr-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+                />
+              </div>
+            </div>
+
+            {/* 欄位 2：館藏分類 */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                2. 館藏分類
+              </label>
+              <select
+                value={filterCategoryId}
+                onChange={(e) => setFilterCategoryId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+              >
+                <option value="all">所有館藏分類 ({audioItems.length})</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    [{cat.code}] {cat.name} (
+                    {audioItems.filter((a) => a.categoryId === cat.id).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 欄位 3：說明內容 */}
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                3. 說明內容
+              </label>
+              <div className="relative">
+                <FileText className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchDescription}
+                  onChange={(e) => setSearchDescription(e.target.value)}
+                  placeholder="輸入說明內容關鍵字查詢..."
+                  className="w-full pl-8 pr-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {filterTag !== 'all' && (
+            <div className="flex items-center gap-2 pt-1 text-xs">
+              <span className="text-[#5C3A1B] font-semibold">目前篩選類別標籤：</span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#2E5A44] text-white font-semibold">
+                <Tag className="w-3 h-3" />
+                <span>{filterTag === '__untagged__' ? '尚未標記類別' : filterTag}</span>
+                <button
+                  type="button"
+                  onClick={() => setFilterTag('all')}
+                  className="ml-1 hover:text-amber-200 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 清單上方分頁控制列（以 10 的倍數選取）與批次移動工具列 */}
+        <div className="space-y-3">
+          {/* 上方分頁控制列 */}
+          <div className="p-3.5 rounded-xl bg-[#EFE6D5] border border-[#D8C7AE] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-[#3A2518]">
+              <span className="font-bold">
+                共 <strong className="text-[#8B5A2B] font-mono text-sm">{totalItems}</strong> 筆語音檔案
+              </span>
+              {totalItems > 0 && (
+                <span className="text-[#6E5D4F]">
+                  （目前顯示第{' '}
+                  <strong className="font-mono text-[#2C221E]">{startIndex + 1}</strong> -{' '}
+                  <strong className="font-mono text-[#2C221E]">
+                    {Math.min(startIndex + pageSize, totalItems)}
+                  </strong>{' '}
+                  筆）
+                </span>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <label className="font-semibold text-[#5C3A1B]">每頁顯示筆數：</label>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-mono font-bold text-[#2C221E] cursor-pointer"
+                >
+                  {[10, 20, 30, 40, 50].map((size) => (
+                    <option key={size} value={size}>
+                      {size} 筆 / 頁
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* 頁碼切換按鈕 */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={safeCurrentPage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>上一頁</span>
+              </button>
+
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                  <button
+                    key={pageNum}
+                    type="button"
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
+                      pageNum === safeCurrentPage
+                        ? 'bg-[#8B5A2B] text-white shadow-xs'
+                        : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={safeCurrentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+              >
+                <span>下一頁</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* 批次勾選移動館藏分類工具列 */}
+          <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#3A2518] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedItemIds(filteredAudioItems.map((i) => i.id));
+                    } else {
+                      setSelectedItemIds([]);
+                    }
+                  }}
+                  className="w-4 h-4 accent-[#8B5A2B] rounded cursor-pointer"
+                />
+                <span>全選查詢結果 ({filteredAudioItems.length} 筆)</span>
+              </label>
+              {selectedItemIds.length > 0 && (
+                <span className="px-2.5 py-0.5 rounded-full bg-[#8B5A2B] text-white text-xs font-semibold">
+                  已勾選 {selectedItemIds.length} 筆語音檔
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-[#5C3A1B]">
+                將勾選項目移動至館藏分類：
+              </span>
+              <select
+                value={batchTargetCategoryId || categories[0]?.id || ''}
+                onChange={(e) => setBatchTargetCategoryId(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs font-medium text-[#2C221E]"
+              >
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    [{cat.code}] {cat.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={selectedItemIds.length === 0}
+                onClick={handleBatchMoveSelectedItems}
+                className="px-3.5 py-1.5 rounded-lg bg-[#2B4C7E] hover:bg-[#1E385F] disabled:opacity-45 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                <span>批次移動館藏分類</span>
+              </button>
+            </div>
           </div>
         </div>
 
         {/* 語音檔詳細館藏管理卡片清單 */}
         <div className="space-y-4">
-          {filteredAudioItems.length === 0 ? (
+          {paginatedAudioItems.length === 0 ? (
             <div className="p-10 text-center rounded-xl border border-dashed border-[#D5C5AE] bg-white/60 text-xs text-[#7A6855]">
-              目前篩選條件下沒有符合的語音檔。
+              目前查詢條件下沒有符合的語音檔。
             </div>
           ) : (
-            filteredAudioItems.map((item, idx) => {
+            paginatedAudioItems.map((item, idx) => {
+              const globalIdx = startIndex + idx;
               const isChecked = selectedItemIds.includes(item.id);
               const currentCat = categories.find((c) => c.id === item.categoryId);
               const itemTags = item.tags || [];
+              const titleValue =
+                editingTitles[item.id] !== undefined
+                  ? editingTitles[item.id]
+                  : item.title;
               const descValue =
                 editingDescriptions[item.id] !== undefined
                   ? editingDescriptions[item.id]
@@ -1058,9 +1319,9 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       : 'bg-white border-[#E2D5C1] hover:border-[#8B5A2B]'
                   }`}
                 >
-                  {/* 卡片頂部：勾選框 + 封面 + 標題 + 快速移動館藏分類下拉選單 */}
+                  {/* 卡片頂部：勾選框 + 封面 + 語音檔案名稱修改 + 快速移動館藏分類下拉選單 */}
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-[#EFE6D5]">
-                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                    <div className="flex items-start sm:items-center gap-3.5 min-w-0 flex-1">
                       <input
                         type="checkbox"
                         checked={isChecked}
@@ -1082,10 +1343,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         className="w-14 h-18 rounded-lg object-cover border border-[#D5C5AE] shrink-0"
                       />
 
-                      <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
-                            #{idx + 1}
+                            #{globalIdx + 1}
                           </span>
                           {currentCat && (
                             <span
@@ -1100,9 +1361,46 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                             {formatDuration(item.duration)}
                           </span>
                         </div>
-                        <h4 className="font-bold font-serif-tc text-base text-[#2C221E]">
-                          {item.title}
-                        </h4>
+
+                        {/* 語音檔案名稱直接修改欄位 */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="text-[11px] font-bold text-[#5C3A1B] shrink-0">
+                            語音檔案名稱：
+                          </label>
+                          <div className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-xl">
+                            <input
+                              type="text"
+                              value={titleValue}
+                              onChange={(e) =>
+                                setEditingTitles((prev) => ({
+                                  ...prev,
+                                  [item.id]: e.target.value,
+                                }))
+                              }
+                              onBlur={(e) => handleSaveItemTitle(item, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSaveItemTitle(item, titleValue);
+                                }
+                              }}
+                              placeholder="輸入語音檔案名稱..."
+                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                            />
+                            {editingTitles[item.id] !== undefined &&
+                              editingTitles[item.id].trim() !== '' &&
+                              editingTitles[item.id].trim() !== item.title && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveItemTitle(item, titleValue)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>儲存名稱</span>
+                                </button>
+                              )}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1194,7 +1492,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           </span>
                         </label>
                         <span className="text-[11px] text-[#7A6855]">
-                          點擊下方常用類別即可快速標記或取消
+                          點擊下方快速標記即可套用或取消，點擊「×」可從快速標記中刪除
                         </span>
                       </div>
 
@@ -1216,7 +1514,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                 type="button"
                                 onClick={() => handleToggleItemTag(item, tag)}
                                 className="ml-0.5 p-0.5 rounded hover:bg-white/20 text-white/90 cursor-pointer"
-                                title={`移除「${tag}」標籤`}
+                                title={`從此語音檔移除「${tag}」標籤`}
                               >
                                 <X className="w-3 h-3" />
                               </button>
@@ -1225,31 +1523,48 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         )}
                       </div>
 
-                      {/* 預設常用類別標籤快速點選列 */}
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-[#E5D9C5]">
+                      {/* 快速標記類別標籤列（支援點選標記 + 刪除快速標記按鈕） */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[#E5D9C5]">
                         <span className="text-[11px] font-semibold text-[#6E5D4F] mr-1">
                           快速標記：
                         </span>
-                        {PRESET_GENRE_TAGS.map((presetTag) => {
+                        {quickTags.map((presetTag) => {
                           const isTagged = itemTags.includes(presetTag);
                           return (
-                            <button
+                            <div
                               key={presetTag}
-                              type="button"
-                              onClick={() => handleToggleItemTag(item, presetTag)}
-                              className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                              className={`inline-flex items-center rounded-md text-[11px] font-semibold transition overflow-hidden border ${
                                 isTagged
-                                  ? 'bg-[#2E5A44]/20 text-[#2E5A44] border border-[#2E5A44]'
-                                  : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:border-[#8B5A2B]'
+                                  ? 'bg-[#2E5A44]/20 text-[#2E5A44] border-[#2E5A44]'
+                                  : 'bg-white text-[#5C3A1B] border-[#D5C5AE] hover:border-[#8B5A2B]'
                               }`}
                             >
-                              {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleItemTag(item, presetTag)}
+                                className="px-2 py-0.5 cursor-pointer"
+                                title={
+                                  isTagged
+                                    ? `點擊取消標記「${presetTag}」`
+                                    : `點擊為此語音檔標記「${presetTag}」`
+                                }
+                              >
+                                {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setQuickTagPendingDelete(presetTag)}
+                                className="px-1.5 py-0.5 border-l border-[#D5C5AE]/70 hover:bg-red-600 hover:text-white text-[#8B735B] transition cursor-pointer"
+                                title={`從快速標記清單中刪除「${presetTag}」`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
                           );
                         })}
                       </div>
 
-                      {/* 自訂類別標籤輸入框 */}
+                      {/* 自訂類別標籤輸入框（新增後自動加入快速標記） */}
                       <div className="flex items-center gap-2 pt-1">
                         <input
                           type="text"
@@ -1266,7 +1581,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                               handleAddCustomTagToItem(item);
                             }
                           }}
-                          placeholder="輸入自訂類別（例如：繪本、奇幻小說、兒童故事... 按 Enter 新增）"
+                          placeholder="輸入自訂類別（例如：繪本、奇幻小說... 新增後將自動加入快速標記）"
                           className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
                         />
                         <button
@@ -1285,10 +1600,46 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             })
           )}
         </div>
+
+        {/* 清單底部也提供分頁切換列（當頁數大於 1 時方便直接翻頁） */}
+        {totalItems > 0 && (
+          <div className="p-3.5 rounded-xl bg-[#EFE6D5] border border-[#D8C7AE] flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs text-[#5C3A1B] font-semibold">
+              第 <strong>{safeCurrentPage}</strong> / <strong>{totalPages}</strong> 頁（共{' '}
+              <strong>{totalItems}</strong> 筆）
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={safeCurrentPage <= 1}
+                onClick={() => {
+                  setCurrentPage((p) => Math.max(1, p - 1));
+                  scrollToAudioList();
+                }}
+                className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>上一頁</span>
+              </button>
+              <button
+                type="button"
+                disabled={safeCurrentPage >= totalPages}
+                onClick={() => {
+                  setCurrentPage((p) => Math.min(totalPages, p + 1));
+                  scrollToAudioList();
+                }}
+                className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+              >
+                <span>下一頁</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* ========================================================================
-          Modal 1：新增館藏分類視窗
+          Modal 1：新增館藏分類視窗（20 個代表色系 + 20 個館廳圖示）
          ======================================================================== */}
       {showAddCategoryModal && (
         <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1354,7 +1705,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    代表色系
+                    代表色系（共 {THEME_COLOR_OPTIONS.length} 種）
                   </label>
                   <select
                     value={newCatColor}
@@ -1363,14 +1714,14 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   >
                     {THEME_COLOR_OPTIONS.map((c) => (
                       <option key={c.value} value={c.value}>
-                        {c.label}
+                        {c.label} ({c.value})
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    館廳圖示
+                    館廳圖示（共 {ICON_OPTIONS.length} 種）
                   </label>
                   <select
                     value={newCatIcon}
@@ -1563,6 +1914,77 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 >
                   <Check className="w-4 h-4" />
                   <span>確認移動館藏分類</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 4：刪除「快速標記」類別標籤確認視窗（符合系統典藏風格）
+         ======================================================================== */}
+      {quickTagPendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#3A2218] to-[#522D20] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-300/30 flex items-center justify-center text-red-200">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  刪除快速標記類別確認
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickTagPendingDelete(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-[#3A2D25] leading-relaxed">
+                確定要從「快速標記」清單中刪除類別標籤「
+                <strong className="text-[#8B5A2B]">{quickTagPendingDelete}</strong>
+                」嗎？
+              </p>
+
+              {(() => {
+                const usedCount = tagCountsMap.get(quickTagPendingDelete) || 0;
+                if (usedCount > 0) {
+                  return (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#6E4720] leading-relaxed">
+                      ⚠️ 目前共有 <strong>{usedCount}</strong> 筆語音檔標記了「
+                      <strong>{quickTagPendingDelete}</strong>
+                      」，確認刪除後也會一併從這些語音檔中移除此類別標籤並同步更新 Firebase。
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] text-xs text-[#5C4938]">
+                    目前沒有任何語音檔使用此標籤，可直接從快速標記清單中安全移除。
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  onClick={() => setQuickTagPendingDelete(null)}
+                  className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] cursor-pointer"
+                >
+                  保留標籤 (取消)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteQuickTag}
+                  className="px-5 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>確認刪除類別標籤</span>
                 </button>
               </div>
             </div>

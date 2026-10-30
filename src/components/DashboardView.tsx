@@ -4,6 +4,22 @@ import {
   Landmark,
   Compass,
   Feather,
+  Music,
+  Globe,
+  Mic,
+  Headphones,
+  Sparkles,
+  Heart,
+  Star,
+  Award,
+  Scroll,
+  GraduationCap,
+  Palette,
+  Film,
+  Coffee,
+  Sun,
+  Moon,
+  Trees,
   Play,
   Edit3,
   Plus,
@@ -11,12 +27,56 @@ import {
   Clock,
   HardDrive,
   Database,
-  Sparkles,
   FolderPlus,
   ChevronRight,
-  Headphones,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
+
+export const THEME_COLOR_OPTIONS = [
+  { label: '1. 古銅胡桃棕 (#8B5A2B)', value: '#8B5A2B' },
+  { label: '2. 典藏松針綠 (#2E5A44)', value: '#2E5A44' },
+  { label: '3. 深海學院藍 (#2B4C7E)', value: '#2B4C7E' },
+  { label: '4. 胭脂紫檀紅 (#7A3E65)', value: '#7A3E65' },
+  { label: '5. 琥珀焦糖金 (#B46528)', value: '#B46528' },
+  { label: '6. 沉穩石墨灰 (#3E4C59)', value: '#3E4C59' },
+  { label: '7. 緋紅硃砂印 (#9E2A2B)', value: '#9E2A2B' },
+  { label: '8. 翡翠青瓷綠 (#2A6F68)', value: '#2A6F68' },
+  { label: '9. 皇家靛青藍 (#3B3561)', value: '#3B3561' },
+  { label: '10. 栗木深褐紅 (#6F3B2A)', value: '#6F3B2A' },
+  { label: '11. 橄欖苔原綠 (#556B2F)', value: '#556B2F' },
+  { label: '12. 暮光紫羅蘭 (#5E3A73)', value: '#5E3A73' },
+  { label: '13. 復古磚窯橘 (#B85D3B)', value: '#B85D3B' },
+  { label: '14. 孔雀藍綠釉 (#1F618D)', value: '#1F618D' },
+  { label: '15. 玫瑰暗酒紅 (#802F48)', value: '#802F48' },
+  { label: '16. 暖砂駝絨棕 (#9A7B4F)', value: '#9A7B4F' },
+  { label: '17. 森林冷杉綠 (#1E4631)', value: '#1E4631' },
+  { label: '18. 午夜星空藍 (#1B263B)', value: '#1B263B' },
+  { label: '19. 赭石陶土橘 (#A44A3F)', value: '#A44A3F' },
+  { label: '20. 黑檀墨玉色 (#3A2518)', value: '#3A2518' },
+];
+
+export const ICON_OPTIONS = [
+  { label: '1. 書籍典藏 (BookOpen)', value: 'BookOpen' },
+  { label: '2. 歷史殿堂 (Landmark)', value: 'Landmark' },
+  { label: '3. 探索羅盤 (Compass)', value: 'Compass' },
+  { label: '4. 文學羽毛筆 (Feather)', value: 'Feather' },
+  { label: '5. 音樂旋律 (Music)', value: 'Music' },
+  { label: '6. 世界寰宇 (Globe)', value: 'Globe' },
+  { label: '7. 語音麥克風 (Mic)', value: 'Mic' },
+  { label: '8. 聆聽耳機 (Headphones)', value: 'Headphones' },
+  { label: '9. 靈感星光 (Sparkles)', value: 'Sparkles' },
+  { label: '10. 溫馨愛心 (Heart)', value: 'Heart' },
+  { label: '11. 精選星標 (Star)', value: 'Star' },
+  { label: '12. 榮譽獎章 (Award)', value: 'Award' },
+  { label: '13. 古典卷軸 (Scroll)', value: 'Scroll' },
+  { label: '14. 學術教育 (GraduationCap)', value: 'GraduationCap' },
+  { label: '15. 藝術調色盤 (Palette)', value: 'Palette' },
+  { label: '16. 影像劇院 (Film)', value: 'Film' },
+  { label: '17. 午後咖啡 (Coffee)', value: 'Coffee' },
+  { label: '18. 晨光暖陽 (Sun)', value: 'Sun' },
+  { label: '19. 夜讀月光 (Moon)', value: 'Moon' },
+  { label: '20. 自然山林 (Trees)', value: 'Trees' },
+];
 
 interface DashboardViewProps {
   categories: Category[];
@@ -39,6 +99,38 @@ export function getCategoryIcon(iconName: string, className = 'w-5 h-5') {
       return <Compass className={className} />;
     case 'Feather':
       return <Feather className={className} />;
+    case 'Music':
+      return <Music className={className} />;
+    case 'Globe':
+      return <Globe className={className} />;
+    case 'Mic':
+      return <Mic className={className} />;
+    case 'Headphones':
+      return <Headphones className={className} />;
+    case 'Sparkles':
+      return <Sparkles className={className} />;
+    case 'Heart':
+      return <Heart className={className} />;
+    case 'Star':
+      return <Star className={className} />;
+    case 'Award':
+      return <Award className={className} />;
+    case 'Scroll':
+      return <Scroll className={className} />;
+    case 'GraduationCap':
+      return <GraduationCap className={className} />;
+    case 'Palette':
+      return <Palette className={className} />;
+    case 'Film':
+      return <Film className={className} />;
+    case 'Coffee':
+      return <Coffee className={className} />;
+    case 'Sun':
+      return <Sun className={className} />;
+    case 'Moon':
+      return <Moon className={className} />;
+    case 'Trees':
+      return <Trees className={className} />;
     case 'BookOpen':
     default:
       return <BookOpen className={className} />;
@@ -439,52 +531,52 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    圖書館索書號代碼
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="例如：LAN-500"
-                    value={newCatCode}
-                    onChange={(e) => setNewCatCode(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-sm font-mono focus:outline-none focus:border-[#8B5A2B]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    代表主題色
-                  </label>
-                  <input
-                    type="color"
-                    value={newCatColor}
-                    onChange={(e) => setNewCatColor(e.target.value)}
-                    className="w-full h-9 rounded-lg border border-[#D5C5AE] bg-white p-1 cursor-pointer"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                  代表圖示
+                  圖書館索書號代碼
                 </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['BookOpen', 'Landmark', 'Compass', 'Feather'] as const).map((ic) => (
-                    <button
-                      type="button"
-                      key={ic}
-                      onClick={() => setNewCatIcon(ic)}
-                      className={`py-2 rounded-lg border flex flex-col items-center gap-1 text-xs cursor-pointer ${
-                        newCatIcon === ic
-                          ? 'border-[#8B5A2B] bg-[#8B5A2B]/10 text-[#8B5A2B] font-semibold'
-                          : 'border-[#E2D5C1] text-[#6E5D4F]'
-                      }`}
-                    >
-                      {getCategoryIcon(ic, 'w-4 h-4')}
-                      <span>{ic}</span>
-                    </button>
-                  ))}
+                <input
+                  type="text"
+                  placeholder="例如：LAN-500"
+                  value={newCatCode}
+                  onChange={(e) => setNewCatCode(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-sm font-mono focus:outline-none focus:border-[#8B5A2B]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    代表色系 (共 20 色)
+                  </label>
+                  <select
+                    value={newCatColor}
+                    onChange={(e) => setNewCatColor(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-medium focus:outline-none focus:border-[#8B5A2B]"
+                  >
+                    {THEME_COLOR_OPTIONS.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    館廳圖示 (共 20 款)
+                  </label>
+                  <select
+                    value={newCatIcon}
+                    onChange={(e) => setNewCatIcon(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-medium focus:outline-none focus:border-[#8B5A2B]"
+                  >
+                    {ICON_OPTIONS.map((ic) => (
+                      <option key={ic.value} value={ic.value}>
+                        {ic.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

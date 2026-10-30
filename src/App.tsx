@@ -143,6 +143,32 @@ export function App() {
     await Promise.all(updatedList.map((item) => saveAudioItem(item, nextItems)));
   };
 
+  // 從所有語音檔中移除指定類別標籤
+  const handleRemoveTagFromAllAudioItems = async (tagToRemove: string) => {
+    const clean = tagToRemove.trim();
+    if (!clean) return;
+    const now = new Date().toISOString();
+    const affectedIds = new Set<string>();
+    const nextItems = audioItems.map((a) => {
+      const currentTags = a.tags || [];
+      if (currentTags.includes(clean)) {
+        affectedIds.add(a.id);
+        return {
+          ...a,
+          tags: currentTags.filter((t) => t !== clean),
+          updatedAt: now,
+        };
+      }
+      return a;
+    });
+
+    if (affectedIds.size > 0) {
+      setAudioItems(nextItems);
+      const updatedList = nextItems.filter((a) => affectedIds.has(a.id));
+      await Promise.all(updatedList.map((item) => saveAudioItem(item, nextItems)));
+    }
+  };
+
   // 儲存（新增或更新）語音檔
   const handleSaveAudioItem = async (item: AudioItem) => {
     const exists = audioItems.some((a) => a.id === item.id);
@@ -373,6 +399,7 @@ export function App() {
             onDeleteCategory={handleDeleteCategory}
             onSaveAudioItem={handleSaveAudioItem}
             onBatchMoveAudioCategory={handleBatchMoveAudioCategory}
+            onRemoveTagFromAllAudioItems={handleRemoveTagFromAllAudioItems}
             onPlayInScreeningRoom={(item) => {
               setActiveAudioForPlayback(item);
               setActiveTab('screening');
