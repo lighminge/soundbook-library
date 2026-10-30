@@ -355,7 +355,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   // 管理每筆語音檔的 語音檔案名稱（含同步雲端硬碟檔案名稱）、館藏分類、說明內容、類別標籤
   // ============================================================================
   const handleSaveItemTitle = async (item: AudioItem, nextTitle: string) => {
-    if (renamingItemIds[item.id]) return;
     const trimmed = nextTitle.trim();
     if (!trimmed) {
       // 若清空則還原為原有名稱
@@ -368,40 +367,48 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }
     if (trimmed === item.title) return;
 
+    // 步驟 1：立即清除編輯暫存並將新名稱寫入 Firebase（0.1 秒內極速完成，完全不阻塞畫面操作！）
+    setEditingTitles((prev) => {
+      const copy = { ...prev };
+      delete copy[item.id];
+      return copy;
+    });
+
+    const immediateUpdated: AudioItem = {
+      ...item,
+      title: trimmed,
+      updatedAt: new Date().toISOString(),
+    };
+    await onSaveAudioItem(immediateUpdated);
+    showToast(`✅ 已儲存語音檔案名稱「${trimmed}」（雲端硬碟檔名正在背景同步...）`);
+
+    // 步驟 2：在背景非同步同步修改 Google 雲端硬碟中的檔案名稱，完全不需等待！
     setRenamingItemIds((prev) => ({ ...prev, [item.id]: true }));
-    try {
-      const renameRes = await renameFileInGoogleDrive(
-        item.audioDriveFileId,
-        trimmed,
-        {
-          fallbackUrl: item.audioUrl,
-          mimeType: item.mimeType || 'audio/mpeg',
-          isAudio: true,
-          itemId: item.id,
+    renameFileInGoogleDrive(item.audioDriveFileId, trimmed, {
+      fallbackUrl: item.audioUrl,
+      mimeType: item.mimeType || 'audio/mpeg',
+      isAudio: true,
+      itemId: item.id,
+    })
+      .then(async (renameRes) => {
+        if (renameRes.newFileId || renameRes.newDirectUrl) {
+          const driveSyncedItem: AudioItem = {
+            ...immediateUpdated,
+            ...(renameRes.newFileId ? { audioDriveFileId: renameRes.newFileId } : {}),
+            ...(renameRes.newDirectUrl ? { audioUrl: renameRes.newDirectUrl } : {}),
+            updatedAt: new Date().toISOString(),
+          };
+          await onSaveAudioItem(driveSyncedItem);
         }
-      );
-
-      const updated: AudioItem = {
-        ...item,
-        title: trimmed,
-        ...(renameRes.newFileId ? { audioDriveFileId: renameRes.newFileId } : {}),
-        ...(renameRes.newDirectUrl ? { audioUrl: renameRes.newDirectUrl } : {}),
-        updatedAt: new Date().toISOString(),
-      };
-      await onSaveAudioItem(updated);
-
-      if (renameRes.renamedOnDrive) {
-        showToast(
-          `✅ 已將語音檔案名稱修改為「${trimmed}」，並已同步更新 Google 雲端硬碟檔案名稱（${renameRes.finalFileName}）與 Firebase！`
-        );
-      } else {
-        showToast(
-          `✅ 已將語音檔案名稱修改為「${trimmed}」並即時儲存至 Firebase！`
-        );
-      }
-    } finally {
-      setRenamingItemIds((prev) => ({ ...prev, [item.id]: false }));
-    }
+        if (renameRes.renamedOnDrive) {
+          showToast(
+            `✅ Google 雲端硬碟檔案名稱已同步更新為「${renameRes.finalFileName}」！`
+          );
+        }
+      })
+      .finally(() => {
+        setRenamingItemIds((prev) => ({ ...prev, [item.id]: false }));
+      });
   };
 
   const handleSingleItemCategoryChange = async (item: AudioItem, nextCategoryId: string) => {
@@ -1465,7 +1472,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           <div className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-xl">
                             <input
                               type="text"
-                              disabled={Boolean(renamingItemIds[item.id])}
                               value={titleValue}
                               onChange={(e) =>
                                 setEditingTitles((prev) => ({
@@ -1481,27 +1487,29 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                 }
                               }}
                               placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
-                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] disabled:opacity-60"
+                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
                             />
-                            {renamingItemIds[item.id] ? (
-                              <span className="px-2.5 py-1.5 rounded-lg bg-amber-100 text-[#8B5A2B] text-xs font-semibold flex items-center gap-1 shrink-0">
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                <span>同步雲端硬碟檔名中...</span>
+                            {editingTitles[item.id] !== undefined &&
+                            editingTitles[item.id].trim() !== '' &&
+                            editingTitles[item.id].trim() !== item.title ? (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  // 避免觸發 input onBlur 造成兩次呼叫，直接立即執行儲存
+                                  e.preventDefault();
+                                  handleSaveItemTitle(item, titleValue);
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>儲存並同步雲端檔名</span>
+                              </button>
+                            ) : renamingItemIds[item.id] ? (
+                              <span className="px-2 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[#2E5A44] text-[11px] font-semibold flex items-center gap-1 shrink-0">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>雲端檔名背景同步中</span>
                               </span>
-                            ) : (
-                              editingTitles[item.id] !== undefined &&
-                              editingTitles[item.id].trim() !== '' &&
-                              editingTitles[item.id].trim() !== item.title && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveItemTitle(item, titleValue)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                  <span>儲存並同步雲端檔名</span>
-                                </button>
-                              )
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </div>

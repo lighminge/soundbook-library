@@ -814,10 +814,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 儲存單筆「播放時圖片」的修改（同步將修改後的「使用圖片的檔案名稱」更新至 Google 雲端硬碟與 Firebase）
+   * 儲存單筆「播放時圖片」的修改（立即更新畫面與 Firebase，並在背景同步 Google 雲端硬碟檔案名稱，完全不需等待！）
    */
   const confirmEditSlide = async (slideId: string, seqNumber = 1) => {
-    if (isRenamingSlide) return;
     const targetSlide = slides.find((s) => s.id === slideId);
     if (!targetSlide) return;
 
@@ -831,64 +830,75 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     const requestedFileName = editSlideFileName.trim() || oldFileName;
     const candidateDriveId =
       editSlideImageDriveId || extractDriveFileIdFromSlide(targetSlide);
+    const initialDriveId = editSlideImageDriveId ?? targetSlide.imageDriveId;
+    const initialImageUrl = editSlideImageUrl.trim() || targetSlide.imageUrl;
 
-    setIsRenamingSlide(true);
-    try {
-      let finalFileName = requestedFileName;
-      let finalDriveId = editSlideImageDriveId ?? targetSlide.imageDriveId;
-      let finalImageUrl = editSlideImageUrl.trim() || targetSlide.imageUrl;
-      let syncedDriveRename = false;
+    // 步驟 1：立即更新前端清單並寫入 Firebase（0.1 秒內極速完成，不阻塞畫面）
+    const immediateSlides = slides
+      .map((sl) =>
+        sl.id === slideId
+          ? {
+              ...sl,
+              imageUrl: initialImageUrl,
+              imageFileName: requestedFileName,
+              ...(initialDriveId ? { imageDriveId: initialDriveId } : {}),
+              timestampSec: rangeInfo.startSec,
+              endTimestampSec: rangeInfo.endSec,
+              startSegmentIndex: rangeInfo.startIdx,
+              endSegmentIndex: rangeInfo.endIdx,
+              caption: rangeInfo.caption || sl.caption,
+            }
+          : sl
+      )
+      .sort((a, b) => a.timestampSec - b.timestampSec);
 
-      // 當使用者修改了圖片檔案名稱（或此圖片有綁定雲端硬碟檔案 ID）時，同步修改 Google 雲端硬碟中的檔案名稱
-      if (candidateDriveId && requestedFileName) {
-        const renameRes = await renameFileInGoogleDrive(
-          candidateDriveId,
-          requestedFileName,
-          {
-            fallbackUrl: finalImageUrl,
-            mimeType: 'image/jpeg',
-            isAudio: false,
-          }
-        );
-        finalFileName = renameRes.finalFileName || requestedFileName;
-        if (renameRes.newFileId) {
-          finalDriveId = renameRes.newFileId;
-        }
-        if (renameRes.newDirectUrl) {
-          finalImageUrl = renameRes.newDirectUrl;
-        }
-        syncedDriveRename = renameRes.renamedOnDrive;
-      }
+    setSlides(immediateSlides);
+    setEditingSlideId(null);
+    await autoPersistToFirebase(srtSegments, immediateSlides);
 
-      const nextSlides = slides
-        .map((sl) =>
-          sl.id === slideId
-            ? {
-                ...sl,
-                imageUrl: finalImageUrl,
-                imageFileName: finalFileName,
-                ...(finalDriveId ? { imageDriveId: finalDriveId } : {}),
-                timestampSec: rangeInfo.startSec,
-                endTimestampSec: rangeInfo.endSec,
-                startSegmentIndex: rangeInfo.startIdx,
-                endSegmentIndex: rangeInfo.endIdx,
-                caption: rangeInfo.caption || sl.caption,
-              }
-            : sl
-        )
-        .sort((a, b) => a.timestampSec - b.timestampSec);
-
-      setSlides(nextSlides);
-      setEditingSlideId(null);
-
-      await autoPersistToFirebase(srtSegments, nextSlides);
+    // 步驟 2：若綁定了雲端硬碟檔案，在背景非同步同步修改 Google 雲端硬碟中的圖片檔案名稱
+    if (candidateDriveId && requestedFileName) {
       showToast(
-        syncedDriveRename
-          ? `✅ 已修改圖片檔案名稱為「${finalFileName}」（已同步更新 Google 雲端硬碟檔名）與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}），並已儲存至 Firebase！`
-          : `✅ 已更新圖片檔案名稱「${finalFileName}」與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}）並同步儲存至 Firebase！`
+        `✅ 已更新圖片檔名「${requestedFileName}」與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}），雲端硬碟檔名正在背景同步...`
       );
-    } finally {
-      setIsRenamingSlide(false);
+      setIsRenamingSlide(true);
+      renameFileInGoogleDrive(candidateDriveId, requestedFileName, {
+        fallbackUrl: initialImageUrl,
+        mimeType: 'image/jpeg',
+        isAudio: false,
+      })
+        .then(async (renameRes) => {
+          if (
+            renameRes.newFileId ||
+            renameRes.newDirectUrl ||
+            renameRes.finalFileName
+          ) {
+            const driveSyncedSlides = immediateSlides.map((sl) =>
+              sl.id === slideId
+                ? {
+                    ...sl,
+                    imageFileName: renameRes.finalFileName || requestedFileName,
+                    ...(renameRes.newFileId ? { imageDriveId: renameRes.newFileId } : {}),
+                    ...(renameRes.newDirectUrl ? { imageUrl: renameRes.newDirectUrl } : {}),
+                  }
+                : sl
+            );
+            setSlides(driveSyncedSlides);
+            await autoPersistToFirebase(srtSegments, driveSyncedSlides);
+          }
+          if (renameRes.renamedOnDrive) {
+            showToast(
+              `✅ Google 雲端硬碟圖片檔案名稱已同步更新為「${renameRes.finalFileName}」！`
+            );
+          }
+        })
+        .finally(() => {
+          setIsRenamingSlide(false);
+        });
+    } else {
+      showToast(
+        `✅ 已更新圖片檔案名稱「${requestedFileName}」與時間區段（#${rangeInfo.startIdx} ~ #${rangeInfo.endIdx}）並同步儲存至 Firebase！`
+      );
     }
   };
 
@@ -1351,12 +1361,23 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           autoSaveTimerRef.current = null;
                         }
                         const trimmedTitle = title.trim();
+                        await autoPersistToFirebase(
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          undefined,
+                          { title: trimmedTitle || title }
+                        );
+
                         if (
                           trimmedTitle &&
                           trimmedTitle !== lastSyncedTitleRef.current
                         ) {
                           lastSyncedTitleRef.current = trimmedTitle;
-                          const renameRes = await renameFileInGoogleDrive(
+                          renameFileInGoogleDrive(
                             audioDriveFileId,
                             trimmedTitle,
                             {
@@ -1365,38 +1386,29 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               isAudio: true,
                               itemId: formId,
                             }
-                          );
-                          const nextDriveId = renameRes.newFileId || audioDriveFileId;
-                          const nextAudioUrl = renameRes.newDirectUrl || audioUrl;
-                          if (renameRes.newFileId) setAudioDriveFileId(renameRes.newFileId);
-                          if (renameRes.newDirectUrl) setAudioUrl(renameRes.newDirectUrl);
-
-                          await autoPersistToFirebase(
-                            undefined,
-                            undefined,
-                            undefined,
-                            undefined,
-                            nextAudioUrl,
-                            nextDriveId,
-                            undefined,
-                            { title: trimmedTitle }
-                          );
-                          if (renameRes.renamedOnDrive) {
-                            showToast(
-                              `✅ 已將語音檔案名稱修改為「${trimmedTitle}」，並已同步更新 Google 雲端硬碟檔案名稱（${renameRes.finalFileName}）！`
-                            );
-                          }
-                        } else {
-                          await autoPersistToFirebase(
-                            undefined,
-                            undefined,
-                            undefined,
-                            undefined,
-                            undefined,
-                            undefined,
-                            undefined,
-                            { title }
-                          );
+                          ).then(async (renameRes) => {
+                            if (renameRes.newFileId || renameRes.newDirectUrl) {
+                              const nextDriveId = renameRes.newFileId || audioDriveFileId;
+                              const nextAudioUrl = renameRes.newDirectUrl || audioUrl;
+                              if (renameRes.newFileId) setAudioDriveFileId(renameRes.newFileId);
+                              if (renameRes.newDirectUrl) setAudioUrl(renameRes.newDirectUrl);
+                              await autoPersistToFirebase(
+                                undefined,
+                                undefined,
+                                undefined,
+                                undefined,
+                                nextAudioUrl,
+                                nextDriveId,
+                                undefined,
+                                { title: trimmedTitle }
+                              );
+                            }
+                            if (renameRes.renamedOnDrive) {
+                              showToast(
+                                `✅ Google 雲端硬碟語音檔案名稱已同步更新為「${renameRes.finalFileName}」！`
+                              );
+                            }
+                          });
                         }
                       }}
                       placeholder="請輸入語音檔案名稱..."

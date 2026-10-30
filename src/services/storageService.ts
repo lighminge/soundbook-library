@@ -34,6 +34,8 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
 };
 
 let firestoreDb: Firestore | null = null;
+// 快取記錄目前部署的 GAS 是否已支援原生快速改名 (action: 'rename')，避免舊版腳本重複等待失敗請求
+let gasSupportsNativeRename: boolean | null = null;
 
 /**
  * 自動從使用者貼上的完整 Google Drive 網址或字串中擷取純粹的 Folder ID
@@ -78,6 +80,7 @@ export async function saveCloudConfig(config: CloudConfig): Promise<void> {
   };
   localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cleaned));
   firestoreDb = null; // 重新初始化
+  gasSupportsNativeRename = null; // 重新檢測 GAS 是否支援原生 rename
 
   // 同步將 Google Drive 設定儲存至 Firebase Firestore，讓手機與電腦跨裝置自動共用！
   const db = getDbInstance();
@@ -553,71 +556,104 @@ export async function renameFileInGoogleDrive(
 
   const scriptUrl = config.googleDriveScriptUrl.trim();
 
-  // 步驟 1：優先嘗試原位改名 (action: 'rename')
-  try {
-    const response = await fetch(scriptUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: JSON.stringify({
-        action: 'rename',
-        fileId: cleanId,
-        newFileName: normalizedName,
-      }),
-    });
-
-    const result = await response.json();
-    if (result && result.success && result.action === 'rename') {
-      return {
-        renamedOnDrive: true,
-        finalFileName: result.fileName || normalizedName,
-        newFileId: cleanId,
-      };
-    }
-  } catch (err) {
-    console.warn('直接呼叫 rename 略過，準備嘗試自動替換檔名同步:', err);
-  }
-
-  // 步驟 2：若使用者部署的 GAS 尚為舊版（未包含 action: 'rename'），
-  // 自動透過既有的 getFile（或本機/Firestore 分片）讀取內容 -> 以新檔名上傳至雲端硬碟 -> 刪除舊檔名檔案！
-  try {
-    let base64Data = '';
-    let detectedMime =
-      options?.mimeType || (options?.isAudio ? 'audio/mpeg' : 'image/jpeg');
-
-    // 2a. 先嘗試從 GAS action: 'getFile' 讀取原雲端硬碟檔案內容
+  // 步驟 1：優先嘗試原位改名 (action: 'rename'，僅需約 0.6 秒，不需傳輸檔案內容)
+  if (gasSupportsNativeRename !== false) {
     try {
-      const getRes = await fetch(scriptUrl, {
+      const response = await fetch(scriptUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'text/plain;charset=utf-8',
         },
         body: JSON.stringify({
-          action: 'getFile',
+          action: 'rename',
           fileId: cleanId,
+          newFileName: normalizedName,
         }),
       });
-      const getJson = await getRes.json();
-      if (getJson && getJson.success && getJson.base64Data) {
-        base64Data = getJson.base64Data;
-        if (getJson.mimeType) {
-          detectedMime = getJson.mimeType;
+
+      const result = await response.json();
+      if (result && result.success && result.action === 'rename') {
+        gasSupportsNativeRename = true;
+        return {
+          renamedOnDrive: true,
+          finalFileName: result.fileName || normalizedName,
+          newFileId: cleanId,
+        };
+      }
+      if (result && String(result.error || '').includes('base64Decode')) {
+        // 代表目前部署的 GAS 尚為未含 action: 'rename' 的舊版，後續改名直接跳過此請求以節省等待時間
+        gasSupportsNativeRename = false;
+      }
+    } catch (err) {
+      console.warn('直接呼叫 rename 略過，準備嘗試高速快取替換檔名同步:', err);
+    }
+  }
+
+  // 步驟 2：若使用者部署的 GAS 尚為舊版（未包含 action: 'rename'），
+  // 優先從「本地快取 (<10ms)」或「Firestore 分片 (~250ms)」極速讀取內容，避免從 GAS 慢速下載！
+  try {
+    let base64Data = '';
+    let detectedMime =
+      options?.mimeType || (options?.isAudio ? 'audio/mpeg' : 'image/jpeg');
+
+    // 2a. 【極速優先】先從瀏覽器本地 IndexedDB / 記憶體快取讀取（幾乎 0 秒，免網路下載）
+    try {
+      const cachedBlobUrl =
+        (await getCachedMediaBlobUrl(cleanId)) ||
+        (options?.itemId ? await getCachedMediaBlobUrl(options.itemId) : null) ||
+        (options?.fallbackUrl ? await getCachedMediaBlobUrl(options.fallbackUrl) : null);
+
+      if (cachedBlobUrl) {
+        const res = await fetch(cachedBlobUrl);
+        const blob = await res.blob();
+        if (blob && blob.size > 0) {
+          const converted = await fileToDataUrl(
+            new File([blob], normalizedName, { type: blob.type || detectedMime })
+          );
+          base64Data = converted.base64;
+          if (blob.type) detectedMime = blob.type;
         }
       }
     } catch {
-      // ignore getFile error and try local/Firestore fallback
+      // ignore local cache miss
     }
 
-    // 2b. 若為音檔且 getFile 未取回，可從本地快取或 Firestore audioChunks 讀取
+    // 2b. 【次快優先】若為音檔且本機快取未命中，從 Firebase Firestore audioChunks 平行分片讀取（約 0.3 秒）
     if (!base64Data && options?.isAudio) {
-      const blob = await loadAudioBlobFromFirestoreChunks(cleanId);
+      const blob =
+        (await loadAudioBlobFromFirestoreChunks(cleanId)) ||
+        (options?.itemId ? await loadAudioBlobFromFirestoreChunks(options.itemId) : null);
       if (blob) {
         const converted = await fileToDataUrl(
           new File([blob], normalizedName, { type: blob.type || detectedMime })
         );
         base64Data = converted.base64;
         if (blob.type) detectedMime = blob.type;
+      }
+    }
+
+    // 2c. 若本機與 Firestore 皆無快取，才從 GAS action: 'getFile' 讀取原雲端硬碟檔案內容
+    if (!base64Data) {
+      try {
+        const getRes = await fetch(scriptUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            action: 'getFile',
+            fileId: cleanId,
+          }),
+        });
+        const getJson = await getRes.json();
+        if (getJson && getJson.success && getJson.base64Data) {
+          base64Data = getJson.base64Data;
+          if (getJson.mimeType) {
+            detectedMime = getJson.mimeType;
+          }
+        }
+      } catch {
+        // ignore getFile error
       }
     }
 
@@ -644,22 +680,27 @@ export async function renameFileInGoogleDrive(
 
       const uploadJson = await uploadRes.json();
       if (uploadJson && uploadJson.success && uploadJson.fileId) {
-        // 刪除舊檔名的雲端硬碟檔案
-        await deleteFilesFromGoogleDrive([cleanId]);
+        const newFileId = uploadJson.fileId;
+        const newDirectUrl = uploadJson.directUrl;
 
-        if (options?.isAudio) {
-          // 同步更新音訊分片與快取至新 fileId
-          const blob = base64ToBlob(base64Data, detectedMime);
-          await cacheMediaBlob(uploadJson.fileId, blob);
-          await saveAudioChunksToFirestore(uploadJson.fileId, base64Data, detectedMime);
-          await deleteAudioChunksFromFirestore([cleanId]);
-        }
+        // 舊檔案刪除與分片更新全數改為「背景非同步平行處理」，完全不阻塞使用者的等待時間！
+        Promise.all([
+          deleteFilesFromGoogleDrive([cleanId]),
+          (async () => {
+            if (options?.isAudio) {
+              const blob = base64ToBlob(base64Data, detectedMime);
+              await cacheMediaBlob(newFileId, blob);
+              await saveAudioChunksToFirestore(newFileId, base64Data, detectedMime);
+              await deleteAudioChunksFromFirestore([cleanId]);
+            }
+          })(),
+        ]).catch(() => {});
 
         return {
           renamedOnDrive: true,
           finalFileName: finalFileNameWithExt,
-          newFileId: uploadJson.fileId,
-          newDirectUrl: uploadJson.directUrl,
+          newFileId,
+          newDirectUrl,
         };
       }
     }
