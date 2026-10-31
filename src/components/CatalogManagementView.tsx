@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FolderKanban,
   Plus,
@@ -6,6 +6,7 @@ import {
   Trash2,
   ArrowUp,
   ArrowDown,
+  ArrowUpDown,
   ArrowRightLeft,
   Tag,
   BarChart3,
@@ -142,6 +143,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [searchDescription, setSearchDescription] = useState<string>('');
   const [filterTag, setFilterTag] = useState<string>('all');
   const [searchTag, setSearchTag] = useState<string>('');
+
+  // 排序狀態：條件（檔案名稱、上傳日期、館藏分類）與方向（由小到大、由大到小）
+  const [catalogSortBy, setCatalogSortBy] = useState<'title' | 'createdAt' | 'category'>('title');
+  const [catalogSortOrder, setCatalogSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // 分頁狀態（以 10 的倍數選取）
   const [pageSize, setPageSize] = useState<number>(10);
@@ -574,20 +579,55 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     );
   });
 
+  // 依條件（檔案名稱、上傳日期、館藏分類）與方向（由小到大、由大到小）進行排序
+  const sortedAudioItems = useMemo(() => {
+    return [...filteredAudioItems].sort((a, b) => {
+      let cmp = 0;
+      if (catalogSortBy === 'title') {
+        cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+      } else if (catalogSortBy === 'createdAt') {
+        const timeA = new Date(a.createdAt || 0).getTime();
+        const timeB = new Date(b.createdAt || 0).getTime();
+        cmp = timeA - timeB;
+      } else if (catalogSortBy === 'category') {
+        const catA = categories.find((c) => c.id === a.categoryId);
+        const catB = categories.find((c) => c.id === b.categoryId);
+        const labelA = catA ? `${catA.code} ${catA.name}` : a.categoryId;
+        const labelB = catB ? `${catB.code} ${catB.name}` : b.categoryId;
+        cmp = labelA.localeCompare(labelB, 'zh-Hant');
+      }
+
+      if (cmp === 0) {
+        cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+      }
+
+      return catalogSortOrder === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredAudioItems, catalogSortBy, catalogSortOrder, categories]);
+
   // 分頁計算（10 的倍數）
-  const totalItems = filteredAudioItems.length;
+  const totalItems = sortedAudioItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * pageSize;
-  const paginatedAudioItems = filteredAudioItems.slice(
+  const paginatedAudioItems = sortedAudioItems.slice(
     startIndex,
     startIndex + pageSize
   );
 
-  // 當篩選條件或每頁筆數改變時，自動回到第 1 頁
+  // 當篩選條件、排序條件或每頁筆數改變時，自動回到第 1 頁
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTitle, filterCategoryId, searchDescription, filterTag, searchTag, pageSize]);
+  }, [
+    searchTitle,
+    filterCategoryId,
+    searchDescription,
+    filterTag,
+    searchTag,
+    pageSize,
+    catalogSortBy,
+    catalogSortOrder,
+  ]);
 
   const allFilteredSelected =
     filteredAudioItems.length > 0 &&
@@ -1307,6 +1347,30 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       {size} 筆 / 頁
                     </option>
                   ))}
+                </select>
+              </div>
+
+              {/* 排序功能：依檔案名稱、上傳日期、館藏分類；由小到大、由大到小 */}
+              <div className="flex items-center gap-1.5 bg-[#FAF6EE] px-2.5 py-1 rounded-lg border border-[#DFCEB4]">
+                <ArrowUpDown className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                <label className="font-semibold text-[#5C3A1B]">排序：</label>
+                <select
+                  value={catalogSortBy}
+                  onChange={(e) => setCatalogSortBy(e.target.value as any)}
+                  className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                >
+                  <option value="title">依檔案名稱</option>
+                  <option value="createdAt">依上傳日期</option>
+                  <option value="category">依館藏分類</option>
+                </select>
+
+                <select
+                  value={catalogSortOrder}
+                  onChange={(e) => setCatalogSortOrder(e.target.value as any)}
+                  className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                >
+                  <option value="asc">由小到大</option>
+                  <option value="desc">由大到小</option>
                 </select>
               </div>
             </div>

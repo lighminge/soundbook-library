@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Check,
   SlidersHorizontal,
+  ArrowUpDown,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import {
@@ -169,9 +170,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   } | null>(null);
   const [isDeletingSlide, setIsDeletingSlide] = useState(false);
 
-  // 播放圖片列表「分頁」狀態 (以 10 的倍數選取)
-  const [slidePageSize, setSlidePageSize] = useState<number>(10);
+  // 播放圖片列表「分頁」狀態 (以 5 的倍數選取)
+  const [slidePageSize, setSlidePageSize] = useState<number>(5);
   const [slideCurrentPage, setSlideCurrentPage] = useState<number>(1);
+
+  // 「語音檔案編輯與館藏管理」清單排序狀態 (依檔案名稱、上傳日期、館藏分類；由小到大、由大到小)
+  const [audioSortBy, setAudioSortBy] = useState<'title' | 'createdAt' | 'category'>('title');
+  const [audioSortOrder, setAudioSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // 「語音檔案編輯與館藏管理」清單分頁狀態 (以 10 的倍數選取)
+  const [audioListPageSize, setAudioListPageSize] = useState<number>(10);
+  const [audioListPage, setAudioListPage] = useState<number>(1);
 
   // 圖書館風格「刪除整筆語音館藏確認視窗」狀態
   const [itemPendingDelete, setItemPendingDelete] = useState<AudioItem | null>(null);
@@ -191,6 +200,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToastMessage(null), durationMs);
   };
+
+  // 當離開語音檔案庫頁面時，清除 editingItem，確保下次再回到語音檔案庫時畫面為首頁
+  useEffect(() => {
+    return () => {
+      onClearEditing?.();
+    };
+  }, [onClearEditing]);
 
   // 當外部傳入 editingItem 時，自動載入至編輯器
   useEffect(() => {
@@ -983,15 +999,57 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     )} --> ${secondsToSrtTime(endSec)}]`;
   };
 
-  const filteredList =
+  // 依所選分類過濾語音檔案
+  const filteredAudioList =
     filterCategoryId === 'all'
       ? audioItems
       : audioItems.filter((item) => item.categoryId === filterCategoryId);
 
+  // 「語音檔案編輯與館藏管理」排序計算：依檔案名稱、上傳日期、館藏分類；由小到大、由大到小
+  const sortedAudioList = useMemo(() => {
+    return [...filteredAudioList].sort((a, b) => {
+      let cmp = 0;
+      if (audioSortBy === 'title') {
+        cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+      } else if (audioSortBy === 'createdAt') {
+        const timeA = new Date(a.createdAt || 0).getTime();
+        const timeB = new Date(b.createdAt || 0).getTime();
+        cmp = timeA - timeB;
+      } else if (audioSortBy === 'category') {
+        const catA = categories.find((c) => c.id === a.categoryId);
+        const catB = categories.find((c) => c.id === b.categoryId);
+        const labelA = catA ? `${catA.code} ${catA.name}` : a.categoryId;
+        const labelB = catB ? `${catB.code} ${catB.name}` : b.categoryId;
+        cmp = labelA.localeCompare(labelB, 'zh-Hant');
+      }
+
+      if (cmp === 0) {
+        cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+      }
+
+      return audioSortOrder === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredAudioList, audioSortBy, audioSortOrder, categories]);
+
+  // 「語音檔案編輯與館藏管理」分頁計算 (以 10 的倍數選取)
+  const totalAudioCount = sortedAudioList.length;
+  const totalAudioPages = Math.max(1, Math.ceil(totalAudioCount / audioListPageSize));
+  const safeAudioPage = Math.min(audioListPage, totalAudioPages);
+  const audioStartIndex = (safeAudioPage - 1) * audioListPageSize;
+  const paginatedAudioList = sortedAudioList.slice(
+    audioStartIndex,
+    audioStartIndex + audioListPageSize
+  );
+
+  // 當分類篩選、排序條件或每頁筆數變更時，自動回到第 1 頁
+  useEffect(() => {
+    setAudioListPage(1);
+  }, [filterCategoryId, audioSortBy, audioSortOrder, audioListPageSize]);
+
   // 依「時間區段」由小到大排序播放展示圖片清單 (PlaybackSlide[])
   const sortedSlides = useMemo(() => sortSlidesBySegmentRange(slides), [slides]);
 
-  // 播放圖片分頁計算 (以 10 的倍數分頁，嚴格依時間區段由小到大排序呈現)
+  // 播放圖片分頁計算 (以 5 的倍數分頁，嚴格依時間區段由小到大排序呈現)
   const totalSlidesCount = sortedSlides.length;
   const totalSlidePages = Math.max(1, Math.ceil(totalSlidesCount / slidePageSize));
   const safeSlidePage = Math.min(slideCurrentPage, totalSlidePages);
@@ -1253,78 +1311,240 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredList.map((item) => {
-                const cat = categories.find((c) => c.id === item.categoryId);
-                return (
-                  <div
-                    key={item.id}
-                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-[#E2D5C1] hover:border-[#8B5A2B] transition shadow-xs"
+            {/* 排序功能與分頁控制列 (以 10 的倍數選取；依檔案名稱、上傳日期、館藏分類排序) */}
+            <div className="p-3.5 rounded-xl bg-[#EFE6D5] border border-[#D8C7AE] flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-3 text-[#3A2518]">
+                <span className="font-bold">
+                  共 <strong className="text-[#8B5A2B] font-mono text-sm">{totalAudioCount}</strong> 筆語音檔案
+                </span>
+                {totalAudioCount > 0 && (
+                  <span className="text-[#6E5D4F]">
+                    （顯示第{' '}
+                    <strong className="font-mono text-[#2C221E]">{audioStartIndex + 1}</strong> -{' '}
+                    <strong className="font-mono text-[#2C221E]">
+                      {Math.min(audioStartIndex + audioListPageSize, totalAudioCount)}
+                    </strong>{' '}
+                    筆）
+                  </span>
+                )}
+
+                {/* 每頁顯示筆數 (以 10 的倍數做選取) */}
+                <div className="flex items-center gap-1.5">
+                  <label className="font-semibold text-[#5C3A1B]">每頁顯示：</label>
+                  <select
+                    value={audioListPageSize}
+                    onChange={(e) => setAudioListPageSize(Number(e.target.value))}
+                    className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-mono font-bold text-[#2C221E] cursor-pointer"
                   >
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <img
-                        src={item.coverImageUrl}
-                        alt={item.title}
-                        className="w-16 h-20 rounded-lg object-cover shrink-0 border border-[#D5C5AE]"
-                      />
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {cat && (
-                            <span
-                              className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
-                              style={{ backgroundColor: cat.themeColor }}
-                            >
-                              {cat.name}
+                    {[10, 20, 30, 40, 50].map((size) => (
+                      <option key={size} value={size}>
+                        {size} 筆 / 頁
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 排序功能：條件（依檔案名稱、上傳日期、館藏分類）與方向（由小到大、由大到小） */}
+                <div className="flex items-center gap-1.5 bg-[#FAF6EE] px-2.5 py-1 rounded-lg border border-[#DFCEB4]">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                  <label className="font-semibold text-[#5C3A1B]">排序：</label>
+                  <select
+                    value={audioSortBy}
+                    onChange={(e) => setAudioSortBy(e.target.value as any)}
+                    className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                  >
+                    <option value="title">依檔案名稱</option>
+                    <option value="createdAt">依上傳日期</option>
+                    <option value="category">依館藏分類</option>
+                  </select>
+
+                  <select
+                    value={audioSortOrder}
+                    onChange={(e) => setAudioSortOrder(e.target.value as any)}
+                    className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                  >
+                    <option value="asc">由小到大</option>
+                    <option value="desc">由大到小</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* 頁碼切換按鈕 */}
+              {totalAudioPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safeAudioPage <= 1}
+                    onClick={() => setAudioListPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>上一頁</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalAudioPages }, (_, i) => i + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setAudioListPage(pageNum)}
+                        className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
+                          pageNum === safeAudioPage
+                            ? 'bg-[#8B5A2B] text-white shadow-xs'
+                            : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={safeAudioPage >= totalAudioPages}
+                    onClick={() => setAudioListPage((p) => Math.min(totalAudioPages, p + 1))}
+                    className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 text-xs font-semibold text-[#3A2518] flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>下一頁</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {paginatedAudioList.length === 0 ? (
+                <div className="col-span-full p-8 text-center rounded-xl border border-dashed border-[#D5C5AE] bg-white/60 text-xs text-[#7A6855]">
+                  目前查無相符的語音檔案。
+                </div>
+              ) : (
+                paginatedAudioList.map((item, idxInPage) => {
+                  const globalSeq = audioStartIndex + idxInPage + 1;
+                  const cat = categories.find((c) => c.id === item.categoryId);
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-[#E2D5C1] hover:border-[#8B5A2B] transition shadow-xs"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {/* 每個語音檔區塊加入序號 */}
+                        <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0 self-start sm:self-center">
+                          #{globalSeq}
+                        </span>
+
+                        <img
+                          src={item.coverImageUrl}
+                          alt={item.title}
+                          className="w-16 h-20 rounded-lg object-cover shrink-0 border border-[#D5C5AE]"
+                        />
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {cat && (
+                              <span
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
+                                style={{ backgroundColor: cat.themeColor }}
+                              >
+                                {cat.name}
+                              </span>
+                            )}
+                            <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDuration(item.duration)}
                             </span>
-                          )}
-                          <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {formatDuration(item.duration)}
-                          </span>
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-[#F3ECE0] text-[#6E5641]">
-                            播放圖片 {item.playbackDisplay.slides.length} 張
-                          </span>
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-[#F3ECE0] text-[#6E5641]">
+                              播放圖片 {item.playbackDisplay.slides.length} 張
+                            </span>
+                          </div>
+                          <h4 className="font-bold font-serif-tc text-base text-[#2C221E] truncate">
+                            {item.title}
+                          </h4>
+                          <p className="text-xs text-[#6E5D4F] line-clamp-1">
+                            {item.description}
+                          </p>
                         </div>
-                        <h4 className="font-bold font-serif-tc text-base text-[#2C221E] truncate">
-                          {item.title}
-                        </h4>
-                        <p className="text-xs text-[#6E5D4F] line-clamp-1">
-                          {item.description}
-                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <button
+                          onClick={() => onPlayInScreeningRoom(item)}
+                          className="px-3 py-2 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
+                          title="在放映室播放"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>預覽播放</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            loadItemIntoEditor(item);
+                            setActiveSubTab('editor');
+                          }}
+                          className="px-3.5 py-2 rounded-lg bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>編輯檔名與播放圖文</span>
+                        </button>
+                        <button
+                          onClick={() => setItemPendingDelete(item)}
+                          className="p-2 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
+                          title="刪除此語音檔與雲端硬碟檔案"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                      <button
-                        onClick={() => onPlayInScreeningRoom(item)}
-                        className="px-3 py-2 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                        title="在放映室播放"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>預覽播放</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          loadItemIntoEditor(item);
-                          setActiveSubTab('editor');
-                        }}
-                        className="px-3.5 py-2 rounded-lg bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>編輯檔名與播放圖文</span>
-                      </button>
-                      <button
-                        onClick={() => setItemPendingDelete(item)}
-                        className="p-2 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
-                        title="刪除此語音檔與雲端硬碟檔案"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
+
+            {/* 底部翻頁控制列 (頁數大於 1 時呈現) */}
+            {totalAudioPages > 1 && (
+              <div className="flex items-center justify-between pt-3 border-t border-[#E5D9C5] text-xs">
+                <span className="text-[#7A6855]">
+                  第 <strong>{safeAudioPage}</strong> / <strong>{totalAudioPages}</strong> 頁（共{' '}
+                  {totalAudioCount} 筆語音檔）
+                </span>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safeAudioPage <= 1}
+                    onClick={() => setAudioListPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-45 text-[#3A2518] font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>上一頁</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalAudioPages }, (_, i) => i + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setAudioListPage(pageNum)}
+                        className={`w-7 h-7 rounded-lg text-xs font-mono font-bold transition cursor-pointer ${
+                          pageNum === safeAudioPage
+                            ? 'bg-[#8B5A2B] text-white shadow-xs'
+                            : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={safeAudioPage >= totalAudioPages}
+                    onClick={() => setAudioListPage((p) => Math.min(totalAudioPages, p + 1))}
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-45 text-[#3A2518] font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>下一頁</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -2134,9 +2354,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         setSlidePageSize(Number(e.target.value));
                         setSlideCurrentPage(1);
                       }}
-                      className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E]"
+                      className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
                     >
-                      {[10, 20, 30, 40, 50].map((size) => (
+                      {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((size) => (
                         <option key={size} value={size}>
                           {size} 筆 / 頁
                         </option>

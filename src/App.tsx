@@ -247,7 +247,10 @@ export function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab('library')}
+              onClick={() => {
+                setEditingAudioItem(null);
+                setActiveTab('library');
+              }}
               className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
                 activeTab === 'library'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
@@ -306,7 +309,10 @@ export function App() {
           <span>放映室</span>
         </button>
         <button
-          onClick={() => setActiveTab('library')}
+          onClick={() => {
+            setEditingAudioItem(null);
+            setActiveTab('library');
+          }}
           className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
             activeTab === 'library' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
           }`}
