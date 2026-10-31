@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload,
   Mic,
@@ -50,6 +50,7 @@ import {
   batchModifySegments,
   getCaptionForSegmentRange,
   syncSlidesWithSrtSegments,
+  sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
 import { formatDuration } from './DashboardView';
 
@@ -277,9 +278,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setSrtSegments(initialSegments);
     setEditingSegmentId(null);
 
-    const syncedSlides = syncSlidesWithSrtSegments(
-      item.playbackDisplay.slides || [],
-      initialSegments
+    const syncedSlides = sortSlidesBySegmentRange(
+      syncSlidesWithSrtSegments(
+        item.playbackDisplay.slides || [],
+        initialSegments
+      )
     );
     setSlides(syncedSlides);
     setEditingSlideId(null);
@@ -819,9 +822,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         endSegmentIndex: rangeInfo.endIdx,
       };
 
-      const nextSlides = [...slides, newSlide].sort(
-        (a, b) => a.timestampSec - b.timestampSec
-      );
+      const nextSlides = sortSlidesBySegmentRange([...slides, newSlide]);
       setSlides(nextSlides);
 
       // 清理暫存選取的圖片
@@ -880,8 +881,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     const initialImageUrl = editSlideImageUrl.trim() || targetSlide.imageUrl;
 
     // 步驟 1：立即更新前端清單並寫入 Firebase（0.1 秒內極速完成，不阻塞畫面）
-    const immediateSlides = slides
-      .map((sl) =>
+    const immediateSlides = sortSlidesBySegmentRange(
+      slides.map((sl) =>
         sl.id === slideId
           ? {
               ...sl,
@@ -896,7 +897,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             }
           : sl
       )
-      .sort((a, b) => a.timestampSec - b.timestampSec);
+    );
 
     setSlides(immediateSlides);
     setEditingSlideId(null);
@@ -987,12 +988,15 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       ? audioItems
       : audioItems.filter((item) => item.categoryId === filterCategoryId);
 
-  // 播放圖片分頁計算 (以 10 的倍數分頁)
-  const totalSlidesCount = slides.length;
+  // 依「時間區段」由小到大排序播放展示圖片清單 (PlaybackSlide[])
+  const sortedSlides = useMemo(() => sortSlidesBySegmentRange(slides), [slides]);
+
+  // 播放圖片分頁計算 (以 10 的倍數分頁，嚴格依時間區段由小到大排序呈現)
+  const totalSlidesCount = sortedSlides.length;
   const totalSlidePages = Math.max(1, Math.ceil(totalSlidesCount / slidePageSize));
   const safeSlidePage = Math.min(slideCurrentPage, totalSlidePages);
   const slideStartIndex = (safeSlidePage - 1) * slidePageSize;
-  const paginatedSlides = slides.slice(slideStartIndex, slideStartIndex + slidePageSize);
+  const paginatedSlides = sortedSlides.slice(slideStartIndex, slideStartIndex + slidePageSize);
 
   // 目前在「新增圖片」面板中所選取起迄 SRT 區段的自動預覽圖說文字
   const previewNewSlideRange = getCaptionForSegmentRange(
@@ -2718,7 +2722,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       const targetSlide = slidePendingDelete.slide;
                       const targetId = targetSlide.id;
                       const seq = slidePendingDelete.seqNumber;
-                      const nextSlides = slides.filter((s) => s.id !== targetId);
+                      const nextSlides = sortSlidesBySegmentRange(
+                        slides.filter((s) => s.id !== targetId)
+                      );
 
                       setSlides(nextSlides);
                       if (editingSlideId === targetId) setEditingSlideId(null);

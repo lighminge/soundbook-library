@@ -396,46 +396,56 @@ export function getCaptionForSegmentRange(
 }
 
 /**
+ * 依「時間區段」由小到大排序播放展示圖片清單 (PlaybackSlide[])
+ * 優先順序：
+ * 1. 起始時間區段序號 (startSegmentIndex 由小到大，例如 #1, #2, #3...)
+ * 2. 起始時間秒數 (timestampSec 由小到大)
+ * 3. 結束時間區段序號 (endSegmentIndex 由小到大)
+ * 4. 結束時間秒數 (endTimestampSec 由小到大)
+ */
+export function sortSlidesBySegmentRange(slidesList: PlaybackSlide[]): PlaybackSlide[] {
+  return [...slidesList].sort((a, b) => {
+    const aStart = a.startSegmentIndex ?? 0;
+    const bStart = b.startSegmentIndex ?? 0;
+    if (aStart > 0 && bStart > 0 && aStart !== bStart) {
+      return aStart - bStart;
+    }
+    if (a.timestampSec !== b.timestampSec) {
+      return a.timestampSec - b.timestampSec;
+    }
+    const aEnd = a.endSegmentIndex ?? aStart;
+    const bEnd = b.endSegmentIndex ?? bStart;
+    if (aEnd > 0 && bEnd > 0 && aEnd !== bEnd) {
+      return aEnd - bEnd;
+    }
+    const aEndSec = a.endTimestampSec ?? a.timestampSec;
+    const bEndSec = b.endTimestampSec ?? b.timestampSec;
+    if (aEndSec !== bEndSec) {
+      return aEndSec - bEndSec;
+    }
+    return (a.id || '').localeCompare(b.id || '');
+  });
+}
+
+/**
  * 當匯入 SRT、修改 SRT 內容或批次修改時間區段時，
  * 自動同步更新所有「播放時圖片 (slides)」的起迄秒數與圖說文字（圖說文字即為 SRT 區段內容）！
+ * 同步完成後自動以「時間區段由小到大」嚴格排序。
  */
 export function syncSlidesWithSrtSegments(
   slides: PlaybackSlide[],
   segments: SrtSegment[]
 ): PlaybackSlide[] {
-  if (!segments || segments.length === 0) return slides;
+  if (!segments || segments.length === 0) return sortSlidesBySegmentRange(slides);
 
-  return slides
-    .map((sl) => {
-      // 若圖片已有明確綁定 startSegmentIndex / endSegmentIndex
-      if (sl.startSegmentIndex) {
-        const rangeInfo = getCaptionForSegmentRange(
-          segments,
-          sl.startSegmentIndex,
-          sl.endSegmentIndex || sl.startSegmentIndex
-        );
-        return {
-          ...sl,
-          timestampSec: rangeInfo.startSec,
-          endTimestampSec: rangeInfo.endSec,
-          startSegmentIndex: rangeInfo.startIdx,
-          endSegmentIndex: rangeInfo.endIdx,
-          caption: rangeInfo.caption || sl.caption,
-        };
-      }
-
-      // 若為既有圖片（尚未有 startSegmentIndex），自動尋找最接近其 timestampSec 的 SRT 區段進行綁定
-      let bestIdx = 1;
-      let minDiff = Infinity;
-      for (let i = 0; i < segments.length; i++) {
-        const diff = Math.abs(segments[i].startSec - sl.timestampSec);
-        if (diff < minDiff) {
-          minDiff = diff;
-          bestIdx = i + 1;
-        }
-      }
-
-      const rangeInfo = getCaptionForSegmentRange(segments, bestIdx, bestIdx);
+  const mapped = slides.map((sl) => {
+    // 若圖片已有明確綁定 startSegmentIndex / endSegmentIndex
+    if (sl.startSegmentIndex) {
+      const rangeInfo = getCaptionForSegmentRange(
+        segments,
+        sl.startSegmentIndex,
+        sl.endSegmentIndex || sl.startSegmentIndex
+      );
       return {
         ...sl,
         timestampSec: rangeInfo.startSec,
@@ -444,6 +454,29 @@ export function syncSlidesWithSrtSegments(
         endSegmentIndex: rangeInfo.endIdx,
         caption: rangeInfo.caption || sl.caption,
       };
-    })
-    .sort((a, b) => a.timestampSec - b.timestampSec);
+    }
+
+    // 若為既有圖片（尚未有 startSegmentIndex），自動尋找最接近其 timestampSec 的 SRT 區段進行綁定
+    let bestIdx = 1;
+    let minDiff = Infinity;
+    for (let i = 0; i < segments.length; i++) {
+      const diff = Math.abs(segments[i].startSec - sl.timestampSec);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestIdx = i + 1;
+      }
+    }
+
+    const rangeInfo = getCaptionForSegmentRange(segments, bestIdx, bestIdx);
+    return {
+      ...sl,
+      timestampSec: rangeInfo.startSec,
+      endTimestampSec: rangeInfo.endSec,
+      startSegmentIndex: rangeInfo.startIdx,
+      endSegmentIndex: rangeInfo.endIdx,
+      caption: rangeInfo.caption || sl.caption,
+    };
+  });
+
+  return sortSlidesBySegmentRange(mapped);
 }

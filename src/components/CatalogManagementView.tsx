@@ -1435,32 +1435,33 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       : 'bg-white border-[#E2D5C1] hover:border-[#8B5A2B]'
                   }`}
                 >
-                  {/* 卡片頂部：勾選框 + 封面 + 語音檔案名稱修改 + 快速移動館藏分類下拉選單 */}
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-[#EFE6D5]">
-                    <div className="flex items-start sm:items-center gap-3.5 min-w-0 flex-1">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedItemIds((prev) => [...prev, item.id]);
-                          } else {
-                            setSelectedItemIds((prev) =>
-                              prev.filter((id) => id !== item.id)
-                            );
-                          }
-                        }}
-                        className="w-4 h-4 accent-[#8B5A2B] rounded mt-1 sm:mt-0 shrink-0 cursor-pointer"
-                      />
+                  {/* 卡片頂部：標題資訊、語音檔名修改、操作按鈕群與所屬分類切換 */}
+                  <div className="space-y-3 pb-3 border-b border-[#EFE6D5]">
+                    {/* 第一列：勾選框 + 封面 + 序號/分類徽章/時長 + 右側快速操作按鈕群（放映室播放、下載語音檔、SRT編輯） */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedItemIds((prev) => [...prev, item.id]);
+                            } else {
+                              setSelectedItemIds((prev) =>
+                                prev.filter((id) => id !== item.id)
+                              );
+                            }
+                          }}
+                          className="w-4 h-4 accent-[#8B5A2B] rounded shrink-0 cursor-pointer"
+                        />
 
-                      <img
-                        src={item.coverImageUrl}
-                        alt={item.title}
-                        className="w-14 h-18 rounded-lg object-cover border border-[#D5C5AE] shrink-0"
-                      />
+                        <img
+                          src={item.coverImageUrl}
+                          alt={item.title}
+                          className="w-12 h-14 rounded-lg object-cover border border-[#D5C5AE] shrink-0"
+                        />
 
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                           <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
                             #{globalIdx + 1}
                           </span>
@@ -1477,62 +1478,99 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                             {formatDuration(item.duration)}
                           </span>
                         </div>
+                      </div>
 
-                        {/* 語音檔案名稱直接修改欄位（同步更新 Google 雲端硬碟檔名） */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label className="text-[11px] font-bold text-[#5C3A1B] shrink-0">
-                            語音檔案名稱：
-                          </label>
-                          <div className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-xl">
-                            <input
-                              type="text"
-                              value={titleValue}
-                              onChange={(e) =>
-                                setEditingTitles((prev) => ({
-                                  ...prev,
-                                  [item.id]: e.target.value,
-                                }))
-                              }
-                              onBlur={(e) => handleSaveItemTitle(item, e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleSaveItemTitle(item, titleValue);
-                                }
-                              }}
-                              placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
-                              className="flex-1 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-[#FAF6EE] focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
-                            />
-                            {editingTitles[item.id] !== undefined &&
-                            editingTitles[item.id].trim() !== '' &&
-                            editingTitles[item.id].trim() !== item.title ? (
-                              <button
-                                type="button"
-                                onMouseDown={(e) => {
-                                  // 避免觸發 input onBlur 造成兩次呼叫，直接立即執行儲存
-                                  e.preventDefault();
-                                  handleSaveItemTitle(item, titleValue);
-                                }}
-                                className="px-2.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>儲存並同步雲端檔名</span>
-                              </button>
-                            ) : renamingItemIds[item.id] ? (
-                              <span className="px-2 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[#2E5A44] text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>雲端檔名背景同步中</span>
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
+                      {/* 右側操作按鈕群：放映室播放、下載語音檔、SRT 編輯 */}
+                      <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => onPlayInScreeningRoom(item)}
+                          className="px-3 py-1.5 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>放映室播放</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadAudio(item)}
+                          disabled={!!downloadingItemIds[item.id]}
+                          title="下載此語音檔到電腦或手機"
+                          className="px-3 py-1.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-60 disabled:cursor-wait text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
+                        >
+                          {downloadingItemIds[item.id] ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Download className="w-3.5 h-3.5" />
+                          )}
+                          <span>{downloadingItemIds[item.id] ? '準備下載中...' : '下載語音檔'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onEditInAudioLibrary(item)}
+                          className="px-3 py-1.5 rounded-xl border border-[#D5C5AE] hover:bg-[#FAF4E8] text-[#5C3A1B] text-xs font-medium flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>SRT 與圖片編輯</span>
+                        </button>
                       </div>
                     </div>
 
-                    {/* 單筆直接移動 / 切換館藏分類 + 預覽與進階圖文編輯按鈕 */}
-                    <div className="flex flex-wrap items-center gap-2 self-end lg:self-center shrink-0">
-                      <div className="flex items-center gap-1.5 bg-[#FAF4E8] px-3 py-1.5 rounded-xl border border-[#DFCEB4]">
-                        <span className="text-[11px] font-semibold text-[#5C3A1B]">
+                    {/* 第二列：語音檔案名稱修改（左側寬敞空間，儲存按鈕絕不被遮擋）+ 右側所屬館藏分類切換 */}
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1 min-w-0">
+                        <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>語音檔案名稱：</span>
+                        </label>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <input
+                            type="text"
+                            value={titleValue}
+                            onChange={(e) =>
+                              setEditingTitles((prev) => ({
+                                ...prev,
+                                [item.id]: e.target.value,
+                              }))
+                            }
+                            onBlur={(e) => handleSaveItemTitle(item, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSaveItemTitle(item, titleValue);
+                              }
+                            }}
+                            placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
+                            className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-2xs"
+                          />
+                          {editingTitles[item.id] !== undefined &&
+                          editingTitles[item.id].trim() !== '' &&
+                          editingTitles[item.id].trim() !== item.title ? (
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                // 避免觸發 input onBlur 造成兩次呼叫，直接立即執行儲存
+                                e.preventDefault();
+                                handleSaveItemTitle(item, titleValue);
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer z-10"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>儲存並同步雲端檔名</span>
+                            </button>
+                          ) : renamingItemIds[item.id] ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-[#2E5A44] text-[11px] font-semibold flex items-center gap-1 shrink-0">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>雲端檔名背景同步中</span>
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* 單筆直接移動 / 切換所屬館藏分類 */}
+                      <div className="flex items-center gap-2 shrink-0 self-start lg:self-center border-t lg:border-t-0 pt-2 lg:pt-0 border-[#E2D5C1]">
+                        <span className="text-xs font-semibold text-[#5C3A1B] shrink-0">
                           所屬館藏分類：
                         </span>
                         <select
@@ -1540,7 +1578,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           onChange={(e) =>
                             handleSingleItemCategoryChange(item, e.target.value)
                           }
-                          className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer shadow-2xs hover:border-[#8B5A2B]"
                         >
                           {categories.map((cat) => (
                             <option key={cat.id} value={cat.id}>
@@ -1549,39 +1587,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           ))}
                         </select>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => onPlayInScreeningRoom(item)}
-                        className="px-3 py-1.5 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>放映室播放</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadAudio(item)}
-                        disabled={!!downloadingItemIds[item.id]}
-                        title="下載此語音檔到電腦或手機"
-                        className="px-3 py-1.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-60 disabled:cursor-wait text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
-                      >
-                        {downloadingItemIds[item.id] ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Download className="w-3.5 h-3.5" />
-                        )}
-                        <span>{downloadingItemIds[item.id] ? '準備下載中...' : '下載語音檔'}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onEditInAudioLibrary(item)}
-                        className="px-3 py-1.5 rounded-xl border border-[#D5C5AE] hover:bg-[#FAF4E8] text-[#5C3A1B] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>SRT 與圖片編輯</span>
-                      </button>
                     </div>
                   </div>
 
