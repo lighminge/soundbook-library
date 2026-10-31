@@ -80,25 +80,56 @@ export async function saveCloudConfig(config: CloudConfig): Promise<void> {
   firestoreDb = null; // 重新初始化
 
   // 同步將 Google Drive 設定儲存至 Firebase Firestore，讓手機與電腦跨裝置自動共用！
+  await writeDriveConfigToFirestore(cleaned.googleDriveScriptUrl, cleaned.googleDriveFolderId);
+}
+
+/**
+ * Firestore 中存放「Google 雲端硬碟連線設定」的系統文件 ID
+ * 注意：Firestore 保留 __xxx__ 形式的文件 ID（例如舊版的 __system_cloud_config__ 會被拒絕寫入），
+ * 因此改用一般 ID，才能真正讓手機與電腦跨裝置共用設定。
+ */
+const SYSTEM_CONFIG_DOC_ID = 'sys_cloud_config';
+const LEGACY_SYSTEM_CONFIG_DOC_ID = '__system_cloud_config__';
+
+function isSystemConfigCategoryId(id?: string): boolean {
+  return id === SYSTEM_CONFIG_DOC_ID || id === LEGACY_SYSTEM_CONFIG_DOC_ID;
+}
+
+/**
+ * 將 Google 雲端硬碟設定寫入 Firestore（categories/sys_cloud_config）
+ */
+async function writeDriveConfigToFirestore(scriptUrl: string, folderId: string): Promise<boolean> {
   const db = getDbInstance();
-  if (db) {
+  if (!db || !scriptUrl) return false;
+  try {
+    const ref = doc(db, 'categories', SYSTEM_CONFIG_DOC_ID);
+    // createdAt 為不可變欄位，更新時需沿用既有值
+    let createdAt = new Date().toISOString();
     try {
-      await setDoc(doc(db, 'categories', '__system_cloud_config__'), {
-        id: '__system_cloud_config__',
-        name: '__system_cloud_config__',
-        code: 'SYS-CFG',
-        description: JSON.stringify({
-          googleDriveScriptUrl: cleaned.googleDriveScriptUrl,
-          googleDriveFolderId: cleaned.googleDriveFolderId,
-        }),
-        themeColor: '#000000',
-        icon: 'Settings',
-        order: 9999,
-        createdAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn('同步雲端硬碟設定至 Firestore 略過:', e);
+      const existing = await getDoc(ref);
+      if (existing.exists() && existing.data().createdAt) {
+        createdAt = String(existing.data().createdAt);
+      }
+    } catch {
+      // ignore
     }
+    await setDoc(ref, {
+      id: SYSTEM_CONFIG_DOC_ID,
+      name: '系統雲端硬碟連線設定',
+      code: 'SYS-CFG',
+      description: JSON.stringify({
+        googleDriveScriptUrl: scriptUrl,
+        googleDriveFolderId: folderId,
+      }),
+      themeColor: '#000000',
+      icon: 'Settings',
+      order: 9999,
+      createdAt,
+    });
+    return true;
+  } catch (e) {
+    console.warn('同步雲端硬碟設定至 Firestore 失敗:', e);
+    return false;
   }
 }
 
@@ -147,7 +178,7 @@ async function ensureDriveConfigSynced(): Promise<void> {
   const db = getDbInstance();
   if (!db) return;
   try {
-    const snap = await getDoc(doc(db, 'categories', '__system_cloud_config__'));
+    const snap = await getDoc(doc(db, 'categories', SYSTEM_CONFIG_DOC_ID));
     if (snap.exists()) {
       applyRemoteDriveConfig((snap.data() as Category).description);
     }
@@ -202,15 +233,27 @@ export async function loadLibraryData(): Promise<{
       ]);
 
       let categories: Category[] = [];
+      let remoteDriveConfigFound = false;
       catSnap.forEach((d) => {
         const data = d.data() as Category;
-        if (data.id === '__system_cloud_config__') {
+        if (isSystemConfigCategoryId(data.id) || isSystemConfigCategoryId(d.id)) {
           // 自動從 Firestore 同步 Google 雲端硬碟連線設定至當前裝置（以雲端設定為準，避免手機殘留舊設定）
-          applyRemoteDriveConfig(data.description);
+          if (applyRemoteDriveConfig(data.description)) remoteDriveConfigFound = true;
         } else {
           categories.push(data);
         }
       });
+
+      // 若雲端尚無設定、但本裝置（例如電腦）已設定 GAS，自動上傳到 Firestore，讓 iPhone 等其他裝置自動取得
+      if (!remoteDriveConfigFound) {
+        const localCfg = getCloudConfig();
+        if (isGoogleDriveConfigured(localCfg)) {
+          writeDriveConfigToFirestore(
+            localCfg.googleDriveScriptUrl,
+            localCfg.googleDriveFolderId
+          ).catch(() => {});
+        }
+      }
 
       let audioItems: AudioItem[] = [];
       audioSnap.forEach((d) => audioItems.push(d.data() as AudioItem));
@@ -865,7 +908,8 @@ export async function uploadFileToGoogleDrive(
   let errorReason: string | undefined;
 
   if (!isGoogleDriveConfigured(config)) {
-    errorReason = '尚未在右上角「雲端連線設定」填入 Google Apps Script 部署網址 (Web App URL)';
+    errorReason =
+      '此裝置尚未取得 Google 雲端硬碟連線設定。請先用「已設定好 GAS 的電腦」開啟一次本系統（會自動同步設定到雲端），再重新整理手機頁面；或在右上角「雲端連線設定」填入 Google Apps Script 部署網址。';
   } else {
     try {
       onProgress?.(45, '正在上傳至系統 Google 雲端硬碟...');
