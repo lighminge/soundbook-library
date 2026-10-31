@@ -29,8 +29,11 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   firebaseStorageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'soundbook-library-db.firebasestorage.app',
   firebaseMessagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '528102320989',
   firebaseAppId: import.meta.env.VITE_FIREBASE_APP_ID || '1:528102320989:web:8dede1f2aebeabf814d6b4',
-  googleDriveScriptUrl: import.meta.env.VITE_GOOGLE_DRIVE_SCRIPT_URL || '',
-  googleDriveFolderId: import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '',
+  googleDriveScriptUrl:
+    import.meta.env.VITE_GOOGLE_DRIVE_SCRIPT_URL ||
+    'https://script.google.com/macros/s/AKfycbyk81N8kBN2uTbyv3S2qIzb_8NSV3KGZLiaIXc0C8O9PIS3sb_8K7N5RbYf8e3xYxwpgA/exec',
+  googleDriveFolderId:
+    import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '1WgIKuwXgLkg86EKvtCHPxwJ9O5QjSBIt',
 };
 
 let firestoreDb: Firestore | null = null;

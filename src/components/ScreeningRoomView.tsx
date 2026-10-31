@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Play,
   Pause,
@@ -19,6 +19,7 @@ import {
   Check,
   CheckCircle2,
   X,
+  Tag,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -31,6 +32,7 @@ import {
   updateSegmentAndCascade,
   serializeSrtSegments,
   syncSlidesWithSrtSegments,
+  sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
 
 interface ScreeningRoomViewProps {
@@ -105,6 +107,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [editSegText, setEditSegText] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // 「館藏語音選片書架」專屬查詢狀態（檔案名稱、類別標籤）
+  const [shelfSearchTitle, setShelfSearchTitle] = useState('');
+  const [shelfSearchTag, setShelfSearchTag] = useState('');
+
+  // 「館藏語音選片書架」專屬分頁狀態（以 5 的倍數做選取）
+  const [shelfPageSize, setShelfPageSize] = useState<number>(5);
+  const [shelfCurrentPage, setShelfCurrentPage] = useState<number>(1);
+
+  // 播放時圖片縮圖水平滾動容器 Ref
+  const slideThumbsContainerRef = useRef<HTMLDivElement | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -158,7 +171,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   }, [playableScreeningUrl]);
 
-  // 依據分類與搜尋篩選清單
+  // 依據分類與頂部搜尋篩選清單
   const filteredItems = audioItems.filter((item) => {
     const matchCat =
       selectedCategoryId === 'all' || item.categoryId === selectedCategoryId;
@@ -169,12 +182,55 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     return matchCat && matchQuery;
   });
 
+  // 「館藏語音選片書架」專屬篩選：分類 + 檔案名稱查詢 + 類別標籤查詢
+  const shelfFilteredItems = audioItems.filter((item) => {
+    // 1. 分類篩選
+    const matchCat =
+      selectedCategoryId === 'all' || item.categoryId === selectedCategoryId;
+    // 2. 頂部通用搜尋 (標題或說明)
+    const matchGeneral =
+      !searchQuery.trim() ||
+      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.description.toLowerCase().includes(searchQuery.toLowerCase());
+    // 3. 書架專屬檔案名稱查詢
+    const qTitle = shelfSearchTitle.trim().toLowerCase();
+    const matchTitle = !qTitle || item.title.toLowerCase().includes(qTitle);
+    // 4. 書架專屬類別標籤查詢
+    const qTag = shelfSearchTag.trim().toLowerCase();
+    const itemTags = item.tags || [];
+    const matchTag =
+      !qTag || itemTags.some((tag) => tag.toLowerCase().includes(qTag));
+
+    return matchCat && matchGeneral && matchTitle && matchTag;
+  });
+
+  // 「館藏語音選片書架」分頁計算（以 5 的倍數做選取：5, 10, 15, 20, 25）
+  const totalShelfCount = shelfFilteredItems.length;
+  const totalShelfPages = Math.max(1, Math.ceil(totalShelfCount / shelfPageSize));
+  const safeShelfPage = Math.min(shelfCurrentPage, totalShelfPages);
+  const shelfStartIndex = (safeShelfPage - 1) * shelfPageSize;
+  const paginatedShelfItems = shelfFilteredItems.slice(
+    shelfStartIndex,
+    shelfStartIndex + shelfPageSize
+  );
+
+  // 當分類、搜尋關鍵字、書架檔案名稱查詢、類別標籤查詢或每頁筆數變更時，自動回到第 1 頁
+  useEffect(() => {
+    setShelfCurrentPage(1);
+  }, [
+    selectedCategoryId,
+    searchQuery,
+    shelfSearchTitle,
+    shelfSearchTag,
+    shelfPageSize,
+  ]);
+
   const currentCategory = categories.find((c) => c.id === currentItem?.categoryId);
 
-  // 取得播放時要展示的所有圖片（若無設定 slides，自動以封面圖作為預設展演圖）
+  // 取得播放時要展示的所有圖片（若無設定 slides，自動以封面圖作為預設展演圖，並依時間區段由小到大排序）
   const slides: PlaybackSlide[] =
     currentItem && currentItem.playbackDisplay.slides.length > 0
-      ? [...currentItem.playbackDisplay.slides].sort((a, b) => a.timestampSec - b.timestampSec)
+      ? sortSlidesBySegmentRange(currentItem.playbackDisplay.slides)
       : currentItem
       ? [
           {
@@ -213,6 +269,22 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       ? manualSlideIndex
       : autoSlideIndex;
   const activeSlide = slides[activeSlideIndex] || slides[0];
+
+  // 當當前選取的圖片切換時，自動將縮圖捲動至水平視野正中央
+  useEffect(() => {
+    if (slideThumbsContainerRef.current) {
+      const activeEl = slideThumbsContainerRef.current.querySelector(
+        `[data-slide-index="${activeSlideIndex}"]`
+      ) as HTMLElement | null;
+      if (activeEl) {
+        activeEl.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center',
+        });
+      }
+    }
+  }, [activeSlideIndex]);
 
   const srtSegments = parseSrtContent(
     currentItem?.playbackDisplay.textContent || '',
@@ -286,6 +358,37 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         audio.currentTime = clamped;
       } catch {
         // ignore if audio metadata not yet ready
+      }
+    }
+  };
+
+  /**
+   * 手動點選縮圖或切換展示圖片（支援圖片過多時精確選取，並同步音訊與字幕時間戳）
+   */
+  const handleSelectSlide = (index: number) => {
+    const targetSlide = slides[index];
+    if (!targetSlide) return;
+    setManualSlideIndex(index);
+
+    const newTime = targetSlide.timestampSec;
+    const maxSrtEnd =
+      srtSegments.length > 0 ? srtSegments[srtSegments.length - 1].endSec : 0;
+    const maxAllowed = Math.max(duration || 1, maxSrtEnd, newTime);
+    const clamped = Math.max(0, Math.min(maxAllowed, newTime));
+
+    setCurrentTime(clamped);
+    if (targetSlide.startSegmentIndex) {
+      setManualSegmentIndex(targetSlide.startSegmentIndex);
+    } else {
+      setManualSegmentIndex(null);
+    }
+
+    const audio = audioRef.current;
+    if (audio) {
+      try {
+        audio.currentTime = clamped;
+      } catch {
+        // ignore
       }
     }
   };
@@ -562,26 +665,76 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </p>
                 </div>
 
-                {/* 多張圖片縮圖切換器 */}
+                {/* 多張圖片縮圖切換器（支援圖片過多時平滑水平滑動、滑鼠滾輪與精確點選） */}
                 {slides.length > 1 && (
-                  <div className="hidden sm:flex items-center gap-1.5 shrink-0">
-                    {slides.map((sl, i) => (
-                      <button
-                        key={sl.id}
-                        onClick={() => {
-                          setManualSlideIndex(i);
-                          handleSeek(sl.timestampSec);
-                        }}
-                        className={`w-12 h-8 rounded overflow-hidden border-2 transition cursor-pointer ${
-                          i === activeSlideIndex
-                            ? 'border-amber-400 scale-105'
-                            : 'border-white/30 opacity-60 hover:opacity-100'
-                        }`}
-                        title={`${formatDuration(sl.timestampSec)} - ${sl.caption}`}
-                      >
-                        <img src={sl.imageUrl} alt="" className="w-full h-full object-cover" />
-                      </button>
-                    ))}
+                  <div className="hidden sm:flex items-center gap-1 shrink-0 max-w-[50%] md:max-w-[58%] lg:max-w-[62%] bg-black/60 backdrop-blur-md p-1 rounded-xl border border-white/20">
+                    {/* 向左滾動按鈕 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (slideThumbsContainerRef.current) {
+                          slideThumbsContainerRef.current.scrollBy({
+                            left: -120,
+                            behavior: 'smooth',
+                          });
+                        }
+                      }}
+                      className="p-1 rounded-md text-white/70 hover:text-white hover:bg-white/10 shrink-0 cursor-pointer"
+                      title="向左滾動縮圖"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* 可水平滾動的縮圖列表 */}
+                    <div
+                      ref={slideThumbsContainerRef}
+                      onWheel={(e) => {
+                        if (e.deltaY !== 0 && slideThumbsContainerRef.current) {
+                          slideThumbsContainerRef.current.scrollLeft += e.deltaY;
+                        }
+                      }}
+                      className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin py-0.5 px-0.5 max-w-full"
+                    >
+                      {slides.map((sl, i) => (
+                        <button
+                          key={sl.id || `slide_${i}`}
+                          data-slide-index={i}
+                          type="button"
+                          onClick={() => handleSelectSlide(i)}
+                          className={`w-12 h-8 rounded-md overflow-hidden border-2 shrink-0 transition-all cursor-pointer ${
+                            i === activeSlideIndex
+                              ? 'border-amber-400 scale-105 shadow-md ring-2 ring-amber-400/60'
+                              : 'border-white/30 opacity-60 hover:opacity-100 hover:border-white/80'
+                          }`}
+                          title={`#${i + 1} (${formatDuration(sl.timestampSec)}) - ${
+                            sl.caption || '展示圖片'
+                          }`}
+                        >
+                          <img
+                            src={sl.imageUrl}
+                            alt=""
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* 向右滾動按鈕 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (slideThumbsContainerRef.current) {
+                          slideThumbsContainerRef.current.scrollBy({
+                            left: 120,
+                            behavior: 'smooth',
+                          });
+                        }
+                      }}
+                      className="p-1 rounded-md text-white/70 hover:text-white hover:bg-white/10 shrink-0 cursor-pointer"
+                      title="向右滾動縮圖"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 )}
               </div>
@@ -941,19 +1094,122 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 </h3>
               </div>
               <span className="text-xs px-2 py-0.5 rounded-full bg-[#EFE6D5] text-[#5C3A1B] font-medium">
-                共 {filteredItems.length} 部
+                共 {totalShelfCount} 部
               </span>
             </div>
 
-            <div className="space-y-3 max-h-[680px] overflow-y-auto pr-1">
-              {filteredItems.length === 0 ? (
+            {/* 書架專屬查詢功能：檔案名稱、類別標籤 */}
+            <div className="space-y-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5] text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
+                  <Search className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                  <span>書架快速查詢：</span>
+                </span>
+                {(shelfSearchTitle || shelfSearchTag) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShelfSearchTitle('');
+                      setShelfSearchTag('');
+                    }}
+                    className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-0.5 cursor-pointer font-medium"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>清空條件</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {/* 檔案名稱查詢 */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="查詢檔案名稱..."
+                    value={shelfSearchTitle}
+                    onChange={(e) => setShelfSearchTitle(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+
+                {/* 類別標籤查詢 */}
+                <div className="relative">
+                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="查詢類別標籤 (如: 繪本)..."
+                    value={shelfSearchTag}
+                    onChange={(e) => setShelfSearchTag(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 書架分頁設定與上方換頁切換列 (以 5 的倍數做選取) */}
+            <div className="p-2.5 rounded-xl bg-[#EFE6D5] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-[#3A2518] font-semibold">
+                  第 <strong className="font-mono text-[#8B5A2B]">{safeShelfPage}</strong> /{' '}
+                  <strong className="font-mono text-[#8B5A2B]">{totalShelfPages}</strong> 頁
+                </span>
+                <div className="flex items-center gap-1">
+                  <label className="text-[#5C3A1B] text-[11px] font-medium">每頁：</label>
+                  <select
+                    value={shelfPageSize}
+                    onChange={(e) => {
+                      setShelfPageSize(Number(e.target.value));
+                      setShelfCurrentPage(1);
+                    }}
+                    className="px-1.5 py-0.5 rounded border border-[#C8B598] bg-white text-[11px] font-semibold text-[#2C221E] cursor-pointer"
+                  >
+                    {[5, 10, 15, 20, 25].map((size) => (
+                      <option key={size} value={size}>
+                        {size} 部 / 頁
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 上方翻頁按鈕 */}
+              {totalShelfPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safeShelfPage <= 1}
+                    onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
+                    className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    <span>上頁</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={safeShelfPage >= totalShelfPages}
+                    onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
+                    className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <span>下頁</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 書架語音項目列表 */}
+            <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
+              {paginatedShelfItems.length === 0 ? (
                 <div className="py-10 text-center text-xs text-[#7A6855]">
                   此分類或搜尋條件下沒有符合的語音檔
                 </div>
               ) : (
-                filteredItems.map((item) => {
+                paginatedShelfItems.map((item, idxInPage) => {
                   const isSelected = item.id === currentItem.id;
                   const cat = categories.find((c) => c.id === item.categoryId);
+                  const globalSeq = shelfStartIndex + idxInPage + 1;
 
                   return (
                     <div
@@ -981,7 +1237,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 mb-1">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span
+                            className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
+                              isSelected ? 'bg-white/20 text-white' : 'bg-[#3A2518] text-white'
+                            }`}
+                          >
+                            #{globalSeq}
+                          </span>
                           {cat && (
                             <span
                               className="px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
@@ -1009,12 +1272,83 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         >
                           {item.description}
                         </p>
+
+                        {/* 類別標籤徽章展示 */}
+                        {item.tags && item.tags.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                            {item.tags.slice(0, 3).map((tag) => (
+                              <span
+                                key={tag}
+                                className={`text-[10px] px-1.5 py-0.2 rounded ${
+                                  isSelected
+                                    ? 'bg-white/15 text-[#FAF5EC]'
+                                    : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B]'
+                                }`}
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                            {item.tags.length > 3 && (
+                              <span className="text-[10px] text-[#8B735B]">
+                                +{item.tags.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
                 })
               )}
             </div>
+
+            {/* 書架底部翻頁控制列 */}
+            {totalShelfPages > 1 && (
+              <div className="flex items-center justify-between pt-2 border-t border-[#E5D9C5] text-xs">
+                <span className="text-[#7A6855] text-[11px]">
+                  共 {totalShelfCount} 部語音
+                </span>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safeShelfPage <= 1}
+                    onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
+                    className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    <span>上一頁</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalShelfPages }, (_, i) => i + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setShelfCurrentPage(pageNum)}
+                        className={`w-6 h-6 rounded-md font-mono text-[11px] font-bold transition cursor-pointer ${
+                          pageNum === safeShelfPage
+                            ? 'bg-[#8B5A2B] text-white shadow-xs'
+                            : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={safeShelfPage >= totalShelfPages}
+                    onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
+                    className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <span>下一頁</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

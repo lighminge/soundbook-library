@@ -2332,11 +2332,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   </button>
                 </div>
 
-                {/* 總筆數統計與分頁數目選取 (10 的倍數) */}
-                <div className="p-3 rounded-xl bg-[#EFE6D5] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2 text-[#3A2518] font-semibold">
-                    <span>
-                      總筆數統計：共 <strong className="text-[#2B4C7E]">{totalSlidesCount}</strong> 筆圖片
+                {/* 總筆數統計、每頁顯示與上方分頁切換控制列 */}
+                <div className="p-3 rounded-xl bg-[#EFE6D5] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-3 text-[#3A2518]">
+                    <span className="font-semibold">
+                      總筆數統計：共 <strong className="text-[#2B4C7E] font-mono">{totalSlidesCount}</strong> 筆圖片
                     </span>
                     {totalSlidesCount > 0 && (
                       <span className="text-[#7A6855] font-normal">
@@ -2344,25 +2344,67 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         {Math.min(slideStartIndex + slidePageSize, totalSlidesCount)} 筆)
                       </span>
                     )}
+
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[#5C3A1B] font-medium">每頁顯示：</label>
+                      <select
+                        value={slidePageSize}
+                        onChange={(e) => {
+                          setSlidePageSize(Number(e.target.value));
+                          setSlideCurrentPage(1);
+                        }}
+                        className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
+                      >
+                        {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((size) => (
+                          <option key={size} value={size}>
+                            {size} 筆 / 頁
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[#5C3A1B] font-medium">每頁顯示：</label>
-                    <select
-                      value={slidePageSize}
-                      onChange={(e) => {
-                        setSlidePageSize(Number(e.target.value));
-                        setSlideCurrentPage(1);
-                      }}
-                      className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
-                    >
-                      {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((size) => (
-                        <option key={size} value={size}>
-                          {size} 筆 / 頁
-                        </option>
+                  {/* 清單上方分頁切換按鈕控制列 */}
+                  {totalSlidePages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeSlidePage <= 1}
+                        onClick={() => setSlideCurrentPage((p) => Math.max(1, p - 1))}
+                        className="px-2 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-45 text-[#3A2518] font-medium flex items-center gap-0.5 cursor-pointer"
+                        title="上一頁"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>上一頁</span>
+                      </button>
+
+                      {Array.from({ length: totalSlidePages }, (_, i) => i + 1).map((pageNum) => (
+                        <button
+                          type="button"
+                          key={pageNum}
+                          onClick={() => setSlideCurrentPage(pageNum)}
+                          className={`w-6 h-6 rounded-md font-mono text-xs font-semibold cursor-pointer ${
+                            pageNum === safeSlidePage
+                              ? 'bg-[#2B4C7E] text-white shadow-2xs'
+                              : 'bg-white border border-[#D5C5AE] text-[#5C3A1B] hover:bg-[#F4ECE0]'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
                       ))}
-                    </select>
-                  </div>
+
+                      <button
+                        type="button"
+                        disabled={safeSlidePage >= totalSlidePages}
+                        onClick={() => setSlideCurrentPage((p) => Math.min(totalSlidePages, p + 1))}
+                        className="px-2 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-45 text-[#3A2518] font-medium flex items-center gap-0.5 cursor-pointer"
+                        title="下一頁"
+                      >
+                        <span>下一頁</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* 已設定的播放時圖片列表（含前方序號、修改起迄區段、刪除確認視窗） */}
