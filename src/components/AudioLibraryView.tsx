@@ -19,9 +19,12 @@ import {
   FileUp,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Check,
   SlidersHorizontal,
   ArrowUpDown,
+  Search,
+  Tags,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import {
@@ -173,6 +176,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   // 播放圖片列表「分頁」狀態 (以 5 的倍數選取)
   const [slidePageSize, setSlidePageSize] = useState<number>(5);
   const [slideCurrentPage, setSlideCurrentPage] = useState<number>(1);
+
+  // 「語音檔案編輯與館藏管理」查詢狀態 (語音檔案名稱、說明內容)
+  const [audioSearchTitle, setAudioSearchTitle] = useState('');
+  const [audioSearchDesc, setAudioSearchDesc] = useState('');
 
   // 「語音檔案編輯與館藏管理」清單排序狀態 (依檔案名稱、上傳日期、館藏分類；由小到大、由大到小)
   const [audioSortBy, setAudioSortBy] = useState<'title' | 'createdAt' | 'category'>('title');
@@ -999,11 +1006,22 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     )} --> ${secondsToSrtTime(endSec)}]`;
   };
 
-  // 依所選分類過濾語音檔案
-  const filteredAudioList =
-    filterCategoryId === 'all'
-      ? audioItems
-      : audioItems.filter((item) => item.categoryId === filterCategoryId);
+  // 依所選分類與查詢條件（語音檔案名稱、館藏分類、說明內容）過濾語音檔案
+  const filteredAudioList = audioItems.filter((item) => {
+    // 1. 館藏分類
+    const matchCategory =
+      filterCategoryId === 'all' || item.categoryId === filterCategoryId;
+
+    // 2. 語音檔案名稱
+    const qTitle = audioSearchTitle.trim().toLowerCase();
+    const matchTitle = !qTitle || (item.title || '').toLowerCase().includes(qTitle);
+
+    // 3. 說明內容
+    const qDesc = audioSearchDesc.trim().toLowerCase();
+    const matchDesc = !qDesc || (item.description || '').toLowerCase().includes(qDesc);
+
+    return matchCategory && matchTitle && matchDesc;
+  });
 
   // 「語音檔案編輯與館藏管理」排序計算：依檔案名稱、上傳日期、館藏分類；由小到大、由大到小
   const sortedAudioList = useMemo(() => {
@@ -1041,10 +1059,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     audioStartIndex + audioListPageSize
   );
 
-  // 當分類篩選、排序條件或每頁筆數變更時，自動回到第 1 頁
+  // 當分類篩選、查詢關鍵字、排序條件或每頁筆數變更時，自動回到第 1 頁
   useEffect(() => {
     setAudioListPage(1);
-  }, [filterCategoryId, audioSortBy, audioSortOrder, audioListPageSize]);
+  }, [
+    filterCategoryId,
+    audioSearchTitle,
+    audioSearchDesc,
+    audioSortBy,
+    audioSortOrder,
+    audioListPageSize,
+  ]);
 
   // 依「時間區段」由小到大排序播放展示圖片清單 (PlaybackSlide[])
   const sortedSlides = useMemo(() => sortSlidesBySegmentRange(slides), [slides]);
@@ -1311,6 +1336,77 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
               </div>
             </div>
 
+            {/* 查詢功能列：語音檔案名稱、館藏分類、說明內容 */}
+            <div className="p-3.5 rounded-xl bg-[#FAF6EE] border border-[#E2D5C1] space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-[#5C3A1B]">
+                  <Search className="w-4 h-4 text-[#8B5A2B]" />
+                  <span>語音館藏多欄位查詢：</span>
+                </div>
+                {(audioSearchTitle || audioSearchDesc || filterCategoryId !== 'all') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAudioSearchTitle('');
+                      setAudioSearchDesc('');
+                      setFilterCategoryId('all');
+                    }}
+                    className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 cursor-pointer font-medium bg-[#EFE6D5] hover:bg-[#E5D7C2] px-2 py-0.5 rounded-md transition"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>清空查詢條件</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* 1. 語音檔案名稱查詢 */}
+                <div className="relative">
+                  <FileText className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="查詢語音檔案名稱..."
+                    value={audioSearchTitle}
+                    onChange={(e) => setAudioSearchTitle(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+
+                {/* 2. 館藏分類查詢 (下拉選單) */}
+                <div className="relative">
+                  <Tags className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={filterCategoryId}
+                    onChange={(e) => setFilterCategoryId(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                  >
+                    <option value="all">全部分類 (不限)</option>
+                    {categories.map((cat) => {
+                      const count = audioItems.filter((i) => i.categoryId === cat.id).length;
+                      return (
+                        <option key={cat.id} value={cat.id}>
+                          [{cat.code}] {cat.name} ({count} 筆)
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                {/* 3. 說明內容查詢 */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="查詢說明內容關鍵字..."
+                    value={audioSearchDesc}
+                    onChange={(e) => setAudioSearchDesc(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* 排序功能與分頁控制列 (以 10 的倍數選取；依檔案名稱、上傳日期、館藏分類排序) */}
             <div className="p-3.5 rounded-xl bg-[#EFE6D5] border border-[#D8C7AE] flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-3 text-[#3A2518]">
@@ -1426,9 +1522,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       key={item.id}
                       className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-[#E2D5C1] hover:border-[#8B5A2B] transition shadow-xs"
                     >
-                      <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="flex items-start gap-3.5 min-w-0 flex-1">
                         {/* 每個語音檔區塊加入序號 */}
-                        <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0 self-start sm:self-center">
+                        <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0 mt-0.5">
                           #{globalSeq}
                         </span>
 
@@ -1437,7 +1533,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           alt={item.title}
                           className="w-16 h-20 rounded-lg object-cover shrink-0 border border-[#D5C5AE]"
                         />
-                        <div className="min-w-0 space-y-1">
+                        <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             {cat && (
                               <span
@@ -1455,10 +1551,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               播放圖片 {item.playbackDisplay.slides.length} 張
                             </span>
                           </div>
-                          <h4 className="font-bold font-serif-tc text-base text-[#2C221E] truncate">
+                          {/* 完整顯示語音檔名稱 (移除 truncate，支援長檔名自然換行) */}
+                          <h4 className="font-bold font-serif-tc text-sm sm:text-base text-[#2C221E] break-words break-all leading-snug">
                             {item.title}
                           </h4>
-                          <p className="text-xs text-[#6E5D4F] line-clamp-1">
+                          <p className="text-xs text-[#6E5D4F] line-clamp-2">
                             {item.description}
                           </p>
                         </div>
