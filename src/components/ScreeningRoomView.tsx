@@ -13,6 +13,7 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Sparkles,
   Repeat,
   Loader2,
@@ -118,6 +119,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 播放時圖片縮圖水平滾動容器 Ref
   const slideThumbsContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // 放映室最上方容器 Ref，用於選片時跳到最上方
+  const screeningTopRef = useRef<HTMLDivElement | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -181,6 +185,47 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       item.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchCat && matchQuery;
   });
+
+  // 統計可用類別標籤與筆數（以當前選取分類為主，全選則統計全部館藏）
+  const availableShelfTags = useMemo(() => {
+    const targetItems =
+      selectedCategoryId === 'all'
+        ? audioItems
+        : audioItems.filter((i) => i.categoryId === selectedCategoryId);
+
+    const tagCountMap: Record<string, number> = {};
+    targetItems.forEach((item) => {
+      (item.tags || []).forEach((t) => {
+        const trimmed = t.trim();
+        if (trimmed) {
+          tagCountMap[trimmed] = (tagCountMap[trimmed] || 0) + 1;
+        }
+      });
+    });
+
+    return Object.keys(tagCountMap)
+      .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+      .map((tag) => ({
+        tag,
+        count: tagCountMap[tag],
+      }));
+  }, [audioItems, selectedCategoryId]);
+
+  // 當分類切換時，若已選取的標籤不在新分類的標籤清單中，自動重設為全部標籤
+  useEffect(() => {
+    if (shelfSearchTag && !availableShelfTags.some((t) => t.tag === shelfSearchTag)) {
+      setShelfSearchTag('');
+    }
+  }, [availableShelfTags, shelfSearchTag]);
+
+  // 點選書架上的語音檔時，切換曲目並平滑跳轉至最上方放映室播放舞台
+  const handleSelectShelfAudio = (item: AudioItem) => {
+    onSelectAudio(item);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (screeningTopRef.current) {
+      screeningTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   // 「館藏語音選片書架」專屬篩選：分類 + 檔案名稱查詢 + 類別標籤查詢
   const shelfFilteredItems = audioItems.filter((item) => {
@@ -479,7 +524,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   }
 
   return (
-    <div className="space-y-6 pb-12">
+    <div ref={screeningTopRef} className="space-y-6 pb-12">
       {/* 儲存成功提示 Toast */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3.5 rounded-xl bg-[#2E5A44] text-white shadow-2xl border border-emerald-400/30 animate-bounce max-w-md">
@@ -1133,16 +1178,24 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   />
                 </div>
 
-                {/* 類別標籤查詢 */}
+                {/* 類別標籤查詢 (下拉選單方式) */}
                 <div className="relative">
-                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="查詢類別標籤 (如: 繪本)..."
+                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
                     value={shelfSearchTag}
                     onChange={(e) => setShelfSearchTag(e.target.value)}
-                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
-                  />
+                    className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                  >
+                    <option value="">
+                      全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                    </option>
+                    {availableShelfTags.map(({ tag, count }) => (
+                      <option key={tag} value={tag}>
+                        #{tag} ({count} 部)
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
             </div>
@@ -1214,7 +1267,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   return (
                     <div
                       key={item.id}
-                      onClick={() => onSelectAudio(item)}
+                      onClick={() => handleSelectShelfAudio(item)}
                       className={`group flex items-start gap-3 p-3 rounded-xl border transition cursor-pointer ${
                         isSelected
                           ? 'bg-[#3A2518] text-[#FAF5EC] border-[#3A2518] shadow-md'
@@ -1279,10 +1332,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                             {item.tags.slice(0, 3).map((tag) => (
                               <span
                                 key={tag}
-                                className={`text-[10px] px-1.5 py-0.2 rounded ${
-                                  isSelected
-                                    ? 'bg-white/15 text-[#FAF5EC]'
-                                    : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B]'
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShelfSearchTag(tag);
+                                }}
+                                title={`點擊過濾標籤 #${tag}`}
+                                className={`text-[10px] px-1.5 py-0.2 rounded transition cursor-pointer ${
+                                  shelfSearchTag === tag
+                                    ? 'bg-[#8B5A2B] text-white font-bold shadow-xs'
+                                    : isSelected
+                                    ? 'bg-white/15 text-[#FAF5EC] hover:bg-white/25'
+                                    : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
                                 }`}
                               >
                                 #{tag}
