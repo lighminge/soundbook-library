@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   BookOpen,
   Landmark,
@@ -59,6 +59,8 @@ import {
   Database,
   FolderPlus,
   ChevronRight,
+  Search,
+  X,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 
@@ -316,6 +318,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
 
+  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態
+  const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
+
+  // 快速檢索篩選：比對語音檔案名稱、館藏分類、標籤與故事說明內容
+  const matchedAudioItems = useMemo(() => {
+    const q = quickSearchKeyword.trim().toLowerCase();
+    if (!q) return [];
+    return audioItems.filter((item) => {
+      const matchTitle = (item.title || '').toLowerCase().includes(q);
+      const matchDesc = (item.description || '').toLowerCase().includes(q);
+      const matchTags = (item.tags || []).some((t) => t.toLowerCase().includes(q));
+      const cat = categories.find((c) => c.id === item.categoryId);
+      const matchCat = cat
+        ? cat.name.toLowerCase().includes(q) || cat.code.toLowerCase().includes(q)
+        : false;
+      return matchTitle || matchDesc || matchTags || matchCat;
+    });
+  }, [audioItems, categories, quickSearchKeyword]);
+
   const visibleCategories =
     selectedAisle === 'all'
       ? categories
@@ -372,6 +393,137 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* 聲書閣總覽 Dashboard 專屬快速檢索區塊 */}
+      <div className="parchment-card rounded-2xl p-5 shadow-md border border-[#DFCEB4] space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-[#8B5A2B]/15 text-[#8B5A2B]">
+              <Search className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold font-serif-tc text-[#2C221E] flex items-center gap-2">
+                <span>館藏語音快速檢索</span>
+                {quickSearchKeyword.trim() && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
+                    找到 {matchedAudioItems.length} 筆
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-[#7A6855]">
+                輸入關鍵字即時比對語音檔案名稱、分類名稱、類別標籤與說明內容
+              </p>
+            </div>
+          </div>
+
+          {quickSearchKeyword && (
+            <button
+              onClick={() => setQuickSearchKeyword('')}
+              className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer self-start sm:self-center bg-[#EFE6D5] px-2.5 py-1 rounded-lg transition"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>清除檢索詞</span>
+            </button>
+          )}
+        </div>
+
+        {/* 檢索輸入列 */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、寓言、標題關鍵字）..."
+            value={quickSearchKeyword}
+            onChange={(e) => setQuickSearchKeyword(e.target.value)}
+            className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
+          />
+          {quickSearchKeyword && (
+            <button
+              type="button"
+              onClick={() => setQuickSearchKeyword('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* 檢索結果展示 */}
+        {quickSearchKeyword.trim() ? (
+          matchedAudioItems.length === 0 ? (
+            <div className="p-8 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
+              <p className="font-semibold text-sm text-[#5C3A1B]">
+                找不到與「{quickSearchKeyword}」相符的語音檔
+              </p>
+              <p>請嘗試其他關鍵字，或確認該館藏是否已在「語音檔案庫」中建立。</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
+              {matchedAudioItems.map((item, idx) => {
+                const cat = categories.find((c) => c.id === item.categoryId);
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => onSelectForPlayback(item)}
+                    className="group flex items-start gap-3 p-3 rounded-xl bg-white border border-[#E5D9C5] hover:border-[#8B5A2B] hover:shadow-md transition cursor-pointer"
+                  >
+                    <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
+                      <img
+                        src={item.coverImageUrl}
+                        alt={item.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 group-hover:opacity-100 transition">
+                        <Play className="w-5 h-5 text-white fill-current" />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
+                          #{idx + 1}
+                        </span>
+                        {cat && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-white"
+                            style={{ backgroundColor: cat.themeColor }}
+                          >
+                            {cat.name}
+                          </span>
+                        )}
+                        <span className="text-[11px] font-mono text-[#7A6855] flex items-center gap-0.5">
+                          <Clock className="w-3 h-3" />
+                          {formatDuration(item.duration)}
+                        </span>
+                      </div>
+
+                      <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] break-words break-all leading-snug line-clamp-2">
+                        {item.title}
+                      </h4>
+                      <p className="text-xs text-[#6E5D4F] line-clamp-1 mt-0.5">
+                        {item.description}
+                      </p>
+
+                      {item.tags && item.tags.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                          {item.tags.slice(0, 3).map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-[10px] px-1.5 py-0.2 rounded bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B]"
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : null}
       </div>
 
       {/* 館藏統計指標卡片 */}

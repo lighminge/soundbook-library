@@ -122,6 +122,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 放映室最上方容器 Ref，用於選片時跳到最上方
   const screeningTopRef = useRef<HTMLDivElement | null>(null);
 
+  // 放映室多媒體播放舞台 Ref (供手機版選片後平滑捲動至播放畫面)
+  const playerStageRef = useRef<HTMLDivElement | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
@@ -218,12 +221,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   }, [availableShelfTags, shelfSearchTag]);
 
-  // 點選書架上的語音檔時，切換曲目並平滑跳轉至最上方放映室播放舞台
+  // 點選書架上的語音檔時，切換曲目；手機版自動平滑捲動至下方的播放舞台，電腦版則平滑定位至頂部播放視角
   const handleSelectShelfAudio = (item: AudioItem) => {
     onSelectAudio(item);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (screeningTopRef.current) {
-      screeningTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (window.innerWidth < 1024) {
+      if (playerStageRef.current) {
+        playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (screeningTopRef.current) {
+        screeningTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   };
 
@@ -569,8 +578,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       />
 
       {/* 頂部：分類篩選導覽列 */}
-      <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
+      <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <button
             onClick={() => setSelectedCategoryId('all')}
             className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition shrink-0 cursor-pointer flex items-center gap-1.5 ${
@@ -604,24 +613,70 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             );
           })}
         </div>
+      </div>
 
-        {/* 搜尋框 */}
-        <div className="relative w-full lg:w-64 shrink-0">
-          <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
+      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方） */}
+      <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm border border-[#E2D5C1] space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-[#8B5A2B]/15 text-[#8B5A2B]">
+              <Search className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-2">
+                <span>搜尋館藏語音</span>
+                {searchQuery.trim() && (
+                  <span className="text-[11px] px-2 py-0.2 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
+                    找到 {shelfFilteredItems.length} 部
+                  </span>
+                )}
+              </h3>
+              <p className="text-[11px] text-[#7A6855]">
+                依標題關鍵字或故事內容說明即時檢索可放映之語音作品
+              </p>
+            </div>
+          </div>
+
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>清空搜尋</span>
+            </button>
+          )}
+        </div>
+
+        <div className="relative">
+          <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             placeholder="搜尋館藏語音標題或內容..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#D8C8B0] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+            className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* 主放映室佈局：左側/上方為多媒體展演舞台，右側為分類書架選單 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* 左側 8 欄：放映室主舞台（圖片展演 + 播放器 + 播放時同步文字） */}
-        <div className="lg:col-span-8 space-y-6">
+      {/* 主放映室佈局：
+          - 手機版 (iPhone/Android，未達 lg 斷點)：選片書架（查詢後的結果）在上方 (order-1)，播放畫面在下方 (order-2)
+          - 電腦版 (lg 斷點以上)：播放畫面在左側 (lg:order-1 lg:col-span-8)，選片書架在右側 (lg:order-2 lg:col-span-4)
+      */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* 電腦版左側 8 欄 / 手機版下方：放映室主舞台（圖片展演 + 播放器 + 播放時同步文字） */}
+        <div ref={playerStageRef} className="order-2 lg:order-1 lg:col-span-8 space-y-6">
           {/* 舞台主卡片 */}
           <div className="rounded-2xl overflow-hidden bg-[#1E1612] text-[#FAF5EC] shadow-2xl border border-[#4A3427]">
             {/* 舞台頂部資訊列 */}
@@ -1128,9 +1183,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           </div>
         </div>
 
-        {/* 右側 4 欄：分類書架播放清單 (Category Audio Selector) */}
-        <div className="lg:col-span-4">
-          <div className="parchment-card rounded-2xl p-5 shadow-md sticky top-6 space-y-4">
+        {/* 電腦版右側 4 欄 / 手機版上方：館藏語音選片書架（查詢後的結果列表） */}
+        <div className="order-1 lg:order-2 lg:col-span-4">
+          <div className="parchment-card rounded-2xl p-5 shadow-md lg:sticky lg:top-6 space-y-4">
             <div className="flex items-center justify-between border-b border-[#E5D9C5] pb-3">
               <div className="flex items-center gap-2">
                 <ListMusic className="w-5 h-5 text-[#8B5A2B]" />
