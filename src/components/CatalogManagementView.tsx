@@ -22,6 +22,7 @@ import {
   ChevronRight,
   FileText,
   Loader2,
+  Download,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import {
@@ -30,7 +31,7 @@ import {
   THEME_COLOR_OPTIONS,
   ICON_OPTIONS,
 } from './DashboardView';
-import { renameFileInGoogleDrive } from '../services/storageService';
+import { renameFileInGoogleDrive, downloadAudioItemFile } from '../services/storageService';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -155,6 +156,25 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   // 單筆語音檔「語音檔案名稱」即時編輯暫存 (key: item.id) 與雲端改名進行中狀態
   const [editingTitles, setEditingTitles] = useState<Record<string, string>>({});
   const [renamingItemIds, setRenamingItemIds] = useState<Record<string, boolean>>({});
+  // 單筆語音檔「下載中」狀態 (key: item.id)
+  const [downloadingItemIds, setDownloadingItemIds] = useState<Record<string, boolean>>({});
+
+  const handleDownloadAudio = async (item: AudioItem) => {
+    if (downloadingItemIds[item.id]) return;
+    setDownloadingItemIds((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      const res = await downloadAudioItemFile(item);
+      showToast(
+        res.success
+          ? `✅ 已開始下載語音檔「${res.fileName}」${res.message ? `（${res.message}）` : ''}`
+          : `❌ 下載失敗：${res.message || '請稍後再試'}`
+      );
+    } catch (err: any) {
+      showToast(`❌ 下載失敗：${err?.message || '請稍後再試'}`);
+    } finally {
+      setDownloadingItemIds((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
   // 單筆語音檔「說明內容」即時編輯暫存 (key: item.id)
   const [editingDescriptions, setEditingDescriptions] = useState<Record<string, string>>({});
   // 單筆語音檔「自訂類別標籤」輸入框暫存 (key: item.id)
@@ -1537,6 +1557,21 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       >
                         <Play className="w-3.5 h-3.5 fill-current" />
                         <span>放映室播放</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadAudio(item)}
+                        disabled={!!downloadingItemIds[item.id]}
+                        title="下載此語音檔到電腦或手機"
+                        className="px-3 py-1.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-60 disabled:cursor-wait text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
+                      >
+                        {downloadingItemIds[item.id] ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                        <span>{downloadingItemIds[item.id] ? '準備下載中...' : '下載語音檔'}</span>
                       </button>
 
                       <button

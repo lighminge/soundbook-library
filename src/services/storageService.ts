@@ -1067,6 +1067,61 @@ export async function fetchAudioBlobFromGoogleDrive(
 }
 
 /**
+ * 下載單筆語音檔到使用者裝置（電腦 / 手機）
+ * 讀取順序：本機快取 → Firestore 分片 → GAS getFile → 原始 data/blob 網址 → 直接開啟雲端硬碟下載連結
+ */
+export async function downloadAudioItemFile(item: AudioItem): Promise<{
+  success: boolean;
+  fileName: string;
+  message?: string;
+}> {
+  const fileName = ensureFileNameWithExtension(
+    (item.title || 'audio').replace(/[\\/:*?"<>|]/g, '_'),
+    item.mimeType,
+    '.mp3'
+  );
+
+  let blobUrl: string | null = null;
+  try {
+    blobUrl = await fetchAudioBlobFromGoogleDrive(extractDriveFileIdFromAudioItem(item), item.id);
+  } catch {
+    blobUrl = null;
+  }
+
+  if (!blobUrl && item.audioUrl && /^(data|blob):/i.test(item.audioUrl)) {
+    blobUrl = item.audioUrl;
+  }
+
+  if (blobUrl) {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    window.setTimeout(() => a.remove(), 1000);
+    return { success: true, fileName };
+  }
+
+  // 最後備援：直接開啟 Google 雲端硬碟的下載連結
+  const driveId = extractDriveFileIdFromAudioItem(item);
+  const fallbackUrl = driveId
+    ? `https://drive.google.com/uc?export=download&id=${driveId}`
+    : item.audioUrl;
+  if (fallbackUrl && /^https?:/i.test(fallbackUrl)) {
+    window.open(fallbackUrl, '_blank', 'noopener');
+    return {
+      success: true,
+      fileName,
+      message: '已開啟 Google 雲端硬碟下載頁面',
+    };
+  }
+
+  return { success: false, fileName, message: '找不到可下載的語音檔來源' };
+}
+
+/**
  * 測試 Google Apps Script 與 Google 雲端硬碟資料夾是否可正常寫入檔案
  */
 export async function testGoogleDriveConnection(
