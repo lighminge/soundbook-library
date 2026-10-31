@@ -184,9 +184,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const { playableUrl: playableEditorAudioUrl, isLoadingAudio: isEditorAudioLoading } =
     usePlayableAudioUrl(audioUrl, audioDriveFileId, fetchAudioBlobFromGoogleDrive, formId);
 
-  const showToast = (msg: string) => {
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = (msg: string, durationMs = 4000) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), durationMs);
   };
 
   // 當外部傳入 editingItem 時，自動載入至編輯器
@@ -560,6 +562,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         getAudioFileDuration(file),
       ]);
 
+      // 未真正寫入 Google 雲端硬碟時，不建立館藏資料，避免出現「顯示成功但雲端沒有檔案」的情況
+      if (uploadRes.mode !== 'google_drive') {
+        showToast(
+          `❌ 語音檔「${file.name}」未能上傳至 Google 雲端硬碟，系統未建立此筆資料。原因：${
+            uploadRes.errorReason || '尚未完成雲端硬碟連線設定'
+          }`,
+          10000
+        );
+        return;
+      }
+
       const cleanName = file.name.replace(/\.[^/.]+$/, '');
       const randomCover =
         DEFAULT_COVER_IMAGES[Math.floor(Math.random() * DEFAULT_COVER_IMAGES.length)];
@@ -600,15 +613,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       loadItemIntoEditor(newItem);
       setActiveSubTab('editor');
       showToast(
-        uploadRes.mode === 'google_drive'
-          ? '✅ 語音檔已成功寫入您的 Google 雲端硬碟與 Firebase！現在可設定 SRT 時間段落與播放圖片。'
-          : `⚠️ 語音檔已暫存於網頁，但尚未寫入 Google 雲端硬碟（原因：${
-              uploadRes.errorReason || '尚未完成雲端硬碟連線設定'
-            }）。`
+        uploadRes.savedToRootFolder
+          ? '✅ 語音檔已寫入 Google 雲端硬碟（注意：尚未設定資料夾 ID，檔案位於「我的雲端硬碟」根目錄）與 Firebase！'
+          : '✅ 語音檔已成功寫入您的 Google 雲端硬碟資料夾與 Firebase！現在可設定 SRT 時間段落與播放圖片。',
+        6000
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error('上傳語音檔失敗:', err);
-      showToast('上傳發生錯誤，請確認檔案格式。');
+      showToast(`❌ 上傳發生錯誤：${err?.message || '請確認檔案格式與網路連線'}`, 10000);
     } finally {
       setIsUploading(false);
     }
@@ -630,13 +642,16 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+        // iPhone Safari 的 MediaRecorder 產生 audio/mp4（AAC），其他瀏覽器多為 audio/webm
+        const recMime = (recorder.mimeType || 'audio/webm').split(';')[0];
+        const recExt = recMime.includes('mp4') ? 'm4a' : recMime.includes('ogg') ? 'ogg' : 'webm';
+        const blob = new Blob(recordedChunksRef.current, { type: recMime });
         const file = new File(
           [blob],
           `現場錄音_${new Date()
             .toLocaleTimeString('zh-TW', { hour12: false })
-            .replace(/:/g, '-')}.webm`,
-          { type: 'audio/webm' }
+            .replace(/:/g, '-')}.${recExt}`,
+          { type: recMime }
         );
         await handleAudioFileUpload(file);
       };
@@ -682,6 +697,15 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         }),
         getAudioFileDuration(file),
       ]);
+      if (uploadRes.mode !== 'google_drive') {
+        showToast(
+          `❌ 替換語音檔未能上傳至 Google 雲端硬碟，已保留原本的語音檔。原因：${
+            uploadRes.errorReason || '尚未完成雲端硬碟連線設定'
+          }`,
+          10000
+        );
+        return;
+      }
       setAudioUrl(uploadRes.directUrl);
       setAudioDriveFileId(uploadRes.fileId);
       setDuration(detectedDuration);
@@ -694,7 +718,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         uploadRes.fileId,
         detectedDuration
       );
-      showToast('✅ 已更新語音檔案並同步儲存至 Firebase！');
+      showToast('✅ 已更新語音檔案並同步儲存至 Google 雲端硬碟與 Firebase！');
+    } catch (err: any) {
+      console.error('替換語音檔失敗:', err);
+      showToast(`❌ 替換語音檔失敗：${err?.message || '請確認檔案格式與網路連線'}`, 10000);
     } finally {
       setIsUploading(false);
     }
@@ -888,18 +915,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       })
         .then(async (renameRes) => {
           if (
-            renameRes.newFileId ||
-            renameRes.newDirectUrl ||
-            renameRes.finalFileName
+            renameRes.renamedOnDrive &&
+            renameRes.finalFileName &&
+            renameRes.finalFileName !== requestedFileName
           ) {
+            // 雲端硬碟自動補上副檔名時，同步更新系統中顯示的圖片檔名
             const driveSyncedSlides = immediateSlides.map((sl) =>
               sl.id === slideId
-                ? {
-                    ...sl,
-                    imageFileName: renameRes.finalFileName || requestedFileName,
-                    ...(renameRes.newFileId ? { imageDriveId: renameRes.newFileId } : {}),
-                    ...(renameRes.newDirectUrl ? { imageUrl: renameRes.newDirectUrl } : {}),
-                  }
+                ? { ...sl, imageFileName: renameRes.finalFileName }
                 : sl
             );
             setSlides(driveSyncedSlides);
@@ -909,6 +932,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             showToast(
               `✅ Google 雲端硬碟圖片檔案名稱已同步更新為「${renameRes.finalFileName}」！`
             );
+          } else if (renameRes.message) {
+            showToast(`⚠️ ${renameRes.message}`, 10000);
           }
         })
         .finally(() => {
@@ -1405,27 +1430,16 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               isAudio: true,
                               itemId: formId,
                             }
-                          ).then(async (renameRes) => {
-                            if (renameRes.newFileId || renameRes.newDirectUrl) {
-                              const nextDriveId = renameRes.newFileId || audioDriveFileId;
-                              const nextAudioUrl = renameRes.newDirectUrl || audioUrl;
-                              if (renameRes.newFileId) setAudioDriveFileId(renameRes.newFileId);
-                              if (renameRes.newDirectUrl) setAudioUrl(renameRes.newDirectUrl);
-                              await autoPersistToFirebase(
-                                undefined,
-                                undefined,
-                                undefined,
-                                undefined,
-                                nextAudioUrl,
-                                nextDriveId,
-                                undefined,
-                                { title: trimmedTitle }
-                              );
-                            }
+                          ).then((renameRes) => {
+                            // 原位改名不會變更雲端硬碟檔案 ID，無需再覆寫資料
                             if (renameRes.renamedOnDrive) {
                               showToast(
                                 `✅ Google 雲端硬碟語音檔案名稱已同步更新為「${renameRes.finalFileName}」！`
                               );
+                            } else if (renameRes.message) {
+                              // 改名失敗時允許下次離開欄位時再次嘗試同步
+                              lastSyncedTitleRef.current = '';
+                              showToast(`⚠️ ${renameRes.message}`, 10000);
                             }
                           });
                         }

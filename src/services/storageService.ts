@@ -34,8 +34,6 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
 };
 
 let firestoreDb: Firestore | null = null;
-// 快取記錄目前部署的 GAS 是否已支援原生快速改名 (action: 'rename')，避免舊版腳本重複等待失敗請求
-let gasSupportsNativeRename: boolean | null = null;
 
 /**
  * 自動從使用者貼上的完整 Google Drive 網址或字串中擷取純粹的 Folder ID
@@ -80,7 +78,6 @@ export async function saveCloudConfig(config: CloudConfig): Promise<void> {
   };
   localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cleaned));
   firestoreDb = null; // 重新初始化
-  gasSupportsNativeRename = null; // 重新檢測 GAS 是否支援原生 rename
 
   // 同步將 Google Drive 設定儲存至 Firebase Firestore，讓手機與電腦跨裝置自動共用！
   const db = getDbInstance();
@@ -111,6 +108,52 @@ export function isFirebaseConfigured(config: CloudConfig = getCloudConfig()): bo
 
 export function isGoogleDriveConfigured(config: CloudConfig = getCloudConfig()): boolean {
   return Boolean(config.googleDriveScriptUrl && config.googleDriveScriptUrl.startsWith('http'));
+}
+
+/**
+ * 將 Firestore 中儲存的 Google 雲端硬碟設定（GAS 網址與資料夾 ID）套用到目前裝置
+ * 以雲端設定為準：只要雲端有值且與本機不同就覆寫，確保手機與電腦上傳到同一個資料夾
+ */
+function applyRemoteDriveConfig(rawDescription?: string): boolean {
+  try {
+    const remoteCfg = JSON.parse(rawDescription || '{}');
+    const remoteUrl = String(remoteCfg.googleDriveScriptUrl || '').trim();
+    const remoteFolder = extractDriveFolderId(remoteCfg.googleDriveFolderId || '');
+    if (!remoteUrl) return false;
+    const currentCfg = getCloudConfig();
+    if (
+      currentCfg.googleDriveScriptUrl !== remoteUrl ||
+      (remoteFolder && currentCfg.googleDriveFolderId !== remoteFolder)
+    ) {
+      localStorage.setItem(
+        CONFIG_STORAGE_KEY,
+        JSON.stringify({
+          ...currentCfg,
+          googleDriveScriptUrl: remoteUrl,
+          googleDriveFolderId: remoteFolder || currentCfg.googleDriveFolderId,
+        })
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 上傳前即時從 Firestore 讀取最新的雲端硬碟設定（手機首次開啟或設定曾變更時特別重要）
+ */
+async function ensureDriveConfigSynced(): Promise<void> {
+  const db = getDbInstance();
+  if (!db) return;
+  try {
+    const snap = await getDoc(doc(db, 'categories', '__system_cloud_config__'));
+    if (snap.exists()) {
+      applyRemoteDriveConfig((snap.data() as Category).description);
+    }
+  } catch (e) {
+    console.warn('讀取雲端硬碟設定略過:', e);
+  }
 }
 
 function getDbInstance(): Firestore | null {
@@ -162,25 +205,8 @@ export async function loadLibraryData(): Promise<{
       catSnap.forEach((d) => {
         const data = d.data() as Category;
         if (data.id === '__system_cloud_config__') {
-          // 自動從 Firestore 同步 Google 雲端硬碟連線設定至當前裝置
-          try {
-            const remoteCfg = JSON.parse(data.description || '{}');
-            if (remoteCfg.googleDriveScriptUrl) {
-              const currentCfg = getCloudConfig();
-              if (!currentCfg.googleDriveScriptUrl) {
-                localStorage.setItem(
-                  CONFIG_STORAGE_KEY,
-                  JSON.stringify({
-                    ...currentCfg,
-                    googleDriveScriptUrl: remoteCfg.googleDriveScriptUrl,
-                    googleDriveFolderId: extractDriveFolderId(remoteCfg.googleDriveFolderId || ''),
-                  })
-                );
-              }
-            }
-          } catch {
-            // ignore parse error
-          }
+          // 自動從 Firestore 同步 Google 雲端硬碟連線設定至當前裝置（以雲端設定為準，避免手機殘留舊設定）
+          applyRemoteDriveConfig(data.description);
         } else {
           categories.push(data);
         }
@@ -502,8 +528,7 @@ export function ensureFileNameWithExtension(
 
 /**
  * 同步修改 Google 雲端硬碟中的檔案名稱（支援語音檔與播放圖片）
- * 1. 優先呼叫 GAS action: 'rename' 直接原位改名；
- * 2. 若使用者的 GAS 尚為舊版（未支援 rename），自動透過既有 getFile / 快取 + upload 新檔名 + delete 舊檔，確保 100% 同步更新雲端硬碟檔名！
+ * 僅呼叫 GAS action: 'rename' 直接原位改名（檔案 ID 不變，不會產生重複檔案）。
  */
 export async function renameFileInGoogleDrive(
   fileId: string | undefined | null,
@@ -556,8 +581,11 @@ export async function renameFileInGoogleDrive(
 
   const scriptUrl = config.googleDriveScriptUrl.trim();
 
-  // 步驟 1：優先嘗試原位改名 (action: 'rename'，僅需約 0.6 秒，不需傳輸檔案內容)
-  if (gasSupportsNativeRename !== false) {
+  // 僅使用 GAS action: 'rename' 原位改名（DriveApp.setName），不再採用「重新上傳新檔 + 刪除舊檔」的備援方式，
+  // 以避免舊檔刪除失敗或網路回應中斷時，在雲端硬碟中產生重複的語音檔 / 圖片。
+  // 原位改名具冪等性，網路錯誤時可安全重試一次。
+  let lastError = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch(scriptUrl, {
         method: 'POST',
@@ -571,148 +599,49 @@ export async function renameFileInGoogleDrive(
         }),
       });
 
-      const result = await response.json();
+      const text = await response.text();
+      let result: any = null;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        lastError = 'Google Apps Script 回應格式不正確';
+        continue;
+      }
+
       if (result && result.success && result.action === 'rename') {
-        gasSupportsNativeRename = true;
         return {
           renamedOnDrive: true,
           finalFileName: result.fileName || normalizedName,
           newFileId: cleanId,
         };
       }
+
       if (result && String(result.error || '').includes('base64Decode')) {
-        // 代表目前部署的 GAS 尚為未含 action: 'rename' 的舊版，後續改名直接跳過此請求以節省等待時間
-        gasSupportsNativeRename = false;
-      }
-    } catch (err) {
-      console.warn('直接呼叫 rename 略過，準備嘗試高速快取替換檔名同步:', err);
-    }
-  }
-
-  // 步驟 2：若使用者部署的 GAS 尚為舊版（未包含 action: 'rename'），
-  // 優先從「本地快取 (<10ms)」或「Firestore 分片 (~250ms)」極速讀取內容，避免從 GAS 慢速下載！
-  try {
-    let base64Data = '';
-    let detectedMime =
-      options?.mimeType || (options?.isAudio ? 'audio/mpeg' : 'image/jpeg');
-
-    // 2a. 【極速優先】先從瀏覽器本地 IndexedDB / 記憶體快取讀取（幾乎 0 秒，免網路下載）
-    try {
-      const cachedBlobUrl =
-        (await getCachedMediaBlobUrl(cleanId)) ||
-        (options?.itemId ? await getCachedMediaBlobUrl(options.itemId) : null) ||
-        (options?.fallbackUrl ? await getCachedMediaBlobUrl(options.fallbackUrl) : null);
-
-      if (cachedBlobUrl) {
-        const res = await fetch(cachedBlobUrl);
-        const blob = await res.blob();
-        if (blob && blob.size > 0) {
-          const converted = await fileToDataUrl(
-            new File([blob], normalizedName, { type: blob.type || detectedMime })
-          );
-          base64Data = converted.base64;
-          if (blob.type) detectedMime = blob.type;
-        }
-      }
-    } catch {
-      // ignore local cache miss
-    }
-
-    // 2b. 【次快優先】若為音檔且本機快取未命中，從 Firebase Firestore audioChunks 平行分片讀取（約 0.3 秒）
-    if (!base64Data && options?.isAudio) {
-      const blob =
-        (await loadAudioBlobFromFirestoreChunks(cleanId)) ||
-        (options?.itemId ? await loadAudioBlobFromFirestoreChunks(options.itemId) : null);
-      if (blob) {
-        const converted = await fileToDataUrl(
-          new File([blob], normalizedName, { type: blob.type || detectedMime })
-        );
-        base64Data = converted.base64;
-        if (blob.type) detectedMime = blob.type;
-      }
-    }
-
-    // 2c. 若本機與 Firestore 皆無快取，才從 GAS action: 'getFile' 讀取原雲端硬碟檔案內容
-    if (!base64Data) {
-      try {
-        const getRes = await fetch(scriptUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-          },
-          body: JSON.stringify({
-            action: 'getFile',
-            fileId: cleanId,
-          }),
-        });
-        const getJson = await getRes.json();
-        if (getJson && getJson.success && getJson.base64Data) {
-          base64Data = getJson.base64Data;
-          if (getJson.mimeType) {
-            detectedMime = getJson.mimeType;
-          }
-        }
-      } catch {
-        // ignore getFile error
-      }
-    }
-
-    if (base64Data) {
-      const finalFileNameWithExt = ensureFileNameWithExtension(
-        newFileName,
-        detectedMime,
-        defaultExt
-      );
-      const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
-
-      const uploadRes = await fetch(scriptUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify({
-          folderId: cleanFolderId,
-          fileName: finalFileNameWithExt,
-          mimeType: detectedMime,
-          base64Data,
-        }),
-      });
-
-      const uploadJson = await uploadRes.json();
-      if (uploadJson && uploadJson.success && uploadJson.fileId) {
-        const newFileId = uploadJson.fileId;
-        const newDirectUrl = uploadJson.directUrl;
-
-        // 舊檔案刪除與分片更新全數改為「背景非同步平行處理」，完全不阻塞使用者的等待時間！
-        Promise.all([
-          deleteFilesFromGoogleDrive([cleanId]),
-          (async () => {
-            if (options?.isAudio) {
-              const blob = base64ToBlob(base64Data, detectedMime);
-              await cacheMediaBlob(newFileId, blob);
-              await saveAudioChunksToFirestore(newFileId, base64Data, detectedMime);
-              await deleteAudioChunksFromFirestore([cleanId]);
-            }
-          })(),
-        ]).catch(() => {});
-
+        // 目前部署的 GAS 為未含 action: 'rename' 的舊版
         return {
-          renamedOnDrive: true,
-          finalFileName: finalFileNameWithExt,
-          newFileId,
-          newDirectUrl,
+          renamedOnDrive: false,
+          finalFileName: normalizedName,
+          message:
+            '已更新系統檔案名稱，但您部署的 Google Apps Script 為舊版，尚不支援雲端硬碟改名。請至右上角「雲端連線設定」複製最新版 GAS 腳本並重新部署（管理部署作業 → 編輯 → 新版本）。',
         };
       }
+
+      // GAS 有回應但改名失敗（例如檔案已不存在或無權限），不重試
+      return {
+        renamedOnDrive: false,
+        finalFileName: normalizedName,
+        message: `雲端硬碟改名失敗：${result?.error || '未知錯誤'}`,
+      };
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      console.warn(`雲端硬碟改名請求失敗（第 ${attempt + 1} 次）:`, err);
     }
-  } catch (fallbackErr: any) {
-    console.warn('雲端硬碟檔案改名同步備援失敗:', fallbackErr);
   }
 
   return {
     renamedOnDrive: false,
     finalFileName: normalizedName,
-    message:
-      '已更新系統檔案名稱！若需原位同步雲端硬碟檔名，請至右上角「雲端連線設定」複製最新版 GAS 腳本並更新部署。',
+    message: `已更新系統檔案名稱，但雲端硬碟改名連線失敗（${lastError || '網路錯誤'}），請稍後再試一次。`,
   };
 }
 
@@ -916,8 +845,20 @@ export async function uploadFileToGoogleDrive(
   viewUrl?: string;
   mode: 'google_drive' | 'local_preview';
   errorReason?: string;
+  savedToRootFolder?: boolean;
 }> {
+  onProgress?.(8, '正在確認雲端硬碟連線設定...');
+  await ensureDriveConfigSynced();
   const config = getCloudConfig();
+
+  // Google Apps Script 單次請求上限約 50MB（Base64 會膨脹約 33%），過大的檔案會在雲端端失敗
+  const MAX_UPLOAD_BYTES = 35 * 1024 * 1024;
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `檔案過大（${(file.size / 1024 / 1024).toFixed(1)} MB），Google Apps Script 上傳上限約 35 MB，請先壓縮或分段後再上傳。`
+    );
+  }
+
   onProgress?.(15, `正在讀取檔案 ${file.name}...`);
   const { dataUrl, base64 } = await fileToDataUrl(file);
 
@@ -953,7 +894,7 @@ export async function uploadFileToGoogleDrive(
         );
       }
 
-      if (result && result.success) {
+      if (result && result.success && result.fileId) {
         // 立即將原始檔案存入瀏覽器 IndexedDB 與記憶體快取
         await cacheMediaBlob(result.fileId, file);
         setMemoryBase64Payload(result.fileId, base64, file.type || 'audio/mpeg');
@@ -983,6 +924,7 @@ export async function uploadFileToGoogleDrive(
           directUrl: result.directUrl,
           viewUrl: result.viewUrl,
           mode: 'google_drive',
+          savedToRootFolder: !cleanFolderId,
         };
       } else {
         throw new Error(result?.error || 'Google Drive 回傳失敗');
@@ -993,10 +935,8 @@ export async function uploadFileToGoogleDrive(
     }
   }
 
-  // 模擬雲端上傳進度並回傳可用於播放與顯示的 URL
-  onProgress?.(65, '正在處理媒體串流封裝...');
-  await new Promise((r) => setTimeout(r, 350));
-  onProgress?.(100, '檔案就緒！');
+  // 未能寫入雲端硬碟：僅回傳本機暫存網址，由呼叫端決定是否中止並提示使用者
+  onProgress?.(100, '⚠️ 未能上傳至 Google 雲端硬碟');
 
   const localId = `gdrive_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const blobUrl = await cacheMediaBlob(localId, file);

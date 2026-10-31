@@ -391,19 +391,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       itemId: item.id,
     })
       .then(async (renameRes) => {
-        if (renameRes.newFileId || renameRes.newDirectUrl) {
-          const driveSyncedItem: AudioItem = {
-            ...immediateUpdated,
-            ...(renameRes.newFileId ? { audioDriveFileId: renameRes.newFileId } : {}),
-            ...(renameRes.newDirectUrl ? { audioUrl: renameRes.newDirectUrl } : {}),
-            updatedAt: new Date().toISOString(),
-          };
-          await onSaveAudioItem(driveSyncedItem);
-        }
+        // 原位改名不會變更雲端硬碟檔案 ID，因此無需再覆寫資料（避免覆蓋使用者同時進行的其他修改）
         if (renameRes.renamedOnDrive) {
           showToast(
             `✅ Google 雲端硬碟檔案名稱已同步更新為「${renameRes.finalFileName}」！`
           );
+        } else if (renameRes.message) {
+          showToast(`⚠️ ${renameRes.message}`);
         }
       })
       .finally(() => {
