@@ -871,22 +871,34 @@ export function getAudioFileDuration(fileOrUrl: File | string): Promise<number> 
     const src = isFile ? URL.createObjectURL(fileOrUrl) : fileOrUrl;
     audio.preload = 'metadata';
 
-    const cleanup = () => {
+    let settled = false;
+    const finish = (value: number) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
       if (isFile) URL.revokeObjectURL(src);
+      resolve(value);
     };
+
+    // iOS Safari 可能不會主動載入 metadata，設定逾時避免上傳流程卡住
+    const timer = window.setTimeout(() => {
+      const d = audio.duration;
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d) : 30);
+    }, 5000);
 
     audio.onloadedmetadata = () => {
       const d = audio.duration;
-      cleanup();
-      resolve(Number.isFinite(d) && d > 0 ? Math.round(d) : 30);
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d) : 30);
     };
 
-    audio.onerror = () => {
-      cleanup();
-      resolve(30);
-    };
+    audio.onerror = () => finish(30);
 
     audio.src = src;
+    try {
+      audio.load();
+    } catch {
+      /* ignore */
+    }
   });
 }
 

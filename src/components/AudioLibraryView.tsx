@@ -33,6 +33,11 @@ import {
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
 import {
+  getAudioInputAccept,
+  isSupportedAudioFile,
+  normalizeAudioFile,
+} from '../utils/audioFileUtils';
+import {
   SrtSegment,
   parseSrtContent,
   serializeSrtSegments,
@@ -534,7 +539,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   /**
    * 處理電腦或手機選取語音檔案上傳至 Google 雲端硬碟
    */
-  const handleAudioFileUpload = async (file: File) => {
+  const handleAudioFileUpload = async (rawFile: File) => {
+    if (!isSupportedAudioFile(rawFile)) {
+      showToast(
+        `⚠️ 「${rawFile.name}」不是支援的語音檔格式，請選取 MP3 / M4A / WAV / AAC / OGG 等語音檔。`
+      );
+      return;
+    }
+    const file = normalizeAudioFile(rawFile);
     setIsUploading(true);
     setUploadProgress(5);
     setUploadStatusText(`準備上傳語音檔：${file.name}`);
@@ -653,7 +665,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   /**
    * 編輯器內：更換語音檔案本身
    */
-  const handleReplaceAudioInEditor = async (file: File) => {
+  const handleReplaceAudioInEditor = async (rawFile: File) => {
+    if (!isSupportedAudioFile(rawFile)) {
+      showToast(
+        `⚠️ 「${rawFile.name}」不是支援的語音檔格式，請選取 MP3 / M4A / WAV / AAC / OGG 等語音檔。`
+      );
+      return;
+    }
+    const file = normalizeAudioFile(rawFile);
     setIsUploading(true);
     try {
       const [uploadRes, detectedDuration] = await Promise.all([
@@ -1100,11 +1119,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   點擊從電腦或手機選取語音檔案上傳
                 </span>
                 <span className="text-xs text-[#7A6855]">
-                  支援 MP3 / M4A / WAV / OGG（手機可直接從檔案或錄音檔選取）
+                  支援 MP3 / M4A / WAV / AAC / OGG（iPhone 可從「檔案」App、錄音備忘錄匯出的錄音檔直接選取）
                 </span>
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept={getAudioInputAccept()}
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
@@ -1497,7 +1516,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       <span>重新上傳替換語音檔</span>
                       <input
                         type="file"
-                        accept="audio/*"
+                        accept={getAudioInputAccept()}
                         className="hidden"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
