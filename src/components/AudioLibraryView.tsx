@@ -194,7 +194,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [audioListPageSize, setAudioListPageSize] = useState<number>(10);
   const [audioListPage, setAudioListPage] = useState<number>(1);
 
-  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  // 依據「館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
   const audioCallNumberMap = useMemo(
     () => getAudioItemCallNumberMap(audioItems, categories),
     [audioItems, categories]
@@ -1651,7 +1651,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   const globalSeq = audioStartIndex + idxInPage + 1;
                   const cat = categories.find((c) => c.id === item.categoryId);
                   const callNumber =
-                    audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0');
+                    audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1');
                   return (
                     <div
                       key={item.id}

@@ -153,7 +153,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  // 依據「館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
   const audioCallNumberMap = useMemo(
     () => getAudioItemCallNumberMap(audioItems, categories),
     [audioItems, categories]
@@ -1490,7 +1490,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               const itemTags = item.tags || [];
               const listSeq = globalIdx + 1;
               const callNumber =
-                audioCallNumberMap.get(item.id) || (currentCat ? `${currentCat.code}-0` : 'CAT-0');
+                audioCallNumberMap.get(item.id) || (currentCat ? `${currentCat.code}-1` : 'CAT-1');
               const titleValue =
                 editingTitles[item.id] !== undefined
                   ? editingTitles[item.id]
@@ -1543,7 +1543,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           >
                             #{listSeq}
                           </span>
-                          {/* 獨立語音檔編號：館藏分類編號 + 流水號 (號碼從 0 開始，依上傳順序編號) */}
+                          {/* 獨立語音檔編號：館藏分類編號 + 流水號 (號碼從 1 開始，依上傳順序編號) */}
                           <span
                             className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-[10px] font-bold shadow-xs shrink-0"
                             title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"

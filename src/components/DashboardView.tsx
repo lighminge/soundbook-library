@@ -319,7 +319,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
 
-  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  // 依據「館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
   const audioCallNumberMap = useMemo(
     () => getAudioItemCallNumberMap(audioItems, categories),
     [audioItems, categories]
@@ -494,7 +494,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </span>
                         {/* 獨立語音檔編號 */}
                         <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] shadow-xs">
-                          {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0')}
+                          {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
                         </span>
                         {cat && (
                           <span
@@ -745,7 +745,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {itemsInCat.map((item) => {
                       const callNumber =
-                        audioCallNumberMap.get(item.id) || `${category.code}-0`;
+                        audioCallNumberMap.get(item.id) || `${category.code}-1`;
                       return (
                         <div
                           key={item.id}

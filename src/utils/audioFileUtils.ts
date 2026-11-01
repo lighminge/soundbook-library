@@ -83,8 +83,8 @@ export function normalizeAudioFile(file: File): File {
 
 /**
  * 取得全館所有語音檔案之獨立館藏編號對照表
- * 編碼規格：館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序編號)
- * 例如：LIT-100-0, LIT-100-1, HIS-200-0
+ * 編碼規格：館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序編號)
+ * 例如：LIT-100-1, LIT-100-2, HIS-200-1
  */
 export function getAudioItemCallNumberMap(
   audioItems: AudioItem[],
@@ -104,7 +104,7 @@ export function getAudioItemCallNumberMap(
 
   const callNumberMap = new Map<string, string>();
 
-  // 針對各分類內的語音檔案，依照上傳時間（createdAt）由舊到新排序，流水號從 0 開始
+  // 針對各分類內的語音檔案，依照上傳時間（createdAt）由舊到新排序，流水號從 1 開始
   itemsByCat.forEach((items, catId) => {
     const cat = categoryMap.get(catId);
     const catCode = (cat?.code || 'CAT-000').trim();
@@ -118,7 +118,7 @@ export function getAudioItemCallNumberMap(
 
     sortedItems.forEach((item, index) => {
       const codePrefix = catCode.endsWith('-') ? catCode : `${catCode}-`;
-      const callNumber = `${codePrefix}${index}`;
+      const callNumber = `${codePrefix}${index + 1}`;
       callNumberMap.set(item.id, callNumber);
     });
   });

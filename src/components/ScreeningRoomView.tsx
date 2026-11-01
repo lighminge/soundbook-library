@@ -117,7 +117,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [shelfPageSize, setShelfPageSize] = useState<number>(5);
   const [shelfCurrentPage, setShelfCurrentPage] = useState<number>(1);
 
-  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  // 依據「館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
   const audioCallNumberMap = useMemo(
     () => getAudioItemCallNumberMap(audioItems, categories),
     [audioItems, categories]
@@ -1401,7 +1401,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                             }`}
                             title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
                           >
-                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0')}
+                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
                           </span>
                           {cat && (
                             <span
