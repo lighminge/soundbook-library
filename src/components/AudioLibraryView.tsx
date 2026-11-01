@@ -26,6 +26,7 @@ import {
   Search,
   Tag,
   Tags,
+  Scale,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import {
@@ -575,6 +576,62 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       );
     };
     reader.readAsText(file, 'utf-8');
+  };
+
+  /**
+   * 自動平均時間區段：
+   * 依據匯入/現有的 SRT 時間區段數量，將語音檔總時長「平均分給所有時段」，
+   * 讓每個時段秒數一致；如無法整除，把多餘的秒數分配給最後一個時間區段。
+   */
+  const handleAutoDistributeSrtTimes = async () => {
+    if (srtSegments.length === 0) {
+      showToast('⚠️ 目前尚無任何時間區段，請先匯入 SRT 或新增時間區段！');
+      return;
+    }
+
+    const totalSec = Math.round(Number(duration) || 0);
+    if (totalSec <= 0) {
+      showToast('⚠️ 語音檔總時長為 0，請確認語音檔案是否已正確載入！');
+      return;
+    }
+
+    const count = srtSegments.length;
+    // 每個時段基礎秒數（整數商）
+    const perSegSec = Math.max(1, Math.floor(totalSec / count));
+    const remainder = Math.max(0, totalSec - perSegSec * count);
+
+    const updatedSegments: SrtSegment[] = srtSegments.map((seg, idx) => {
+      const startSec = idx * perSegSec;
+      // 若為最後一個時間區段，承接剩餘秒數（含整除餘數），確保總長度與語音檔一致
+      const isLast = idx === count - 1;
+      const endSec = isLast ? Math.max(startSec + perSegSec, totalSec) : (idx + 1) * perSegSec;
+
+      return {
+        ...seg,
+        index: idx + 1,
+        startSec,
+        endSec,
+      };
+    });
+
+    const syncedSlides = syncSlidesWithSrtSegments(slides, updatedSegments);
+    setSrtSegments(updatedSegments);
+    setSlides(syncedSlides);
+    if (editingSegmentId) {
+      setEditingSegmentId(null);
+    }
+
+    await autoPersistToFirebase(updatedSegments, syncedSlides);
+
+    if (remainder > 0) {
+      showToast(
+        `✅ 已自動平均時間區段！總時長 ${totalSec} 秒平均分給 ${count} 個時段：第 1~${count - 1} 段各 ${perSegSec} 秒，多餘的 ${remainder} 秒分配給最後第 #${count} 區段（共 ${perSegSec + remainder} 秒）。`
+      );
+    } else {
+      showToast(
+        `✅ 已自動平均時間區段！總時長 ${totalSec} 秒平均分給 ${count} 個時段，每個時段均為 ${perSegSec} 秒。`
+      );
+    }
   };
 
   /**
@@ -2159,6 +2216,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   </h4>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {/* 自動平均時間區段按鈕 */}
+                    <button
+                      type="button"
+                      onClick={handleAutoDistributeSrtTimes}
+                      className="px-3 py-1.5 rounded-lg bg-[#2B4C7E] hover:bg-[#1E375B] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition"
+                      title="依據時間區段數量，將語音檔總時長平均分給所有時段；無法整除時，將多餘秒數全部分配給最後一個時間區段"
+                    >
+                      <Scale className="w-3.5 h-3.5" />
+                      <span>自動平均時間區段</span>
+                    </button>
+
                     {/* 2b. 批次修改時間區段按鈕 */}
                     <button
                       type="button"

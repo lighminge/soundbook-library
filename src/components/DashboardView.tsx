@@ -387,6 +387,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? categories
       : categories.filter((c) => c.id === selectedAisle);
 
+  // 點選「主題館藏數量分佈」分類按鈕後，畫面平滑滾動至下方對應館藏書架位置
+  const handleScrollToCategory = (catId: string) => {
+    if (selectedAisle !== 'all' && selectedAisle !== catId) {
+      setSelectedAisle('all');
+    }
+    setTimeout(() => {
+      const el = document.getElementById(`category-shelf-${catId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 60);
+  };
+
   const handleCreateCategory = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
@@ -677,10 +690,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <button
                     key={cat.id}
                     type="button"
-                    onClick={() => setSelectedAisle(cat.id)}
+                    onClick={() => handleScrollToCategory(cat.id)}
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold text-white shadow-2xs hover:opacity-90 transition cursor-pointer"
                     style={{ backgroundColor: cat.themeColor }}
-                    title={`點選切換「${cat.name}」展廳書架，共 ${count} 部語音`}
+                    title={`點選移動至「${cat.name}」館藏書架位置，共 ${count} 部語音`}
                   >
                     <span className="truncate max-w-[85px]">{cat.name}</span>
                     <span className="font-mono font-bold bg-black/25 px-1 py-0.2 rounded text-[10px]">
@@ -767,7 +780,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           return (
             <section
               key={category.id}
-              className="rounded-2xl overflow-hidden border border-[#DECGB4] bg-[#FDFBF7] shadow-md"
+              id={`category-shelf-${category.id}`}
+              className="rounded-2xl overflow-hidden border border-[#DECGB4] bg-[#FDFBF7] shadow-md scroll-mt-24 transition-all"
             >
               {/* 分類廳館木牌標頭 */}
               <div
