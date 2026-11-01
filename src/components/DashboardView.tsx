@@ -61,6 +61,9 @@ import {
   ChevronRight,
   Search,
   X,
+  Tag,
+  ChevronDown,
+  Layers,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
@@ -325,24 +328,59 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [audioItems, categories]
   );
 
-  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態
+  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態（關鍵字、類別標籤下拉選單）
   const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
+  const [quickSearchTag, setQuickSearchTag] = useState('');
 
-  // 快速檢索篩選：比對語音檔案名稱、館藏分類、標籤與故事說明內容
+  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數
+  const availableDashboardTags = useMemo(() => {
+    const tagCountMap: Record<string, number> = {};
+    audioItems.forEach((item) => {
+      (item.tags || []).forEach((t) => {
+        const trimmed = t.trim();
+        if (trimmed) {
+          tagCountMap[trimmed] = (tagCountMap[trimmed] || 0) + 1;
+        }
+      });
+    });
+
+    return Object.keys(tagCountMap)
+      .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+      .map((tag) => ({
+        tag,
+        count: tagCountMap[tag],
+      }));
+  }, [audioItems]);
+
+  // 快速檢索篩選：比對語音檔案名稱、館藏分類、類別標籤下拉選取與故事說明內容
   const matchedAudioItems = useMemo(() => {
     const q = quickSearchKeyword.trim().toLowerCase();
-    if (!q) return [];
+    const t = quickSearchTag.trim();
+    if (!q && !t) return [];
+
     return audioItems.filter((item) => {
-      const matchTitle = (item.title || '').toLowerCase().includes(q);
-      const matchDesc = (item.description || '').toLowerCase().includes(q);
-      const matchTags = (item.tags || []).some((t) => t.toLowerCase().includes(q));
-      const cat = categories.find((c) => c.id === item.categoryId);
-      const matchCat = cat
-        ? cat.name.toLowerCase().includes(q) || cat.code.toLowerCase().includes(q)
-        : false;
-      return matchTitle || matchDesc || matchTags || matchCat;
+      // 1. 關鍵字比對 (若有輸入)
+      let matchKw = true;
+      if (q) {
+        const matchTitle = (item.title || '').toLowerCase().includes(q);
+        const matchDesc = (item.description || '').toLowerCase().includes(q);
+        const matchTags = (item.tags || []).some((tag) => tag.toLowerCase().includes(q));
+        const cat = categories.find((c) => c.id === item.categoryId);
+        const matchCat = cat
+          ? cat.name.toLowerCase().includes(q) || cat.code.toLowerCase().includes(q)
+          : false;
+        matchKw = matchTitle || matchDesc || matchTags || matchCat;
+      }
+
+      // 2. 類別標籤下拉選取比對 (若有選取)
+      let matchTag = true;
+      if (t) {
+        matchTag = (item.tags || []).includes(t);
+      }
+
+      return matchKw && matchTag;
     });
-  }, [audioItems, categories, quickSearchKeyword]);
+  }, [audioItems, categories, quickSearchKeyword, quickSearchTag]);
 
   const visibleCategories =
     selectedAisle === 'all'
@@ -412,58 +450,87 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div>
               <h2 className="text-base font-bold font-serif-tc text-[#2C221E] flex items-center gap-2">
                 <span>館藏語音快速檢索</span>
-                {quickSearchKeyword.trim() && (
+                {(quickSearchKeyword.trim() || quickSearchTag) && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {matchedAudioItems.length} 筆
                   </span>
                 )}
               </h2>
               <p className="text-xs text-[#7A6855]">
-                輸入關鍵字即時比對語音檔案名稱、分類名稱、類別標籤與說明內容
+                輸入關鍵字或選取類別標籤，即時比對語音檔案名稱、分類名稱、類別標籤與說明內容
               </p>
             </div>
           </div>
 
-          {quickSearchKeyword && (
+          {(quickSearchKeyword || quickSearchTag) && (
             <button
-              onClick={() => setQuickSearchKeyword('')}
+              onClick={() => {
+                setQuickSearchKeyword('');
+                setQuickSearchTag('');
+              }}
               className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer self-start sm:self-center bg-[#EFE6D5] px-2.5 py-1 rounded-lg transition"
             >
               <X className="w-3.5 h-3.5" />
-              <span>清除檢索詞</span>
+              <span>重置檢索條件</span>
             </button>
           )}
         </div>
 
-        {/* 檢索輸入列 */}
-        <div className="relative">
-          <Search className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、寓言、標題關鍵字）..."
-            value={quickSearchKeyword}
-            onChange={(e) => setQuickSearchKeyword(e.target.value)}
-            className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
-          />
-          {quickSearchKeyword && (
-            <button
-              type="button"
-              onClick={() => setQuickSearchKeyword('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+        {/* 檢索輸入與類別標籤下拉選取列 */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+          {/* 1. 關鍵字輸入 */}
+          <div className="relative sm:col-span-7 lg:col-span-8">
+            <Search className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、寓言、標題關鍵字）..."
+              value={quickSearchKeyword}
+              onChange={(e) => setQuickSearchKeyword(e.target.value)}
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
+            />
+            {quickSearchKeyword && (
+              <button
+                type="button"
+                onClick={() => setQuickSearchKeyword('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+                title="清除關鍵字"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* 2. 類別標籤下拉選單 */}
+          <div className="relative sm:col-span-5 lg:col-span-4">
+            <Tag className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={quickSearchTag}
+              onChange={(e) => setQuickSearchTag(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
-              <X className="w-4 h-4" />
-            </button>
-          )}
+              <option value="">
+                全部類別標籤 {availableDashboardTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+              </option>
+              {availableDashboardTags.map(({ tag, count }) => (
+                <option key={tag} value={tag}>
+                  #{tag} ({count} 部)
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
 
         {/* 檢索結果展示 */}
-        {quickSearchKeyword.trim() ? (
+        {quickSearchKeyword.trim() || quickSearchTag ? (
           matchedAudioItems.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
               <p className="font-semibold text-sm text-[#5C3A1B]">
-                找不到與「{quickSearchKeyword}」相符的語音檔
+                找不到符合條件的語音檔
+                {quickSearchKeyword && `「${quickSearchKeyword}」`}
+                {quickSearchTag && ` [標籤: #${quickSearchTag}]`}
               </p>
-              <p>請嘗試其他關鍵字，或確認該館藏是否已在「語音檔案庫」中建立。</p>
+              <p>請嘗試其他關鍵字或切換類別標籤，或確認該館藏是否已在「語音檔案庫」中建立。</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
@@ -520,12 +587,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {item.tags && item.tags.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1 mt-1.5">
                           {item.tags.slice(0, 3).map((tag) => (
-                            <span
+                            <button
                               key={tag}
-                              className="text-[10px] px-1.5 py-0.2 rounded bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B]"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setQuickSearchTag(tag);
+                              }}
+                              className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer ${
+                                quickSearchTag === tag
+                                  ? 'bg-[#8B5A2B] text-white border-[#8B5A2B]'
+                                  : 'bg-[#FAF4E8] border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
+                              }`}
+                              title={`點選以篩選標籤 #${tag}`}
                             >
                               #{tag}
-                            </span>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -576,36 +653,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        <div
-          onClick={onOpenCloudSettings}
-          className="parchment-card rounded-xl p-5 shadow-sm flex items-center justify-between gap-3 cursor-pointer hover:border-[#8B5A2B] transition"
-        >
+        <div className="parchment-card rounded-xl p-5 shadow-sm flex flex-col justify-between">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-xl bg-[#7A3E65]/15 text-[#7A3E65] flex items-center justify-center shrink-0">
-              <HardDrive className="w-6 h-6" />
+              <Layers className="w-6 h-6" />
             </div>
-            <div>
-              <p className="text-xs font-medium text-[#7A6855]">Firebase & Google 雲端硬碟</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                    dataSource === 'firebase'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  <Database className="w-3 h-3" />
-                  {dataSource === 'firebase' ? 'Firebase 已連線' : '本地展示/待填金鑰'}
-                </span>
-                {driveConnected && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                    Drive 已連結
-                  </span>
-                )}
-              </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-[#7A6855] uppercase tracking-wider">各館藏主題語音數</p>
+              <p className="text-sm font-bold font-serif-tc text-[#2C221E] truncate">
+                主題館藏數量分佈
+              </p>
             </div>
           </div>
-          <ChevronRight className="w-4 h-4 text-[#8B5A2B] shrink-0" />
+
+          {/* 每個館藏主題語音檔數量 */}
+          <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto scrollbar-thin mt-2 pt-2 border-t border-[#EFE6D5]">
+            {categories.length === 0 ? (
+              <span className="text-xs text-[#7A6855]">尚未建立館藏主題</span>
+            ) : (
+              categories.map((cat) => {
+                const count = audioItems.filter((item) => item.categoryId === cat.id).length;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedAisle(cat.id)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold text-white shadow-2xs hover:opacity-90 transition cursor-pointer"
+                    style={{ backgroundColor: cat.themeColor }}
+                    title={`點選切換「${cat.name}」展廳書架，共 ${count} 部語音`}
+                  >
+                    <span className="truncate max-w-[85px]">{cat.name}</span>
+                    <span className="font-mono font-bold bg-black/25 px-1 py-0.2 rounded text-[10px]">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
 
