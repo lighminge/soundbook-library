@@ -1588,73 +1588,91 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-[#E2D5C1] hover:border-[#8B5A2B] transition shadow-xs"
+                      className="flex flex-col gap-3 p-4 rounded-xl bg-white border border-[#E2D5C1] hover:border-[#8B5A2B] transition shadow-xs"
                     >
-                      <div className="flex items-start gap-3.5 min-w-0 flex-1">
-                        {/* 每個語音檔區塊加入序號 */}
-                        <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0 mt-0.5">
-                          #{globalSeq}
-                        </span>
+                      {/* 上方：標籤、序號與操作功能按鈕列 (預覽播放、編輯檔名與播放圖文、刪除) */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#F0E6D8]">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* 每個語音檔區塊序號 */}
+                          <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0">
+                            #{globalSeq}
+                          </span>
+                          {cat && (
+                            <span
+                              className="px-2 py-0.5 rounded text-[10px] font-semibold text-white shrink-0"
+                              style={{ backgroundColor: cat.themeColor }}
+                            >
+                              {cat.name}
+                            </span>
+                          )}
+                          <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1 shrink-0">
+                            <Clock className="w-3 h-3" />
+                            {formatDuration(item.duration)}
+                          </span>
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-[#F3ECE0] text-[#6E5641] shrink-0">
+                            播放圖片 {item.playbackDisplay.slides.length} 張
+                          </span>
+                        </div>
 
-                        <img
-                          src={item.coverImageUrl}
-                          alt={item.title}
-                          className="w-16 h-20 rounded-lg object-cover shrink-0 border border-[#D5C5AE]"
-                        />
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {cat && (
-                              <span
-                                className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
-                                style={{ backgroundColor: cat.themeColor }}
-                              >
-                                {cat.name}
-                              </span>
-                            )}
-                            <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatDuration(item.duration)}
-                            </span>
-                            <span className="text-[11px] px-2 py-0.5 rounded bg-[#F3ECE0] text-[#6E5641]">
-                              播放圖片 {item.playbackDisplay.slides.length} 張
-                            </span>
-                          </div>
-                          {/* 完整顯示語音檔名稱 (移除 truncate，支援長檔名自然換行) */}
-                          <h4 className="font-bold font-serif-tc text-sm sm:text-base text-[#2C221E] break-words break-all leading-snug">
-                            {item.title}
-                          </h4>
-                          <p className="text-xs text-[#6E5D4F] line-clamp-2">
-                            {item.description}
-                          </p>
+                        {/* 上移的操作按鈕：預覽播放、編輯檔名與播放圖文、刪除 */}
+                        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                          <button
+                            onClick={() => onPlayInScreeningRoom(item)}
+                            className="px-2.5 py-1.5 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer transition"
+                            title="在放映室播放"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>預覽播放</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              loadItemIntoEditor(item);
+                              setActiveSubTab('editor');
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>編輯檔名與播放圖文</span>
+                          </button>
+                          <button
+                            onClick={() => setItemPendingDelete(item)}
+                            className="p-1.5 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
+                            title="刪除此語音檔與雲端硬碟檔案"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                        <button
-                          onClick={() => onPlayInScreeningRoom(item)}
-                          className="px-3 py-2 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                          title="在放映室播放"
-                        >
-                          <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>預覽播放</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            loadItemIntoEditor(item);
-                            setActiveSubTab('editor');
-                          }}
-                          className="px-3.5 py-2 rounded-lg bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>編輯檔名與播放圖文</span>
-                        </button>
-                        <button
-                          onClick={() => setItemPendingDelete(item)}
-                          className="p-2 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
-                          title="刪除此語音檔與雲端硬碟檔案"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      {/* 下方：封面圖片與可橫向完全伸展的語音檔案名稱與文字說明 */}
+                      <div className="flex items-start gap-3.5 min-w-0">
+                        <img
+                          src={item.coverImageUrl}
+                          alt={item.title}
+                          className="w-16 h-20 sm:w-20 sm:h-24 rounded-lg object-cover shrink-0 border border-[#D5C5AE] shadow-xs"
+                        />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          {/* 完整顯示語音檔名稱 (不受按鈕擠壓，橫向寬廣好閱讀) */}
+                          <h4 className="font-bold font-serif-tc text-sm sm:text-base text-[#2C221E] break-words break-all leading-snug">
+                            {item.title}
+                          </h4>
+                          {/* 文字說明橫向展開，更容易完整閱讀 */}
+                          <p className="text-xs text-[#6E5D4F] leading-relaxed break-words break-all line-clamp-3">
+                            {item.description || '（無說明內容）'}
+                          </p>
+                          {item.tags && item.tags.length > 0 && (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                              {item.tags.map((t) => (
+                                <span
+                                  key={t}
+                                  className="text-[10px] px-2 py-0.5 rounded-md bg-[#FAF4E8] text-[#8B5A2B] border border-[#E5D9C5]"
+                                >
+                                  #{t}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
