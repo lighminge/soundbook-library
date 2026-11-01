@@ -495,12 +495,34 @@ async function deleteAudioChunksFromFirestore(fileIds: string[]): Promise<void> 
 /**
  * 從 Google Drive 串流網址或圖片網址中嘗試解析出 File ID
  */
-function extractDriveFileIdFromUrl(url?: string): string | null {
+export function extractDriveFileIdFromUrl(url?: string): string | null {
   if (!url) return null;
   const idParam = url.match(/[?&]id=([a-zA-Z0-9_-]{15,})/);
   if (idParam && idParam[1]) return idParam[1];
   const dPath = url.match(/\/d\/([a-zA-Z0-9_-]{15,})/);
   if (dPath && dPath[1]) return dPath[1];
+  return null;
+}
+
+/**
+ * 從封面圖網址與 Drive ID 中解析出真實的 Google Drive File ID
+ */
+export function extractDriveFileIdFromCover(
+  coverImageUrl?: string,
+  coverImageDriveId?: string
+): string | null {
+  const candidates = [coverImageDriveId, extractDriveFileIdFromUrl(coverImageUrl)];
+  for (const id of candidates) {
+    if (!id) continue;
+    const trimmed = id.trim();
+    if (
+      trimmed.length >= 15 &&
+      !trimmed.startsWith('demo_') &&
+      !trimmed.startsWith('gdrive_local_')
+    ) {
+      return trimmed;
+    }
+  }
   return null;
 }
 

@@ -33,6 +33,8 @@ import {
   fetchAudioBlobFromGoogleDrive,
   deleteFilesFromGoogleDrive,
   extractDriveFileIdFromSlide,
+  extractDriveFileIdFromCover,
+  extractDriveFileIdFromUrl,
   renameFileInGoogleDrive,
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
@@ -360,9 +362,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         ? { audioDriveFileId: overrideAudioDriveId ?? audioDriveFileId }
         : {}),
       audioUrl: overrideAudioUrl ?? audioUrl,
-      ...(overrideCoverDriveId ?? coverImageDriveId
-        ? { coverImageDriveId: overrideCoverDriveId ?? coverImageDriveId }
-        : {}),
+      ...(overrideCoverDriveId !== undefined
+        ? (overrideCoverDriveId ? { coverImageDriveId: overrideCoverDriveId } : {})
+        : (overrideCoverUrl !== undefined
+            ? (extractDriveFileIdFromCover(overrideCoverUrl) ? { coverImageDriveId: extractDriveFileIdFromCover(overrideCoverUrl)! } : {})
+            : (coverImageDriveId ? { coverImageDriveId } : {}))),
       coverImageUrl: (overrideCoverUrl ?? coverImageUrl) || DEFAULT_COVER_IMAGES[0],
       playbackDisplay: {
         textContent: serializeSrtSegments(finalSegments),
@@ -713,6 +717,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       );
       return;
     }
+    const oldAudioDriveId = audioDriveFileId || extractDriveFileIdFromUrl(audioUrl);
     const file = normalizeAudioFile(rawFile);
     setIsUploading(true);
     try {
@@ -744,7 +749,31 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         uploadRes.fileId,
         detectedDuration
       );
-      showToast('✅ 已更新語音檔案並同步儲存至 Google 雲端硬碟與 Firebase！');
+
+      // 若有舊的 Google Drive 語音檔，且未被其他地方共用，自動清理舊檔
+      let deletedOldMsg = '';
+      if (
+        oldAudioDriveId &&
+        oldAudioDriveId !== uploadRes.fileId &&
+        !oldAudioDriveId.startsWith('demo_') &&
+        !oldAudioDriveId.startsWith('gdrive_local_')
+      ) {
+        const stillUsed =
+          coverImageDriveId === oldAudioDriveId ||
+          slides.some((s) => extractDriveFileIdFromSlide(s) === oldAudioDriveId);
+        if (!stillUsed) {
+          try {
+            const delRes = await deleteFilesFromGoogleDrive([oldAudioDriveId]);
+            if (delRes.deletedOnDrive) {
+              deletedOldMsg = '（已自動刪除雲端硬碟舊語音檔）';
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      showToast(`✅ 已更新語音檔案${deletedOldMsg}，並同步儲存至 Google 雲端硬碟與 Firebase！`);
     } catch (err: any) {
       console.error('替換語音檔失敗:', err);
       showToast(`❌ 替換語音檔失敗：${err?.message || '請確認檔案格式與網路連線'}`, 10000);
@@ -754,24 +783,63 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 編輯器內：上傳「封面圖」至 Google 雲端硬碟並同步儲存至 Firebase
+   * 編輯器內：修改/更換「封面圖」至 Google 雲端硬碟並同步儲存至 Firebase，自動刪除舊封面檔案
    */
   const handleCoverImageUpload = async (file: File) => {
+    // 記錄更換前的舊 Google 雲端硬碟封面 ID
+    const oldDriveFileId = extractDriveFileIdFromCover(coverImageUrl, coverImageDriveId);
+
     setIsUploading(true);
+    setUploadProgress(5);
+    setUploadStatusText(
+      oldDriveFileId
+        ? '正在上傳新封面圖片至 Google 雲端硬碟...'
+        : '正在上傳封面圖片至 Google 雲端硬碟...'
+    );
     try {
       const res = await uploadFileToGoogleDrive(file, (pct, text) => {
         setUploadProgress(pct);
         setUploadStatusText(text);
       });
-      setCoverImageUrl(res.directUrl);
-      setCoverImageDriveId(res.fileId);
+
+      const newDriveId = res.fileId;
+      const newCoverUrl = res.directUrl;
+
+      setCoverImageUrl(newCoverUrl);
+      setCoverImageDriveId(newDriveId);
+
+      // 1. 同步儲存至 Firebase Firestore
       await autoPersistToFirebase(
         srtSegments,
         slides,
-        res.directUrl,
-        res.fileId
+        newCoverUrl,
+        newDriveId
       );
-      showToast('✅ 封面圖已上傳至 Google 雲端硬碟並同步儲存至 Firebase！');
+
+      // 2. 若原本有舊的 Google 雲端硬碟封面檔案，且不同於新檔案，且未被目前語音檔或播放圖片共用，自動從雲端硬碟刪除舊封面
+      let deletedOldMsg = '';
+      if (oldDriveFileId && oldDriveFileId !== newDriveId) {
+        const stillUsedElsewhere =
+          audioDriveFileId === oldDriveFileId ||
+          slides.some((s) => extractDriveFileIdFromSlide(s) === oldDriveFileId);
+
+        if (!stillUsedElsewhere) {
+          try {
+            setUploadStatusText('正在清理 Google 雲端硬碟中的舊封面圖片...');
+            const delRes = await deleteFilesFromGoogleDrive([oldDriveFileId]);
+            if (delRes.deletedOnDrive) {
+              deletedOldMsg = '（已自動刪除雲端硬碟舊封面檔案）';
+            }
+          } catch (delErr) {
+            console.warn('自動刪除雲端硬碟舊封面失敗 (非致命):', delErr);
+          }
+        }
+      }
+
+      showToast(`✅ 封面圖片已成功修改${deletedOldMsg}，並同步儲存至雲端硬碟與 Firebase！`);
+    } catch (err: any) {
+      console.error('修改封面圖片失敗:', err);
+      showToast(`❌ 修改封面圖片失敗：${err?.message || '請確認檔案格式與網路連線'}`, 10000);
     } finally {
       setIsUploading(false);
     }
@@ -1882,15 +1950,15 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 items-center p-4 rounded-xl bg-white border border-[#E2D5C1]">
-                  <img
-                    src={coverImageUrl}
-                    alt="封面預覽"
-                    className="w-32 h-40 rounded-lg object-cover shadow-md border border-[#D5C5AE] shrink-0"
-                  />
-                  <div className="space-y-3 flex-1 w-full">
-                    <label className="w-full py-2.5 px-3 rounded-xl bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition">
-                      <Upload className="w-4 h-4" />
-                      <span>從電腦/手機上傳封面圖至雲端硬碟</span>
+                  <div className="relative group shrink-0">
+                    <img
+                      src={coverImageUrl}
+                      alt="封面預覽"
+                      className="w-32 h-40 rounded-lg object-cover shadow-md border border-[#D5C5AE]"
+                    />
+                    <label className="absolute inset-0 rounded-lg bg-black/50 text-white flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition p-2 text-center">
+                      <Edit3 className="w-5 h-5 mb-1 text-white" />
+                      <span className="text-xs font-semibold">點此更換封面</span>
                       <input
                         type="file"
                         accept="image/*"
@@ -1902,6 +1970,43 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         }}
                       />
                     </label>
+                  </div>
+
+                  <div className="space-y-3 flex-1 w-full">
+                    {/* 雲端硬碟同步狀態 */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {extractDriveFileIdFromCover(coverImageUrl, coverImageDriveId) ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>已同步 Google 雲端硬碟</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-medium">
+                          <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
+                          <span>使用預設/外部圖片</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 修改封面圖片按鈕 */}
+                    <label className="w-full py-2.5 px-3 rounded-xl bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition">
+                      <Edit3 className="w-4 h-4" />
+                      <span>修改封面圖片（選取新圖更換）</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleCoverImageUpload(f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <p className="text-[11px] text-[#7A6855] leading-relaxed">
+                      💡 說明：點選「修改封面圖片」更換圖片後，系統將自動上傳新圖片並<strong>刪除雲端硬碟舊封面</strong>，避免雲端重複堆積檔案。
+                    </p>
 
                     <div>
                       <label className="block text-[11px] text-[#7A6855] mb-1">
