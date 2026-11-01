@@ -33,7 +33,7 @@ import {
   ICON_OPTIONS,
 } from './DashboardView';
 import { renameFileInGoogleDrive, downloadAudioItemFile } from '../services/storageService';
-import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
+import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -153,8 +153,11 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // 依據標準基準建立全館每筆語音檔之唯一固定序號
-  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
+  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  const audioCallNumberMap = useMemo(
+    () => getAudioItemCallNumberMap(audioItems, categories),
+    [audioItems, categories]
+  );
 
   // 勾選批次移動館藏分類的語音檔 ID 集合
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -1485,7 +1488,9 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               const isChecked = selectedItemIds.includes(item.id);
               const currentCat = categories.find((c) => c.id === item.categoryId);
               const itemTags = item.tags || [];
-              const seqNumber = audioSeqMap.get(item.id) || (globalIdx + 1);
+              const listSeq = globalIdx + 1;
+              const callNumber =
+                audioCallNumberMap.get(item.id) || (currentCat ? `${currentCat.code}-0` : 'CAT-0');
               const titleValue =
                 editingTitles[item.id] !== undefined
                   ? editingTitles[item.id]
@@ -1531,18 +1536,29 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         />
 
                         <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                          <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
-                            #{seqNumber}
+                          {/* 清單序號：依照查詢條件從 1 開始的序號 */}
+                          <span
+                            className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold shrink-0"
+                            title={`清單序號：第 ${listSeq} 筆`}
+                          >
+                            #{listSeq}
+                          </span>
+                          {/* 獨立語音檔編號：館藏分類編號 + 流水號 (號碼從 0 開始，依上傳順序編號) */}
+                          <span
+                            className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-[10px] font-bold shadow-xs shrink-0"
+                            title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
+                          >
+                            {callNumber}
                           </span>
                           {currentCat && (
                             <span
-                              className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
+                              className="px-2 py-0.5 rounded text-[10px] font-semibold text-white shrink-0"
                               style={{ backgroundColor: currentCat.themeColor }}
                             >
                               [{currentCat.code}] {currentCat.name}
                             </span>
                           )}
-                          <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1">
+                          <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1 shrink-0">
                             <Clock className="w-3 h-3" />
                             {formatDuration(item.duration)}
                           </span>

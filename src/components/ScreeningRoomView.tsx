@@ -35,7 +35,7 @@ import {
   syncSlidesWithSrtSegments,
   sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
-import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
+import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
 
 interface ScreeningRoomViewProps {
   categories: Category[];
@@ -117,8 +117,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [shelfPageSize, setShelfPageSize] = useState<number>(5);
   const [shelfCurrentPage, setShelfCurrentPage] = useState<number>(1);
 
-  // 依據標準基準建立全館每筆語音檔之唯一固定序號
-  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
+  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  const audioCallNumberMap = useMemo(
+    () => getAudioItemCallNumberMap(audioItems, categories),
+    [audioItems, categories]
+  );
 
   // 播放時圖片縮圖水平滾動容器 Ref
   const slideThumbsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1380,12 +1383,25 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          {/* 選片書架清單序號：依照查詢條件從 1 開始 */}
                           <span
                             className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
                               isSelected ? 'bg-white/20 text-white' : 'bg-[#3A2518] text-white'
                             }`}
+                            title={`清單序號：第 ${globalSeq} 筆`}
                           >
-                            #{audioSeqMap.get(item.id) || globalSeq}
+                            #{globalSeq}
+                          </span>
+                          {/* 語音檔獨立編號（館藏分類編號 + 流水號） */}
+                          <span
+                            className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
+                              isSelected
+                                ? 'bg-white/20 text-amber-200'
+                                : 'bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B]'
+                            }`}
+                            title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
+                          >
+                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0')}
                           </span>
                           {cat && (
                             <span

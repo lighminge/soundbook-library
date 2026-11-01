@@ -63,7 +63,7 @@ import {
   X,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
-import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
+import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
 
 export const THEME_COLOR_OPTIONS = [
   { label: '1. 古銅胡桃棕 (#8B5A2B)', value: '#8B5A2B' },
@@ -319,8 +319,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
 
-  // 依據「館藏資料管理」之標準基準，建立全館每筆語音檔之唯一固定序號
-  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
+  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  const audioCallNumberMap = useMemo(
+    () => getAudioItemCallNumberMap(audioItems, categories),
+    [audioItems, categories]
+  );
 
   // 「聲書閣總覽 Dashboard」專屬快速檢索狀態
   const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
@@ -485,8 +488,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        {/* 檢索清單序號（從 1 開始） */}
                         <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
-                          #{audioSeqMap.get(item.id) || idx + 1}
+                          #{idx + 1}
+                        </span>
+                        {/* 獨立語音檔編號 */}
+                        <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] shadow-xs">
+                          {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0')}
                         </span>
                         {cat && (
                           <span
@@ -665,9 +673,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           const itemsInCat = audioItems
             .filter((item) => item.categoryId === category.id)
             .sort((a, b) => {
-              const cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
-              if (cmp !== 0) return cmp;
-              return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+              const timeA = new Date(a.createdAt || 0).getTime();
+              const timeB = new Date(b.createdAt || 0).getTime();
+              if (timeA !== timeB) return timeA - timeB;
+              return a.id.localeCompare(b.id);
             });
 
           return (
@@ -735,7 +744,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {itemsInCat.map((item) => {
-                      const seqNumber = audioSeqMap.get(item.id) || 1;
+                      const callNumber =
+                        audioCallNumberMap.get(item.id) || `${category.code}-0`;
                       return (
                         <div
                           key={item.id}
@@ -756,10 +766,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
-                            {/* 索書號與序號標籤（以館藏資料管理為依據） */}
-                            <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center gap-1.5 shadow-sm">
-                              <span className="text-amber-300 font-bold">#{seqNumber}</span>
-                              <span className="text-white/80">[{category.code}]</span>
+                            {/* 語音檔獨立編號（館藏分類編號 + 上傳順序流水號） */}
+                            <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center shadow-sm">
+                              <span className="text-amber-300 font-bold tracking-wider">{callNumber}</span>
                             </span>
 
                             {/* 時長與插圖數量 */}
@@ -777,10 +786,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           {/* 書籍資訊內容 */}
                           <div className="flex-1 p-4 pl-5 flex flex-col justify-between space-y-3">
                             <div>
-                              {/* 與館藏資料管理完全一致的編號 (館藏分類+序號) */}
+                              {/* 語音檔獨立編號與所屬館藏分類 */}
                               <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                                <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
-                                  #{seqNumber}
+                                <span className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-[10px] font-bold shadow-xs">
+                                  {callNumber}
                                 </span>
                                 <span
                                   className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"

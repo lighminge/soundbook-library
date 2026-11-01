@@ -1,4 +1,4 @@
-import { AudioItem } from '../types';
+import { AudioItem, Category } from '../types';
 
 /**
  * 語音檔案選取相容性工具（特別針對 iPhone / iPad Safari）
@@ -79,6 +79,51 @@ export function normalizeAudioFile(file: File): File {
   } catch {
     return file;
   }
+}
+
+/**
+ * 取得全館所有語音檔案之獨立館藏編號對照表
+ * 編碼規格：館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序編號)
+ * 例如：LIT-100-0, LIT-100-1, HIS-200-0
+ */
+export function getAudioItemCallNumberMap(
+  audioItems: AudioItem[],
+  categories: Category[]
+): Map<string, string> {
+  const categoryMap = new Map<string, Category>();
+  categories.forEach((c) => categoryMap.set(c.id, c));
+
+  // 依 categoryId 將語音檔案分組
+  const itemsByCat = new Map<string, AudioItem[]>();
+  audioItems.forEach((item) => {
+    const catId = item.categoryId || '__UNCAT__';
+    const list = itemsByCat.get(catId) || [];
+    list.push(item);
+    itemsByCat.set(catId, list);
+  });
+
+  const callNumberMap = new Map<string, string>();
+
+  // 針對各分類內的語音檔案，依照上傳時間（createdAt）由舊到新排序，流水號從 0 開始
+  itemsByCat.forEach((items, catId) => {
+    const cat = categoryMap.get(catId);
+    const catCode = (cat?.code || 'CAT-000').trim();
+
+    const sortedItems = [...items].sort((a, b) => {
+      const timeA = new Date(a.createdAt || 0).getTime();
+      const timeB = new Date(b.createdAt || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return a.id.localeCompare(b.id);
+    });
+
+    sortedItems.forEach((item, index) => {
+      const codePrefix = catCode.endsWith('-') ? catCode : `${catCode}-`;
+      const callNumber = `${codePrefix}${index}`;
+      callNumberMap.set(item.id, callNumber);
+    });
+  });
+
+  return callNumberMap;
 }
 
 /**

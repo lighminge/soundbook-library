@@ -43,7 +43,7 @@ import {
   getAudioInputAccept,
   isSupportedAudioFile,
   normalizeAudioFile,
-  getAudioItemSequenceMap,
+  getAudioItemCallNumberMap,
 } from '../utils/audioFileUtils';
 import {
   SrtSegment,
@@ -194,8 +194,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [audioListPageSize, setAudioListPageSize] = useState<number>(10);
   const [audioListPage, setAudioListPage] = useState<number>(1);
 
-  // 依據標準基準建立全館每筆語音檔之唯一固定序號
-  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
+  // 依據「館藏分類編號 + 流水號 (號碼從 0 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
+  const audioCallNumberMap = useMemo(
+    () => getAudioItemCallNumberMap(audioItems, categories),
+    [audioItems, categories]
+  );
 
   // 圖書館風格「刪除整筆語音館藏確認視窗」狀態
   const [itemPendingDelete, setItemPendingDelete] = useState<AudioItem | null>(null);
@@ -1647,6 +1650,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 paginatedAudioList.map((item, idxInPage) => {
                   const globalSeq = audioStartIndex + idxInPage + 1;
                   const cat = categories.find((c) => c.id === item.categoryId);
+                  const callNumber =
+                    audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-0` : 'CAT-0');
                   return (
                     <div
                       key={item.id}
@@ -1655,9 +1660,19 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       {/* 上方：標籤、序號與操作功能按鈕列 (預覽播放、編輯檔名與播放圖文、刪除) */}
                       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#F0E6D8]">
                         <div className="flex items-center gap-2 flex-wrap">
-                          {/* 每個語音檔區塊序號 */}
-                          <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0">
-                            #{audioSeqMap.get(item.id) || globalSeq}
+                          {/* 每個語音檔區塊清單序號：依照查詢條件從 1 開始 */}
+                          <span
+                            className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0"
+                            title={`清單序號：第 ${globalSeq} 筆`}
+                          >
+                            #{globalSeq}
+                          </span>
+                          {/* 獨立語音檔編號（館藏分類編號 + 上傳順序流水號） */}
+                          <span
+                            className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-xs font-bold shadow-xs shrink-0"
+                            title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
+                          >
+                            {callNumber}
                           </span>
                           {cat && (
                             <span
