@@ -43,6 +43,7 @@ import {
   getAudioInputAccept,
   isSupportedAudioFile,
   normalizeAudioFile,
+  getAudioItemSequenceMap,
 } from '../utils/audioFileUtils';
 import {
   SrtSegment,
@@ -192,6 +193,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   // 「語音檔案編輯與館藏管理」清單分頁狀態 (以 10 的倍數選取)
   const [audioListPageSize, setAudioListPageSize] = useState<number>(10);
   const [audioListPage, setAudioListPage] = useState<number>(1);
+
+  // 依據標準基準建立全館每筆語音檔之唯一固定序號
+  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
 
   // 圖書館風格「刪除整筆語音館藏確認視窗」狀態
   const [itemPendingDelete, setItemPendingDelete] = useState<AudioItem | null>(null);
@@ -1653,14 +1657,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         <div className="flex items-center gap-2 flex-wrap">
                           {/* 每個語音檔區塊序號 */}
                           <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-xs font-bold shrink-0">
-                            #{globalSeq}
+                            #{audioSeqMap.get(item.id) || globalSeq}
                           </span>
                           {cat && (
                             <span
                               className="px-2 py-0.5 rounded text-[10px] font-semibold text-white shrink-0"
                               style={{ backgroundColor: cat.themeColor }}
                             >
-                              {cat.name}
+                              [{cat.code}] {cat.name}
                             </span>
                           )}
                           <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1 shrink-0">

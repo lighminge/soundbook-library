@@ -33,6 +33,7 @@ import {
   ICON_OPTIONS,
 } from './DashboardView';
 import { renameFileInGoogleDrive, downloadAudioItemFile } from '../services/storageService';
+import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -151,6 +152,9 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   // 分頁狀態（以 10 的倍數選取）
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // 依據標準基準建立全館每筆語音檔之唯一固定序號
+  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
 
   // 勾選批次移動館藏分類的語音檔 ID 集合
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -1481,6 +1485,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               const isChecked = selectedItemIds.includes(item.id);
               const currentCat = categories.find((c) => c.id === item.categoryId);
               const itemTags = item.tags || [];
+              const seqNumber = audioSeqMap.get(item.id) || (globalIdx + 1);
               const titleValue =
                 editingTitles[item.id] !== undefined
                   ? editingTitles[item.id]
@@ -1527,7 +1532,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
                         <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                           <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
-                            #{globalIdx + 1}
+                            #{seqNumber}
                           </span>
                           {currentCat && (
                             <span

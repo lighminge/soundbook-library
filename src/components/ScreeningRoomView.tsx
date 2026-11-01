@@ -35,6 +35,7 @@ import {
   syncSlidesWithSrtSegments,
   sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
+import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
 
 interface ScreeningRoomViewProps {
   categories: Category[];
@@ -115,6 +116,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 「館藏語音選片書架」專屬分頁狀態（以 5 的倍數做選取）
   const [shelfPageSize, setShelfPageSize] = useState<number>(5);
   const [shelfCurrentPage, setShelfCurrentPage] = useState<number>(1);
+
+  // 依據標準基準建立全館每筆語音檔之唯一固定序號
+  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
 
   // 播放時圖片縮圖水平滾動容器 Ref
   const slideThumbsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1381,14 +1385,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                               isSelected ? 'bg-white/20 text-white' : 'bg-[#3A2518] text-white'
                             }`}
                           >
-                            #{globalSeq}
+                            #{audioSeqMap.get(item.id) || globalSeq}
                           </span>
                           {cat && (
                             <span
                               className="px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
                               style={{ backgroundColor: cat.themeColor }}
                             >
-                              {cat.name}
+                              [{cat.code}] {cat.name}
                             </span>
                           )}
                           <span

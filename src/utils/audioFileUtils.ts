@@ -1,3 +1,5 @@
+import { AudioItem } from '../types';
+
 /**
  * 語音檔案選取相容性工具（特別針對 iPhone / iPad Safari）
  *
@@ -77,4 +79,23 @@ export function normalizeAudioFile(file: File): File {
   } catch {
     return file;
   }
+}
+
+/**
+ * 取得全館所有語音檔案之標準固定序號對照表（以館藏資料管理預設依檔案名稱升冪排序為基準，確保跨頁面編號完全一致）
+ */
+export function getAudioItemSequenceMap(audioItems: AudioItem[]): Map<string, number> {
+  const sorted = [...audioItems].sort((a, b) => {
+    const cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+    if (cmp !== 0) return cmp;
+    const timeA = new Date(a.createdAt || 0).getTime();
+    const timeB = new Date(b.createdAt || 0).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    return a.id.localeCompare(b.id);
+  });
+  const map = new Map<string, number>();
+  sorted.forEach((item, idx) => {
+    map.set(item.id, idx + 1);
+  });
+  return map;
 }

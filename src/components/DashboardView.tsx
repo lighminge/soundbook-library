@@ -63,6 +63,7 @@ import {
   X,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
+import { getAudioItemSequenceMap } from '../utils/audioFileUtils';
 
 export const THEME_COLOR_OPTIONS = [
   { label: '1. 古銅胡桃棕 (#8B5A2B)', value: '#8B5A2B' },
@@ -318,6 +319,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
 
+  // 依據「館藏資料管理」之標準基準，建立全館每筆語音檔之唯一固定序號
+  const audioSeqMap = useMemo(() => getAudioItemSequenceMap(audioItems), [audioItems]);
+
   // 「聲書閣總覽 Dashboard」專屬快速檢索狀態
   const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
 
@@ -482,14 +486,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1">
                         <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
-                          #{idx + 1}
+                          #{audioSeqMap.get(item.id) || idx + 1}
                         </span>
                         {cat && (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-white"
                             style={{ backgroundColor: cat.themeColor }}
                           >
-                            {cat.name}
+                            [{cat.code}] {cat.name}
                           </span>
                         )}
                         <span className="text-[11px] font-mono text-[#7A6855] flex items-center gap-0.5">
@@ -658,7 +662,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* 各分類圖書館木質書架展示區 */}
       <div className="space-y-10">
         {visibleCategories.map((category) => {
-          const itemsInCat = audioItems.filter((item) => item.categoryId === category.id);
+          const itemsInCat = audioItems
+            .filter((item) => item.categoryId === category.id)
+            .sort((a, b) => {
+              const cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant');
+              if (cmp !== 0) return cmp;
+              return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+            });
 
           return (
             <section
@@ -724,53 +734,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {itemsInCat.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className="group relative flex flex-col rounded-r-xl rounded-l-md bg-[#FFFDF9] book-spine-effect overflow-hidden border border-[#DFD2BE] hover:-translate-y-1.5 transition-all duration-200"
-                      >
-                        {/* 左側精裝書背裝飾條 */}
+                    {itemsInCat.map((item) => {
+                      const seqNumber = audioSeqMap.get(item.id) || 1;
+                      return (
                         <div
-                          className="absolute left-0 top-0 bottom-0 w-3 z-10"
-                          style={{ backgroundColor: category.themeColor }}
-                        />
-
-                        {/* 封面圖與快速播放按鈕 */}
-                        <div className="relative h-44 w-full pl-3 overflow-hidden bg-[#2C221E]">
-                          <img
-                            src={item.coverImageUrl}
-                            alt={item.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          key={item.id}
+                          className="group relative flex flex-col rounded-r-xl rounded-l-md bg-[#FFFDF9] book-spine-effect overflow-hidden border border-[#DFD2BE] hover:-translate-y-1.5 transition-all duration-200"
+                        >
+                          {/* 左側精裝書背裝飾條 */}
+                          <div
+                            className="absolute left-0 top-0 bottom-0 w-3 z-10"
+                            style={{ backgroundColor: category.themeColor }}
                           />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
-                          {/* 索書號標籤 */}
-                          <span className="absolute top-2.5 left-5 px-2 py-0.5 rounded bg-black/65 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs">
-                            {category.code}-{String(idx + 1).padStart(2, '0')}
-                          </span>
+                          {/* 封面圖與快速播放按鈕 */}
+                          <div className="relative h-44 w-full pl-3 overflow-hidden bg-[#2C221E]">
+                            <img
+                              src={item.coverImageUrl}
+                              alt={item.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
-                          {/* 時長與插圖數量 */}
-                          <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between text-white text-xs">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/60 backdrop-blur-xs">
-                              <Clock className="w-3 h-3 text-amber-300" />
-                              {formatDuration(item.duration)}
+                            {/* 索書號與序號標籤（以館藏資料管理為依據） */}
+                            <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center gap-1.5 shadow-sm">
+                              <span className="text-amber-300 font-bold">#{seqNumber}</span>
+                              <span className="text-white/80">[{category.code}]</span>
                             </span>
-                            <span className="px-2 py-0.5 rounded bg-black/60 text-[11px] text-amber-200">
-                              {item.playbackDisplay.slides.length} 張展演圖
-                            </span>
-                          </div>
-                        </div>
 
-                        {/* 書籍資訊內容 */}
-                        <div className="flex-1 p-4 pl-5 flex flex-col justify-between space-y-3">
-                          <div>
-                            <h4 className="font-bold font-serif-tc text-base text-[#2C221E] line-clamp-1 group-hover:text-[#8B5A2B] transition-colors">
-                              {item.title}
-                            </h4>
-                            <p className="text-xs text-[#6E5D4F] mt-1.5 line-clamp-2 leading-relaxed">
-                              {item.description || '尚無館藏說明'}
-                            </p>
+                            {/* 時長與插圖數量 */}
+                            <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between text-white text-xs">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/60 backdrop-blur-xs">
+                                <Clock className="w-3 h-3 text-amber-300" />
+                                {formatDuration(item.duration)}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-black/60 text-[11px] text-amber-200">
+                                {item.playbackDisplay.slides.length} 張展演圖
+                              </span>
+                            </div>
                           </div>
+
+                          {/* 書籍資訊內容 */}
+                          <div className="flex-1 p-4 pl-5 flex flex-col justify-between space-y-3">
+                            <div>
+                              {/* 與館藏資料管理完全一致的編號 (館藏分類+序號) */}
+                              <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                                <span className="px-2 py-0.5 rounded bg-[#3A2518] text-white font-mono text-[10px] font-bold">
+                                  #{seqNumber}
+                                </span>
+                                <span
+                                  className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
+                                  style={{ backgroundColor: category.themeColor }}
+                                >
+                                  [{category.code}] {category.name}
+                                </span>
+                              </div>
+                              <h4 className="font-bold font-serif-tc text-base text-[#2C221E] line-clamp-1 group-hover:text-[#8B5A2B] transition-colors">
+                                {item.title}
+                              </h4>
+                              <p className="text-xs text-[#6E5D4F] mt-1.5 line-clamp-2 leading-relaxed">
+                                {item.description || '尚無館藏說明'}
+                              </p>
+                            </div>
 
                           <div className="pt-2 border-t border-[#EFE6D5] flex items-center justify-between gap-2">
                             <button
@@ -790,7 +815,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </div>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                   </div>
                 )}
               </div>
