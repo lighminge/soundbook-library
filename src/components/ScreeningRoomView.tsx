@@ -324,17 +324,21 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       : autoSlideIndex;
   const activeSlide = slides[activeSlideIndex] || slides[0];
 
-  // 當當前選取的圖片切換時，自動將縮圖捲動至水平視野正中央
+  // 當當前選取的圖片切換時，純在縮圖軌道內部平滑捲動，絕不觸發外層 window 水平位移（避免電腦螢幕被往左擠出）
   useEffect(() => {
-    if (slideThumbsContainerRef.current) {
-      const activeEl = slideThumbsContainerRef.current.querySelector(
+    const container = slideThumbsContainerRef.current;
+    if (container) {
+      const activeEl = container.querySelector(
         `[data-slide-index="${activeSlideIndex}"]`
       ) as HTMLElement | null;
       if (activeEl) {
-        activeEl.scrollIntoView({
+        const targetScrollLeft =
+          activeEl.offsetLeft -
+          container.offsetLeft -
+          (container.clientWidth / 2 - activeEl.clientWidth / 2);
+        container.scrollTo({
+          left: Math.max(0, targetScrollLeft),
           behavior: 'smooth',
-          block: 'nearest',
-          inline: 'center',
         });
       }
     }
@@ -615,7 +619,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         </div>
       </div>
 
-      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方） */}
+      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方，包含關鍵字與類別標籤下拉查詢） */}
       <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm border border-[#E2D5C1] space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -625,48 +629,74 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <div>
               <h3 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-2">
                 <span>搜尋館藏語音</span>
-                {searchQuery.trim() && (
+                {(searchQuery.trim() || shelfSearchTag) && (
                   <span className="text-[11px] px-2 py-0.2 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {shelfFilteredItems.length} 部
                   </span>
                 )}
               </h3>
               <p className="text-[11px] text-[#7A6855]">
-                依標題關鍵字或故事內容說明即時檢索可放映之語音作品
+                依標題關鍵字、故事內容說明或選取類別標籤即時檢索可放映之語音作品
               </p>
             </div>
           </div>
 
-          {searchQuery && (
+          {(searchQuery || shelfSearchTag) && (
             <button
               type="button"
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setShelfSearchTag('');
+              }}
               className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
             >
               <X className="w-3.5 h-3.5" />
-              <span>清空搜尋</span>
+              <span>清空搜尋條件</span>
             </button>
           )}
         </div>
 
-        <div className="relative">
-          <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="搜尋館藏語音標題或內容..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+          {/* 1. 關鍵字搜尋 */}
+          <div className="relative sm:col-span-7 lg:col-span-8">
+            <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="搜尋館藏語音標題或內容關鍵字..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* 2. 類別標籤下拉選取查詢 */}
+          <div className="relative sm:col-span-5 lg:col-span-4">
+            <Tag className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={shelfSearchTag}
+              onChange={(e) => setShelfSearchTag(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
-              <X className="w-4 h-4" />
-            </button>
-          )}
+              <option value="">
+                全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+              </option>
+              {availableShelfTags.map(({ tag, count }) => (
+                <option key={tag} value={tag}>
+                  #{tag} ({count} 部)
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
       </div>
 
@@ -731,14 +761,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     onClick={() =>
                       setManualSlideIndex((activeSlideIndex - 1 + slides.length) % slides.length)
                     }
-                    className="absolute left-3 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-black/55 hover:bg-black/80 text-white opacity-80 group-hover:opacity-100 transition cursor-pointer"
+                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer"
                     title="上一張播放圖片"
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
                   <button
                     onClick={() => setManualSlideIndex((activeSlideIndex + 1) % slides.length)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full bg-black/55 hover:bg-black/80 text-white opacity-80 group-hover:opacity-100 transition cursor-pointer"
+                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer"
                     title="下一張播放圖片"
                   >
                     <ChevronRight className="w-5 h-5" />
@@ -973,15 +1003,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               </div>
             </div>
 
-            {/* 館藏說明簡介 */}
-            <div className="p-4 rounded-xl bg-[#F4ECE0] border border-[#E2D5C1]">
-              <p className="text-xs font-semibold text-[#8B5A2B] mb-1">【館藏簡介說明】</p>
-              <p className="text-sm text-[#3A2D25] leading-relaxed">
-                {currentItem.description || '尚無簡介說明'}
-              </p>
-            </div>
-
-            {/* 3a. 播放時顯示的 SRT 文字段落（一次只顯示一筆時間區段內容，當秒數到達時自動切換下一筆） */}
+            {/* 播放時顯示的 SRT 文字段落（一次只顯示一筆時間區段內容，當秒數到達時自動切換下一筆） */}
             <div>
               {!activeSegment ? (
                 <p className="text-sm text-[#7A6855] italic py-6 text-center">
@@ -1179,6 +1201,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   )}
                 </div>
               )}
+            </div>
+
+            {/* 館藏說明簡介 */}
+            <div className="p-4 rounded-xl bg-[#F4ECE0] border border-[#E2D5C1]">
+              <p className="text-xs font-semibold text-[#8B5A2B] mb-1">【館藏簡介說明】</p>
+              <p className="text-sm text-[#3A2D25] leading-relaxed">
+                {currentItem.description || '尚無簡介說明'}
+              </p>
             </div>
           </div>
         </div>
