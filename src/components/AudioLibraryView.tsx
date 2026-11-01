@@ -24,6 +24,7 @@ import {
   SlidersHorizontal,
   ArrowUpDown,
   Search,
+  Tag,
   Tags,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
@@ -179,8 +180,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [slidePageSize, setSlidePageSize] = useState<number>(5);
   const [slideCurrentPage, setSlideCurrentPage] = useState<number>(1);
 
-  // 「語音檔案編輯與館藏管理」查詢狀態 (語音檔案名稱、說明內容)
+  // 「語音檔案編輯與館藏管理」查詢狀態 (語音檔案名稱、類別標籤、說明內容)
   const [audioSearchTitle, setAudioSearchTitle] = useState('');
+  const [audioSearchTag, setAudioSearchTag] = useState('');
   const [audioSearchDesc, setAudioSearchDesc] = useState('');
 
   // 「語音檔案編輯與館藏管理」清單排序狀態 (依檔案名稱、上傳日期、館藏分類；由小到大、由大到小)
@@ -1074,7 +1076,35 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     )} --> ${secondsToSrtTime(endSec)}]`;
   };
 
-  // 依所選分類與查詢條件（語音檔案名稱、館藏分類、說明內容）過濾語音檔案
+  // 「語音檔案編輯與館藏管理」可用的類別標籤（含該分類下的筆數統計）
+  const availableAudioTags = useMemo(() => {
+    const tagCountMap = new Map<string, number>();
+    for (const item of audioItems) {
+      if (filterCategoryId !== 'all' && item.categoryId !== filterCategoryId) {
+        continue;
+      }
+      if (item.tags && Array.isArray(item.tags)) {
+        for (const t of item.tags) {
+          const clean = (t || '').trim();
+          if (clean) {
+            tagCountMap.set(clean, (tagCountMap.get(clean) || 0) + 1);
+          }
+        }
+      }
+    }
+    return Array.from(tagCountMap.entries())
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'zh-Hant'));
+  }, [audioItems, filterCategoryId]);
+
+  // 若切換分類後，原先選取的類別標籤已不存在，自動重置
+  useEffect(() => {
+    if (audioSearchTag && !availableAudioTags.some((t) => t.tag === audioSearchTag)) {
+      setAudioSearchTag('');
+    }
+  }, [availableAudioTags, audioSearchTag]);
+
+  // 依所選分類與查詢條件（語音檔案名稱、館藏分類、類別標籤、說明內容）過濾語音檔案
   const filteredAudioList = audioItems.filter((item) => {
     // 1. 館藏分類
     const matchCategory =
@@ -1084,11 +1114,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     const qTitle = audioSearchTitle.trim().toLowerCase();
     const matchTitle = !qTitle || (item.title || '').toLowerCase().includes(qTitle);
 
-    // 3. 說明內容
+    // 3. 類別標籤 (下拉選單選取)
+    const qTag = audioSearchTag.trim().toLowerCase();
+    const itemTags = item.tags || [];
+    const matchTag =
+      !qTag || itemTags.some((tag) => (tag || '').toLowerCase().includes(qTag));
+
+    // 4. 說明內容
     const qDesc = audioSearchDesc.trim().toLowerCase();
     const matchDesc = !qDesc || (item.description || '').toLowerCase().includes(qDesc);
 
-    return matchCategory && matchTitle && matchDesc;
+    return matchCategory && matchTitle && matchTag && matchDesc;
   });
 
   // 「語音檔案編輯與館藏管理」排序計算：依檔案名稱、上傳日期、館藏分類；由小到大、由大到小
@@ -1127,12 +1163,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     audioStartIndex + audioListPageSize
   );
 
-  // 當分類篩選、查詢關鍵字、排序條件或每頁筆數變更時，自動回到第 1 頁
+  // 當分類篩選、查詢關鍵字、類別標籤、排序條件或每頁筆數變更時，自動回到第 1 頁
   useEffect(() => {
     setAudioListPage(1);
   }, [
     filterCategoryId,
     audioSearchTitle,
+    audioSearchTag,
     audioSearchDesc,
     audioSortBy,
     audioSortOrder,
@@ -1404,18 +1441,19 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
               </div>
             </div>
 
-            {/* 查詢功能列：語音檔案名稱、館藏分類、說明內容 */}
+            {/* 查詢功能列：語音檔案名稱、館藏分類、類別標籤、說明內容 */}
             <div className="p-3.5 rounded-xl bg-[#FAF6EE] border border-[#E2D5C1] space-y-2.5 text-xs">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 font-bold text-[#5C3A1B]">
                   <Search className="w-4 h-4 text-[#8B5A2B]" />
                   <span>語音館藏多欄位查詢：</span>
                 </div>
-                {(audioSearchTitle || audioSearchDesc || filterCategoryId !== 'all') && (
+                {(audioSearchTitle || audioSearchTag || audioSearchDesc || filterCategoryId !== 'all') && (
                   <button
                     type="button"
                     onClick={() => {
                       setAudioSearchTitle('');
+                      setAudioSearchTag('');
                       setAudioSearchDesc('');
                       setFilterCategoryId('all');
                     }}
@@ -1427,7 +1465,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                 {/* 1. 語音檔案名稱查詢 */}
                 <div className="relative">
                   <FileText className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1461,7 +1499,27 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
 
-                {/* 3. 說明內容查詢 */}
+                {/* 3. 類別標籤查詢 (下拉選單) */}
+                <div className="relative">
+                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={audioSearchTag}
+                    onChange={(e) => setAudioSearchTag(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                  >
+                    <option value="">
+                      全部類別標籤 {availableAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                    </option>
+                    {availableAudioTags.map(({ tag, count }) => (
+                      <option key={tag} value={tag}>
+                        #{tag} ({count} 筆)
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+
+                {/* 4. 說明內容查詢 */}
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
@@ -1663,12 +1721,21 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           {item.tags && item.tags.length > 0 && (
                             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                               {item.tags.map((t) => (
-                                <span
+                                <button
                                   key={t}
-                                  className="text-[10px] px-2 py-0.5 rounded-md bg-[#FAF4E8] text-[#8B5A2B] border border-[#E5D9C5]"
+                                  type="button"
+                                  onClick={() =>
+                                    setAudioSearchTag((prev) => (prev === t ? '' : t))
+                                  }
+                                  title={`點擊篩選標籤 #${t}`}
+                                  className={`text-[10px] px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                                    audioSearchTag === t
+                                      ? 'bg-[#8B5A2B] text-white border-[#8B5A2B] font-bold shadow-xs'
+                                      : 'bg-[#FAF4E8] text-[#8B5A2B] border-[#E5D9C5] hover:bg-[#EFE6D5]'
+                                  }`}
                                 >
                                   #{t}
-                                </span>
+                                </button>
                               ))}
                             </div>
                           )}
