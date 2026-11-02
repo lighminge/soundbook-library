@@ -53,12 +53,34 @@ export function App() {
     setAudioItems(res.audioItems);
     setDataSource(res.source);
     setDriveConnected(isGoogleDriveConfigured());
+
+    // 支援跨裝置投放 / 連結分享時直接定位至指定語音作品
+    const urlParams = new URLSearchParams(window.location.search);
+    const audioIdFromUrl = urlParams.get('audioId');
+    if (audioIdFromUrl) {
+      const target = res.audioItems.find((i) => i.id === audioIdFromUrl);
+      if (target) {
+        setActiveAudioForPlayback(target);
+        return;
+      }
+    }
+
     if (!activeAudioForPlayback && res.audioItems.length > 0) {
       setActiveAudioForPlayback(res.audioItems[0]);
     }
   };
 
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabFromUrl = urlParams.get('tab');
+    if (
+      tabFromUrl === 'screening' ||
+      tabFromUrl === 'dashboard' ||
+      tabFromUrl === 'library' ||
+      tabFromUrl === 'catalog'
+    ) {
+      setActiveTab(tabFromUrl as any);
+    }
     reloadAllData();
   }, []);
 

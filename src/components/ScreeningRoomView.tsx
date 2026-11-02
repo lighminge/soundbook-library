@@ -21,6 +21,14 @@ import {
   CheckCircle2,
   X,
   Tag,
+  Maximize2,
+  Minimize2,
+  Cast,
+  Tv,
+  Airplay,
+  QrCode,
+  Copy,
+  Share2,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -131,6 +139,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 放映室多媒體播放舞台 Ref (供手機版選片後平滑捲動至播放畫面)
   const playerStageRef = useRef<HTMLDivElement | null>(null);
+
+  // 舞台全螢幕容器 Ref 與狀態
+  const theaterStageRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // 投放到其他裝置 Modal 狀態與複製成功標記
+  const [showCastModal, setShowCastModal] = useState<boolean>(false);
+  const [castCopied, setCastCopied] = useState<boolean>(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -473,6 +489,197 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     setIsMuted(!isMuted);
   };
 
+  // 監聽原生 Fullscreen 變化，確保 Esc 鍵或手勢退出時狀態同步
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFs = Boolean(
+        document.fullscreenElement ||
+          (document as any).webkitFullscreenElement ||
+          (document as any).mozFullScreenElement ||
+          (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isFs);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
+  const enterFullscreen = async () => {
+    const el = theaterStageRef.current;
+    if (!el) return;
+
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if ((el as any).webkitRequestFullscreen) {
+        (el as any).webkitRequestFullscreen();
+      } else if ((el as any).mozRequestFullScreen) {
+        (el as any).mozRequestFullScreen();
+      } else if ((el as any).msRequestFullscreen) {
+        (el as any).msRequestFullscreen();
+      } else {
+        setIsFullscreen(true);
+      }
+    } catch (err) {
+      console.warn('原生全螢幕受限，切換至視窗滿版全螢幕模式:', err);
+      setIsFullscreen(true);
+    }
+  };
+
+  const exitFullscreen = async () => {
+    try {
+      if (
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      ) {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
+        } else if ((document as any).mozCancelFullScreen) {
+          (document as any).mozCancelFullScreen();
+        } else if ((document as any).msExitFullscreen) {
+          (document as any).msExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('退出原生全螢幕錯誤:', err);
+    }
+    setIsFullscreen(false);
+  };
+
+  const toggleFullscreen = () => {
+    if (isFullscreen || document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      exitFullscreen();
+    } else {
+      enterFullscreen();
+    }
+  };
+
+  // 鍵盤快速鍵支援：全螢幕下 Esc 退出、F 切換全螢幕、Space 播放/暫停、左右鍵快轉/倒退
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        return;
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key === 'Escape' && isFullscreen) {
+        exitFullscreen();
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleSeek(currentTime - 5);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleSeek(currentTime + 5);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, currentTime, isPlaying]);
+
+  // 觸發原生系統投放 (Apple AirPlay / Google Remote Playback / Presentation API)
+  const handleTriggerNativeCast = async () => {
+    const audioEl = audioRef.current as any;
+    if (!audioEl) {
+      showToast('⚠️ 播放音訊元件未就緒');
+      return;
+    }
+
+    let success = false;
+
+    // 1. 嘗試 Apple AirPlay (Safari on iOS / iPadOS / macOS)
+    if (typeof audioEl.webkitShowPlaybackTargetPicker === 'function') {
+      try {
+        audioEl.webkitShowPlaybackTargetPicker();
+        showToast('📺 已開啟 Apple AirPlay 裝置選單');
+        success = true;
+      } catch (e) {
+        console.warn('AirPlay 呼叫失敗:', e);
+      }
+    }
+
+    // 2. 嘗試 W3C Remote Playback API (Google Cast on Chrome / Edge)
+    if (!success && audioEl.remote && typeof audioEl.remote.prompt === 'function') {
+      try {
+        await audioEl.remote.prompt();
+        showToast('📻 已開啟 Google Cast / 遠端裝置投放選單');
+        success = true;
+      } catch (e: any) {
+        console.warn('Remote Playback 呼叫失敗:', e);
+      }
+    }
+
+    // 3. 嘗試 Presentation API (Google Cast / 投射至外接螢幕或智慧電視)
+    if (!success && (window as any).PresentationRequest) {
+      try {
+        const pres = new (window as any).PresentationRequest([window.location.href]);
+        await pres.start();
+        showToast('📺 已啟動外接顯示器 / 智慧電視投放連線');
+        success = true;
+      } catch (e) {
+        console.warn('Presentation API 呼叫失敗:', e);
+      }
+    }
+
+    if (!success) {
+      showToast('💡 瀏覽器尚未偵測到即時投放裝置，請參考彈出的投放指南與跨裝置同步連結！');
+    }
+  };
+
+  // 生成跨裝置接續播放 URL
+  const currentShareUrl = useMemo(() => {
+    if (!currentItem) return window.location.href;
+    const origin = window.location.origin;
+    const pathname = window.location.pathname;
+    return `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&t=${Math.floor(currentTime)}`;
+  }, [currentItem, currentTime]);
+
+  // 複製跨裝置播放連結
+  const handleCopyShareUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(currentShareUrl);
+      setCastCopied(true);
+      showToast('📋 已複製跨裝置接續播放連結！可直接傳送給客廳電視、平板或家人手機開啟。');
+      setTimeout(() => setCastCopied(false), 3000);
+    } catch {
+      showToast('⚠️ 複製失敗，請手動複製連結');
+    }
+  };
+
+  // 使用系統原生分享 (AirDrop / LINE / 訊息 / 附近分享)
+  const handleSystemShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `聲書閣放映室 - ${currentItem.title}`,
+          text: `正在放映：${currentItem.title} (${formatDuration(currentTime)} / ${formatDuration(duration)})`,
+          url: currentShareUrl,
+        });
+      } catch {
+        // 使用者取消分享不報錯
+      }
+    } else {
+      handleCopyShareUrl();
+    }
+  };
+
   /**
    * 啟動當前顯示 SRT 時間區段的「修改」模式
    */
@@ -714,51 +921,122 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* 電腦版左側 8 欄 / 手機版下方：放映室主舞台（圖片展演 + 播放器 + 播放時同步文字） */}
         <div ref={playerStageRef} className="order-2 lg:order-1 lg:col-span-8 space-y-6">
-          {/* 舞台主卡片 */}
-          <div className="rounded-2xl overflow-hidden bg-[#1E1612] text-[#FAF5EC] shadow-2xl border border-[#4A3427]">
+          {/* 舞台主卡片 (支援一鍵放大全螢幕與視窗滿版劇場模式) */}
+          <div
+            ref={theaterStageRef}
+            className={`transition-all duration-300 ${
+              isFullscreen
+                ? 'fixed inset-0 z-[100] w-screen h-screen bg-[#0D0907] text-[#FAF5EC] flex flex-col justify-between overflow-hidden shadow-2xl'
+                : 'rounded-2xl overflow-hidden bg-[#1E1612] text-[#FAF5EC] shadow-2xl border border-[#4A3427]'
+            }`}
+          >
             {/* 舞台頂部資訊列 */}
-            <div className="px-5 py-4 bg-[#2A1E18] border-b border-[#3E2C23] flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
+            <div
+              className={`flex flex-wrap items-center justify-between gap-3 transition-colors ${
+                isFullscreen
+                  ? 'px-6 py-3.5 bg-black/85 backdrop-blur-md border-b border-white/10 shrink-0 z-30'
+                  : 'px-5 py-4 bg-[#2A1E18] border-b border-[#3E2C23]'
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
                 {currentCategory && (
                   <span
-                    className="px-2.5 py-1 rounded-md text-xs font-semibold text-white flex items-center gap-1.5"
+                    className="px-2.5 py-1 rounded-md text-xs font-semibold text-white flex items-center gap-1.5 shrink-0"
                     style={{ backgroundColor: currentCategory.themeColor }}
                   >
                     {getCategoryIcon(currentCategory.icon, 'w-3.5 h-3.5')}
                     <span>{currentCategory.name}</span>
                   </span>
                 )}
-                <h2 className="text-lg md:text-xl font-bold font-serif-tc text-[#FAF5EC]">
+                <h2 className="text-base sm:text-lg md:text-xl font-bold font-serif-tc text-[#FAF5EC] truncate">
                   {currentItem.title}
                 </h2>
+                {isFullscreen && (
+                  <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 text-xs font-mono font-medium border border-amber-400/30">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    全螢幕劇場放映中
+                  </span>
+                )}
               </div>
 
-              <button
-                onClick={() => onEditAudio(currentItem)}
-                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>編輯此語音圖文設定</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {/* 投放到其他裝置 */}
+                <button
+                  type="button"
+                  onClick={() => setShowCastModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer"
+                  title="投放到其他裝置 (AirPlay / Chromecast / 智慧電視)"
+                >
+                  <Cast className="w-3.5 h-3.5 text-amber-300" />
+                  <span className="hidden sm:inline">投放到其他裝置</span>
+                </button>
+
+                {isFullscreen ? (
+                  <button
+                    type="button"
+                    onClick={exitFullscreen}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                    title="退出全螢幕 (Esc)"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                    <span>退出全螢幕 (Esc)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onEditAudio(currentItem)}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">編輯此語音圖文設定</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* 播放時的圖片顯示舞台 (Playback Image Stage) */}
-            <div className="relative aspect-16/9 w-full bg-[#120D0A] overflow-hidden flex items-center justify-center group">
+            <div
+              className={`relative w-full bg-[#120D0A] overflow-hidden flex items-center justify-center group ${
+                isFullscreen ? 'flex-1 min-h-0 bg-black' : 'aspect-16/9'
+              }`}
+            >
               {activeSlide && (
                 <>
                   {/* 背景模糊氛圍層 */}
                   <img
                     src={activeSlide.imageUrl}
                     alt=""
-                    className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-35 scale-110"
+                    className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-35 scale-110 pointer-events-none select-none"
                   />
                   {/* 主展演圖片 */}
                   <img
                     src={activeSlide.imageUrl}
                     alt={activeSlide.caption || currentItem.title}
-                    className="relative z-10 max-h-full max-w-full object-contain transition-all duration-500"
+                    className="relative z-10 max-h-full max-w-full object-contain transition-all duration-500 drop-shadow-2xl select-none"
                   />
                 </>
+              )}
+
+              {/* 右上角浮動快捷功能按鈕（一般模式下便捷放大或投放） */}
+              {!isFullscreen && (
+                <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowCastModal(true)}
+                    className="p-2 rounded-xl bg-black/60 hover:bg-black/85 text-white/90 hover:text-white border border-white/20 backdrop-blur-md shadow-lg transition cursor-pointer"
+                    title="投放到其他裝置 (AirPlay / Chromecast / 智慧電視)"
+                  >
+                    <Cast className="w-4 h-4 text-amber-300" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleFullscreen}
+                    className="p-2 rounded-xl bg-black/60 hover:bg-black/85 text-white/90 hover:text-white border border-white/20 backdrop-blur-md shadow-lg transition cursor-pointer"
+                    title="放大全螢幕 (F)"
+                  >
+                    <Maximize2 className="w-4 h-4 text-amber-300" />
+                  </button>
+                </div>
               )}
 
               {/* 左右手動切換圖片按鈕（若有多張播放圖片） */}
@@ -768,25 +1046,41 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     onClick={() =>
                       setManualSlideIndex((activeSlideIndex - 1 + slides.length) % slides.length)
                     }
-                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer"
+                    className={`absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 z-20 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer ${
+                      isFullscreen ? 'p-3.5 sm:p-4' : 'p-2.5'
+                    }`}
                     title="上一張播放圖片"
                   >
-                    <ChevronLeft className="w-5 h-5" />
+                    <ChevronLeft className={isFullscreen ? 'w-6 h-6' : 'w-5 h-5'} />
                   </button>
                   <button
                     onClick={() => setManualSlideIndex((activeSlideIndex + 1) % slides.length)}
-                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer"
+                    className={`absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 z-20 rounded-full bg-black/65 hover:bg-black/90 border border-white/20 text-white opacity-85 hover:opacity-100 transition shadow-xl cursor-pointer ${
+                      isFullscreen ? 'p-3.5 sm:p-4' : 'p-2.5'
+                    }`}
                     title="下一張播放圖片"
                   >
-                    <ChevronRight className="w-5 h-5" />
+                    <ChevronRight className={isFullscreen ? 'w-6 h-6' : 'w-5 h-5'} />
                   </button>
                 </>
               )}
 
               {/* 底部圖片說明字幕條 */}
-              <div className="absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 pt-10 flex items-end justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="inline-flex items-center gap-1.5 text-[11px] text-amber-300 font-medium">
+              <div
+                className={`absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/95 via-black/70 to-transparent flex items-end justify-between gap-4 ${
+                  isFullscreen ? 'p-6 pt-16 pb-4' : 'p-4 pt-10'
+                }`}
+              >
+                <div
+                  className={`space-y-1.5 ${
+                    isFullscreen ? 'max-w-4xl mx-auto text-center w-full' : ''
+                  }`}
+                >
+                  <div
+                    className={`inline-flex items-center gap-1.5 text-[11px] text-amber-300 font-medium ${
+                      isFullscreen ? 'justify-center w-full' : ''
+                    }`}
+                  >
                     <ImageIcon className="w-3.5 h-3.5" />
                     <span>
                       播放時圖片展示 ({activeSlideIndex + 1} / {slides.length})
@@ -797,13 +1091,19 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       </span>
                     )}
                   </div>
-                  <p className="text-sm md:text-base font-medium text-white whitespace-pre-line line-clamp-2">
+                  <p
+                    className={`font-serif-tc font-medium text-white whitespace-pre-line leading-relaxed ${
+                      isFullscreen
+                        ? 'text-lg sm:text-2xl md:text-3xl text-center bg-black/70 backdrop-blur-md px-6 py-3.5 rounded-2xl border border-white/15 shadow-2xl inline-block max-w-full'
+                        : 'text-sm md:text-base line-clamp-2'
+                    }`}
+                  >
                     {activeSegment?.text || activeSlide?.caption || currentItem.description}
                   </p>
                 </div>
 
                 {/* 多張圖片縮圖切換器（支援圖片過多時平滑水平滑動、滑鼠滾輪與精確點選） */}
-                {slides.length > 1 && (
+                {!isFullscreen && slides.length > 1 && (
                   <div className="hidden sm:flex items-center gap-1 shrink-0 max-w-[50%] md:max-w-[58%] lg:max-w-[62%] bg-black/60 backdrop-blur-md p-1 rounded-xl border border-white/20">
                     {/* 向左滾動按鈕 */}
                     <button
@@ -878,7 +1178,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             </div>
 
             {/* 專業語音播放控制面板 */}
-            <div className="p-5 bg-[#271C16] space-y-4">
+            <div
+              className={`space-y-3 transition-colors ${
+                isFullscreen
+                  ? 'p-4 sm:p-5 bg-[#1B120D]/95 backdrop-blur-md border-t border-white/10 shrink-0 z-30'
+                  : 'p-5 bg-[#271C16] space-y-4'
+              }`}
+            >
               {/* 時間進度條 */}
               <div className="space-y-1.5">
                 <input
@@ -963,6 +1269,30 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     title={isMuted ? '取消靜音' : '靜音'}
                   >
                     {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  </button>
+
+                  {/* 投放到其他裝置 */}
+                  <button
+                    type="button"
+                    onClick={() => setShowCastModal(true)}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-[#FAF5EC] hover:text-amber-300 transition cursor-pointer"
+                    title="投放到其他裝置 (AirPlay / Chromecast / 智慧電視)"
+                  >
+                    <Cast className="w-4 h-4" />
+                  </button>
+
+                  {/* 放大全螢幕 */}
+                  <button
+                    type="button"
+                    onClick={toggleFullscreen}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-[#FAF5EC] hover:text-amber-300 transition cursor-pointer"
+                    title={isFullscreen ? '退出全螢幕 (Esc)' : '放大全螢幕 (F)'}
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="w-4 h-4 text-amber-300" />
+                    ) : (
+                      <Maximize2 className="w-4 h-4" />
+                    )}
                   </button>
                 </div>
               </div>
@@ -1517,6 +1847,168 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 投放到其他裝置 (Cast / AirPlay / 智慧電視) 彈出視窗 */}
+      {showCastModal && currentItem && (
+        <div className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border-2 border-[#8B5A2B] animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal 頂部標題列 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                  <Cast className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base">投放到其他裝置</h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    支援 Apple AirPlay、Google Cast、智慧電視與跨裝置無縫接力
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCastModal(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal 內容區 */}
+            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+              {/* 目前正在放映的語音檔資訊 */}
+              <div className="p-3.5 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={currentItem.coverImageUrl}
+                    alt={currentItem.title}
+                    className="w-12 h-12 rounded-lg object-cover border border-[#C8B598] shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs text-[#8B5A2B] font-semibold">目前放映中作品</p>
+                    <h4 className="font-bold text-sm text-[#2C221E] truncate">{currentItem.title}</h4>
+                    <p className="text-xs text-[#7A6855] font-mono">
+                      進度：{formatDuration(currentTime)} / {formatDuration(duration)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 核心功能：一鍵喚起系統投放 */}
+              <button
+                type="button"
+                onClick={handleTriggerNativeCast}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#2E5A44] to-[#1F3D2E] hover:from-[#234735] hover:to-[#172D22] text-white font-semibold text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
+              >
+                <Tv className="w-4 h-4 text-emerald-300" />
+                <span>一鍵喚起系統投放 (AirPlay / Chromecast)</span>
+              </button>
+
+              {/* 投放管道說明卡片 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                {/* AirPlay */}
+                <div className="p-3.5 rounded-xl bg-white border border-[#E2D5C1] space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-[#2C221E]">
+                    <Airplay className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>Apple AirPlay</span>
+                  </div>
+                  <p className="text-[#6E5D4F] leading-relaxed">
+                    iPhone / iPad / Mac 使用者可點擊上方按鈕，或滑開系統控制中心點選「螢幕鏡像輸出 / 音訊投放」，選取 Apple TV、智慧電視或 HomePod。
+                  </p>
+                </div>
+
+                {/* Google Cast */}
+                <div className="p-3.5 rounded-xl bg-white border border-[#E2D5C1] space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-[#2C221E]">
+                    <Cast className="w-4 h-4 text-[#2B4C7E]" />
+                    <span>Google Cast / 電視</span>
+                  </div>
+                  <p className="text-[#6E5D4F] leading-relaxed">
+                    Chrome 與 Edge 瀏覽器使用者點擊上方按鈕或瀏覽器功能表「投放」，即可將聲音與展演畫面投射至 Chromecast 與 Android TV。
+                  </p>
+                </div>
+              </div>
+
+              {/* 跨裝置接續播放：QR Code 與專屬連結 */}
+              <div className="p-4 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="w-4 h-4 text-[#8B5A2B]" />
+                    <span className="font-bold text-sm text-[#2C221E]">
+                      客廳電視 / 平板手機 掃描接續播放
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  {/* 動態生成的 QR Code */}
+                  <div className="p-2 bg-white rounded-xl border border-[#D5C5AE] shadow-xs shrink-0">
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                        currentShareUrl
+                      )}&margin=4`}
+                      alt="掃描接續播放 QR Code"
+                      className="w-28 h-28 object-contain"
+                    />
+                  </div>
+
+                  <div className="flex-1 space-y-2 text-xs">
+                    <p className="text-[#6E5D4F] leading-relaxed">
+                      用平板相機或客廳智慧電視掃描此 QR Code，即可直接以當前播放進度（
+                      <span className="font-mono font-bold text-[#8B5A2B]">
+                        {formatDuration(currentTime)}
+                      </span>
+                      ）接續放映！
+                    </p>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleCopyShareUrl}
+                        className="px-3 py-1.5 rounded-lg bg-[#3A2518] hover:bg-[#523522] text-white font-medium flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      >
+                        {castCopied ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-300" />
+                            <span>已複製連結</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>複製跨裝置播放連結</span>
+                          </>
+                        )}
+                      </button>
+
+                      {typeof navigator.share === 'function' && (
+                        <button
+                          type="button"
+                          onClick={handleSystemShare}
+                          className="px-3 py-1.5 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] font-medium flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          <span>系統分享</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal 底部按鈕 */}
+            <div className="px-6 py-3 bg-[#F4ECE0] border-t border-[#E5D9C5] flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowCastModal(false)}
+                className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition"
+              >
+                關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
