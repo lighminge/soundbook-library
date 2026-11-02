@@ -16,6 +16,8 @@ import {
   ChevronDown,
   Sparkles,
   Repeat,
+  Repeat1,
+  ListOrdered,
   Loader2,
   Check,
   CheckCircle2,
@@ -29,6 +31,16 @@ import {
   QrCode,
   Copy,
   Share2,
+  SkipBack,
+  SkipForward,
+  Plus,
+  Trash2,
+  Shuffle,
+  CheckSquare,
+  Square,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpToLine,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -103,10 +115,55 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLooping, setIsLooping] = useState(false);
+  // 放映循環/順序模式：'sequential' (循序播放，播完清單停止) | 'playlist' (清單循環，播完最後一首跳回第一首) | 'single' (單曲循環)
+  const [playbackLoopMode, setPlaybackLoopMode] = useState<'sequential' | 'playlist' | 'single'>('sequential');
   const [manualSlideIndex, setManualSlideIndex] = useState<number | null>(null);
   const [manualSegmentIndex, setManualSegmentIndex] = useState<number | null>(null);
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
+
+  // 放映室「播放清單」功能：持久化儲存語音 ID 序列
+  const [playlistItemIds, setPlaylistItemIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('soundbook_screening_playlist');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  // 當 playlistItemIds 異動時自動存入 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('soundbook_screening_playlist', JSON.stringify(playlistItemIds));
+    } catch {
+      // ignore
+    }
+  }, [playlistItemIds]);
+
+  // 有效的播放清單項目 (自動過濾已不存在的語音)
+  const playlistItems: AudioItem[] = useMemo(() => {
+    const itemMap = new Map<string, AudioItem>(audioItems.map((a) => [a.id, a]));
+    return playlistItemIds.map((id) => itemMap.get(id)).filter(Boolean) as AudioItem[];
+  }, [playlistItemIds, audioItems]);
+
+  // 計算播放清單所有語音總時長 (秒)
+  const totalPlaylistDuration = useMemo(() => {
+    return playlistItems.reduce((acc, item) => acc + (item.duration || 0), 0);
+  }, [playlistItems]);
+
+  // 右側書架分頁標籤：'shelf' (館藏選片書架) | 'playlist' (播放清單)
+  const [shelfTab, setShelfTab] = useState<'shelf' | 'playlist'>('shelf');
+
+  // 書架多選加入清單模式開關與已選取的語音 ID 清單
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
+  const [selectedShelfIds, setSelectedShelfIds] = useState<string[]>([]);
+
+  // 全螢幕模式下的浮動播放清單展開開關
+  const [showFullscreenPlaylist, setShowFullscreenPlaylist] = useState<boolean>(false);
 
   // 放映室「播放時的文字顯示與導讀講稿」單筆時間區段即時修改狀態
   const [isEditingSegment, setIsEditingSegment] = useState<boolean>(false);
@@ -489,6 +546,268 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     setIsMuted(!isMuted);
   };
 
+  // 切換放映循環/順序模式：循序播放 -> 清單循環 -> 單曲循環 -> 循序播放
+  const cycleLoopMode = () => {
+    if (playbackLoopMode === 'sequential') {
+      setPlaybackLoopMode('playlist');
+      showToast('🔁 已切換為「清單循環播放」模式');
+    } else if (playbackLoopMode === 'playlist') {
+      setPlaybackLoopMode('single');
+      showToast('🔂 已切換為「單曲循環播放」模式');
+    } else {
+      setPlaybackLoopMode('sequential');
+      showToast('⏩ 已切換為「循序播放」模式（播完停止）');
+    }
+  };
+
+  // 播放下一首
+  const playNextTrack = (autoPlay = true) => {
+    if (playbackLoopMode === 'single') {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.currentTime = 0;
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(console.warn);
+      }
+      return;
+    }
+
+    if (playlistItems.length > 0) {
+      const currentIndex = playlistItems.findIndex((it) => it.id === currentItem.id);
+      let nextIndex = -1;
+      if (currentIndex === -1) {
+        nextIndex = 0;
+      } else if (currentIndex + 1 < playlistItems.length) {
+        nextIndex = currentIndex + 1;
+      } else if (playbackLoopMode === 'playlist') {
+        nextIndex = 0;
+      }
+
+      if (nextIndex !== -1) {
+        const nextItem = playlistItems[nextIndex];
+        if (autoPlay) pendingAutoPlayRef.current = true;
+        onSelectAudio(nextItem);
+        showToast(
+          `▶️ 播放清單（第 ${nextIndex + 1}/${playlistItems.length} 部）：${nextItem.title}`
+        );
+        return;
+      } else {
+        setIsPlaying(false);
+        showToast('🏁 播放清單已播畢！');
+        return;
+      }
+    }
+
+    // 若未建立播放清單，預設在當前書架篩選結果中順序播放
+    const currentShelfIdx = shelfFilteredItems.findIndex((it) => it.id === currentItem.id);
+    if (currentShelfIdx !== -1 && currentShelfIdx + 1 < shelfFilteredItems.length) {
+      const nextItem = shelfFilteredItems[currentShelfIdx + 1];
+      if (autoPlay) pendingAutoPlayRef.current = true;
+      onSelectAudio(nextItem);
+      showToast(`▶️ 播放下一部：${nextItem.title}`);
+    } else if (playbackLoopMode === 'playlist' && shelfFilteredItems.length > 0) {
+      const nextItem = shelfFilteredItems[0];
+      if (autoPlay) pendingAutoPlayRef.current = true;
+      onSelectAudio(nextItem);
+      showToast(`▶️ 循環回到第一部：${nextItem.title}`);
+    } else {
+      setIsPlaying(false);
+    }
+  };
+
+  // 播放上一首
+  const playPrevTrack = (autoPlay = true) => {
+    if (currentTime > 3) {
+      handleSeek(0);
+      return;
+    }
+
+    if (playlistItems.length > 0) {
+      const currentIndex = playlistItems.findIndex((it) => it.id === currentItem.id);
+      let prevIndex = -1;
+      if (currentIndex === -1) {
+        prevIndex = 0;
+      } else if (currentIndex - 1 >= 0) {
+        prevIndex = currentIndex - 1;
+      } else if (playbackLoopMode === 'playlist') {
+        prevIndex = playlistItems.length - 1;
+      } else {
+        prevIndex = 0;
+      }
+
+      const prevItem = playlistItems[prevIndex];
+      if (autoPlay) pendingAutoPlayRef.current = true;
+      onSelectAudio(prevItem);
+      showToast(
+        `⏮️ 切換至清單（第 ${prevIndex + 1}/${playlistItems.length} 部）：${prevItem.title}`
+      );
+      return;
+    }
+
+    // 若未建立清單，在書架列表中倒退上一部
+    const currentShelfIdx = shelfFilteredItems.findIndex((it) => it.id === currentItem.id);
+    if (currentShelfIdx > 0) {
+      const prevItem = shelfFilteredItems[currentShelfIdx - 1];
+      if (autoPlay) pendingAutoPlayRef.current = true;
+      onSelectAudio(prevItem);
+      showToast(`⏮️ 播放上一部：${prevItem.title}`);
+    } else {
+      handleSeek(0);
+    }
+  };
+
+  // 加入單筆至播放清單
+  const handleAddToPlaylist = (item: AudioItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (playlistItemIds.includes(item.id)) {
+      showToast(`ℹ️ 「${item.title}」已在播放清單中`);
+      return;
+    }
+    setPlaylistItemIds((prev) => [...prev, item.id]);
+    showToast(`➕ 已將「${item.title}」加入播放清單`);
+  };
+
+  // 從播放清單移除單筆
+  const handleRemoveFromPlaylist = (itemId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setPlaylistItemIds((prev) => prev.filter((id) => id !== itemId));
+    showToast('🗑️ 已從播放清單移除');
+  };
+
+  // 清空播放清單
+  const handleClearPlaylist = () => {
+    if (playlistItemIds.length === 0) return;
+    setPlaylistItemIds([]);
+    showToast('🧹 已清空播放清單');
+  };
+
+  // 播放清單順序調整：上移
+  const handleMoveUpInPlaylist = (index: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (index <= 0) return;
+    setPlaylistItemIds((prev) => {
+      const next = [...prev];
+      const temp = next[index - 1];
+      next[index - 1] = next[index];
+      next[index] = temp;
+      return next;
+    });
+  };
+
+  // 播放清單順序調整：下移
+  const handleMoveDownInPlaylist = (index: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (index >= playlistItemIds.length - 1) return;
+    setPlaylistItemIds((prev) => {
+      const next = [...prev];
+      const temp = next[index + 1];
+      next[index + 1] = next[index];
+      next[index] = temp;
+      return next;
+    });
+  };
+
+  // 播放清單順序調整：移至頂部
+  const handleMoveToTopInPlaylist = (index: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (index <= 0) return;
+    setPlaylistItemIds((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(index, 1);
+      next.unshift(item);
+      return next;
+    });
+    showToast('⬆️ 已移至清單第 1 順位');
+  };
+
+  // 播放清單順序調整：隨機亂序
+  const handleShufflePlaylist = () => {
+    if (playlistItemIds.length <= 1) return;
+    setPlaylistItemIds((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [next[i], next[j]] = [next[j], next[i]];
+      }
+      return next;
+    });
+    showToast('🔀 已重新隨機排列播放清單！');
+  };
+
+  // 播放清單順序調整：倒序反轉
+  const handleReversePlaylist = () => {
+    if (playlistItemIds.length <= 1) return;
+    setPlaylistItemIds((prev) => [...prev].reverse());
+    showToast('🔄 已反轉播放清單順序！');
+  };
+
+  // 書架多選操作：勾選/取消單筆
+  const toggleSelectShelfItem = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedShelfIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  // 書架多選操作：全選本頁
+  const handleSelectAllOnCurrentPage = () => {
+    const pageIds = paginatedShelfItems.map((i) => i.id);
+    setSelectedShelfIds((prev) => {
+      const set = new Set([...prev, ...pageIds]);
+      return Array.from(set);
+    });
+    showToast(`已選取本頁 ${pageIds.length} 部語音`);
+  };
+
+  // 書架多選操作：全選符合目前篩選結果
+  const handleSelectAllFiltered = () => {
+    const allFilteredIds = shelfFilteredItems.map((i) => i.id);
+    setSelectedShelfIds(allFilteredIds);
+    showToast(`已選取目前符合條件的全部 ${allFilteredIds.length} 部語音`);
+  };
+
+  // 書架多選操作：清除勾選
+  const handleDeselectAll = () => {
+    setSelectedShelfIds([]);
+  };
+
+  // 批量將已勾選的項目加入播放清單
+  const handleAddSelectedToPlaylist = () => {
+    if (selectedShelfIds.length === 0) {
+      showToast('⚠️ 請先勾選要加入的語音檔案');
+      return;
+    }
+    const newIds = selectedShelfIds.filter((id) => !playlistItemIds.includes(id));
+    if (newIds.length === 0) {
+      showToast('ℹ️ 所選語音皆已在播放清單中');
+    } else {
+      setPlaylistItemIds((prev) => [...prev, ...newIds]);
+      showToast(`🎉 成功將 ${newIds.length} 部語音加入播放清單！`);
+    }
+    setIsMultiSelectMode(false);
+    setSelectedShelfIds([]);
+    setShelfTab('playlist'); // 自動切換至播放清單，方便使用者預覽與調整順序
+  };
+
+  // 一鍵將目前符合條件的所有語音直接加入清單
+  const handleAddAllFilteredToPlaylist = () => {
+    const allFilteredIds = shelfFilteredItems.map((i) => i.id);
+    if (allFilteredIds.length === 0) {
+      showToast('⚠️ 目前沒有符合條件的語音');
+      return;
+    }
+    const newIds = allFilteredIds.filter((id) => !playlistItemIds.includes(id));
+    if (newIds.length === 0) {
+      showToast('ℹ️ 符合條件的語音皆已在播放清單中');
+    } else {
+      setPlaylistItemIds((prev) => [...prev, ...newIds]);
+      showToast(`🎉 已將符合條件的 ${newIds.length} 部語音全數加入播放清單！`);
+    }
+    setShelfTab('playlist');
+  };
+
   // 監聽原生 Fullscreen 變化，確保 Esc 鍵或手勢退出時狀態同步
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -568,7 +887,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
-  // 鍵盤快速鍵支援：全螢幕下 Esc 退出、F 切換全螢幕、Space 播放/暫停、左右鍵快轉/倒退
+  // 鍵盤快速鍵支援：全螢幕下 Esc 退出、F 切換全螢幕、Space 播放/暫停、左右鍵快轉/倒退、[ 上一首、] 下一首
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
@@ -587,12 +906,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         handleSeek(currentTime + 5);
+      } else if (e.key === '[' || e.key === 'PageUp') {
+        e.preventDefault();
+        playPrevTrack(true);
+      } else if (e.key === ']' || e.key === 'PageDown') {
+        e.preventDefault();
+        playNextTrack(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen, currentTime, isPlaying]);
+  }, [isFullscreen, currentTime, isPlaying, playlistItems, playbackLoopMode, currentItem, shelfFilteredItems]);
 
   // 觸發原生系統投放 (Apple AirPlay / Google Remote Playback / Presentation API)
   const handleTriggerNativeCast = async () => {
@@ -766,7 +1091,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         src={playableScreeningUrl || undefined}
         playsInline
         preload="auto"
-        loop={isLooping}
+        loop={playbackLoopMode === 'single'}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onTimeUpdate={() => {
@@ -791,7 +1116,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           }
         }}
         onEnded={() => {
-          if (!isLooping) setIsPlaying(false);
+          playNextTrack(true);
         }}
       />
 
@@ -1208,8 +1533,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               </div>
 
               {/* 播放控制按鈕列 */}
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     onClick={handleRateChange}
                     className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-mono text-[#F3D5B5] transition cursor-pointer"
@@ -1217,52 +1542,133 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   >
                     {playbackRate}x 語速
                   </button>
+
+                  {/* 循環/順序模式切換：循序播放 -> 清單循環 -> 單曲循環 */}
                   <button
-                    onClick={() => setIsLooping(!isLooping)}
-                    className={`p-2 rounded-lg transition cursor-pointer ${
-                      isLooping
-                        ? 'bg-[#D4A373] text-[#2B1B11]'
+                    onClick={cycleLoopMode}
+                    className={`px-2.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 text-xs font-medium ${
+                      playbackLoopMode !== 'sequential'
+                        ? 'bg-[#D4A373] text-[#2B1B11] font-semibold shadow-xs'
                         : 'bg-white/10 text-[#C8B5A0] hover:bg-white/15'
                     }`}
-                    title="循環播放"
+                    title={
+                      playbackLoopMode === 'sequential'
+                        ? '目前模式：循序放映（播放清單結束後停止，點擊切換為清單循環）'
+                        : playbackLoopMode === 'playlist'
+                        ? '目前模式：清單循環（最後一首結束回到第一首，點擊切換為單曲循環）'
+                        : '目前模式：單曲循環（重複播放當前語音，點擊切換為循序放映）'
+                    }
                   >
-                    <Repeat className="w-4 h-4" />
+                    {playbackLoopMode === 'single' ? (
+                      <>
+                        <Repeat1 className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">單曲循環</span>
+                      </>
+                    ) : playbackLoopMode === 'playlist' ? (
+                      <>
+                        <Repeat className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">清單循環</span>
+                      </>
+                    ) : (
+                      <>
+                        <ListOrdered className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">循序放映</span>
+                      </>
+                    )}
                   </button>
+
+                  {/* 若目前語音在播放清單中，顯示當前順位提示 */}
+                  {playlistItems.length > 0 && (
+                    <span className="hidden sm:inline-flex items-center text-[11px] font-mono px-2 py-1 rounded bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                      清單 {(() => {
+                        const idx = playlistItems.findIndex((i) => i.id === currentItem.id);
+                        return idx !== -1 ? `${idx + 1}/${playlistItems.length}` : `-/${playlistItems.length}`;
+                      })()}
+                    </span>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-4">
+                {/* 中央主播放區：上一首、倒退5秒、播放/暫停、快轉5秒、下一首 */}
+                <div className="flex items-center gap-2 sm:gap-3">
+                  {/* 上一首按鈕 */}
+                  <button
+                    onClick={() => playPrevTrack(true)}
+                    className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] hover:text-amber-200 transition cursor-pointer"
+                    title="播放上一首 (快速鍵: [ 鍵)"
+                  >
+                    <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+
                   <button
                     onClick={() => handleSeek(currentTime - 5)}
-                    className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] transition cursor-pointer"
-                    title="倒退 5 秒"
+                    className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] transition cursor-pointer"
+                    title="倒退 5 秒 (快速鍵: ← 鍵)"
                   >
-                    <RotateCcw className="w-4 h-4" />
+                    <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
 
                   <button
                     onClick={togglePlay}
-                    className="w-14 h-14 rounded-full bg-[#D4A373] hover:bg-[#E3B587] text-[#2B1B11] flex items-center justify-center shadow-lg transition transform active:scale-95 cursor-pointer"
-                    title={isScreeningAudioLoading ? '正在載入雲端音訊...' : isPlaying ? '暫停' : '播放'}
+                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#D4A373] hover:bg-[#E3B587] text-[#2B1B11] flex items-center justify-center shadow-lg transition transform active:scale-95 cursor-pointer"
+                    title={isScreeningAudioLoading ? '正在載入雲端音訊...' : isPlaying ? '暫停 (空白鍵)' : '播放 (空白鍵)'}
                   >
                     {isScreeningAudioLoading ? (
-                      <Loader2 className="w-6 h-6 animate-spin" />
+                      <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
                     ) : isPlaying ? (
-                      <Pause className="w-6 h-6 fill-current" />
+                      <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
                     ) : (
-                      <Play className="w-6 h-6 fill-current ml-0.5" />
+                      <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
                     )}
                   </button>
 
                   <button
                     onClick={() => handleSeek(currentTime + 5)}
-                    className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] transition cursor-pointer"
-                    title="快轉 5 秒"
+                    className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] transition cursor-pointer"
+                    title="快轉 5 秒 (快速鍵: → 鍵)"
                   >
-                    <RotateCw className="w-4 h-4" />
+                    <RotateCw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+
+                  {/* 下一首按鈕 */}
+                  <button
+                    onClick={() => playNextTrack(true)}
+                    className="p-2 sm:p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-[#FAF5EC] hover:text-amber-200 transition cursor-pointer"
+                    title="播放下一首 (快速鍵: ] 鍵)"
+                  >
+                    <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                {/* 右側附加控制區：播放清單切換、靜音、投放、全螢幕 */}
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {/* 查看/設定播放清單按鈕 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isFullscreen) {
+                        setShowFullscreenPlaylist((prev) => !prev);
+                      } else {
+                        setShelfTab('playlist');
+                        if (window.innerWidth < 1024 && playerStageRef.current) {
+                          // 手機版平滑往上捲動至播放清單
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                      }
+                    }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
+                      (!isFullscreen && shelfTab === 'playlist') || (isFullscreen && showFullscreenPlaylist)
+                        ? 'bg-amber-400/25 text-amber-200 border border-amber-400/40 shadow-xs'
+                        : 'bg-white/10 hover:bg-white/20 text-[#FAF5EC]'
+                    }`}
+                    title="查看/設定播放清單"
+                  >
+                    <ListMusic className="w-4 h-4 text-amber-300" />
+                    <span className="hidden sm:inline">清單</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-black text-[10px] font-bold font-mono">
+                      {playlistItems.length}
+                    </span>
+                  </button>
+
                   <button
                     onClick={toggleMute}
                     className="p-2 rounded-lg bg-white/10 hover:bg-white/15 text-[#FAF5EC] transition cursor-pointer"
@@ -1297,6 +1703,114 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* 全螢幕模式下的浮動播放清單抽屜 */}
+            {isFullscreen && showFullscreenPlaylist && (
+              <div className="absolute top-16 right-4 bottom-24 z-40 w-80 sm:w-96 bg-[#160E0B]/95 backdrop-blur-xl rounded-2xl border border-white/20 shadow-2xl p-4 flex flex-col text-white animate-in slide-in-from-right duration-200">
+                <div className="flex items-center justify-between pb-3 border-b border-white/15 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <ListOrdered className="w-4 h-4 text-amber-400" />
+                    <h4 className="font-bold text-sm">劇場播放清單 ({playlistItems.length})</h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullscreenPlaylist(false)}
+                    className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 py-2 border-b border-white/10 text-xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={cycleLoopMode}
+                    className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-amber-300 font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    {playbackLoopMode === 'sequential' ? '循序放映' : playbackLoopMode === 'playlist' ? '清單循環' : '單曲循環'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={playlistItems.length <= 1}
+                    onClick={handleShufflePlaylist}
+                    className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white/80 text-[11px] flex items-center gap-1 disabled:opacity-40 cursor-pointer"
+                  >
+                    <Shuffle className="w-3 h-3" />
+                    <span>隨機排列</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-2 py-2 pr-1 scrollbar-thin">
+                  {playlistItems.length === 0 ? (
+                    <div className="py-10 text-center text-xs text-white/60">播放清單目前沒有曲目</div>
+                  ) : (
+                    playlistItems.map((item, index) => {
+                      const isCurrent = item.id === currentItem.id;
+                      return (
+                        <div
+                          key={`fs_p_${item.id}_${index}`}
+                          onClick={() => {
+                            pendingAutoPlayRef.current = true;
+                            onSelectAudio(item);
+                          }}
+                          className={`flex items-center gap-2.5 p-2 rounded-xl transition cursor-pointer ${
+                            isCurrent
+                              ? 'bg-amber-500/25 border border-amber-400/50 text-white'
+                              : 'bg-white/5 hover:bg-white/10 border border-white/5 text-white/80'
+                          }`}
+                        >
+                          <span className="font-mono text-xs font-bold text-amber-300 w-5 text-center">
+                            #{index + 1}
+                          </span>
+                          <img
+                            src={item.coverImageUrl}
+                            alt=""
+                            className="w-9 h-9 rounded object-cover shrink-0"
+                          />
+                          <div className="flex-1 min-w-0 text-left">
+                            <h5 className="font-bold text-xs truncate">{item.title}</h5>
+                            <span className="text-[10px] text-white/50 font-mono">
+                              {formatDuration(item.duration)}
+                            </span>
+                          </div>
+                          <div
+                            className="flex items-center gap-0.5 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={(e) => handleMoveUpInPlaylist(index, e)}
+                              className="p-1 hover:bg-white/10 rounded disabled:opacity-20 text-white/70 cursor-pointer"
+                              title="上移"
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === playlistItems.length - 1}
+                              onClick={(e) => handleMoveDownInPlaylist(index, e)}
+                              className="p-1 hover:bg-white/10 rounded disabled:opacity-20 text-white/70 cursor-pointer"
+                              title="下移"
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveFromPlaylist(item.id, e)}
+                              className="p-1 hover:bg-red-500/20 text-red-300 rounded cursor-pointer"
+                              title="移除"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 播放時的文字顯示區 (Synchronized Reading Sheet & Description) */}
@@ -1553,294 +2067,713 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         {/* 電腦版右側 4 欄 / 手機版上方：館藏語音選片書架（查詢後的結果列表） */}
         <div className="order-1 lg:order-2 lg:col-span-4">
           <div className="parchment-card rounded-2xl p-5 shadow-md lg:sticky lg:top-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#E5D9C5] pb-3">
-              <div className="flex items-center gap-2">
-                <ListMusic className="w-5 h-5 text-[#8B5A2B]" />
-                <h3 className="font-bold font-serif-tc text-base text-[#2C221E]">
-                  館藏語音選片書架
-                </h3>
-              </div>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-[#EFE6D5] text-[#5C3A1B] font-medium">
-                共 {totalShelfCount} 部
-              </span>
+            {/* 右側分頁切換導覽列：館藏選片書架 vs 播放清單 */}
+            <div className="flex items-center gap-1.5 p-1 bg-[#EFE6D5] rounded-xl border border-[#DFCEB4]">
+              <button
+                type="button"
+                onClick={() => setShelfTab('shelf')}
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  shelfTab === 'shelf'
+                    ? 'bg-[#3A2518] text-white shadow-sm'
+                    : 'text-[#5C3A1B] hover:bg-[#E2D4BC]'
+                }`}
+              >
+                <ListMusic className="w-4 h-4" />
+                <span>館藏選片書架</span>
+                <span className="text-[10px] opacity-80">({shelfFilteredItems.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShelfTab('playlist')}
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer relative ${
+                  shelfTab === 'playlist'
+                    ? 'bg-[#8B5A2B] text-white shadow-sm'
+                    : 'text-[#5C3A1B] hover:bg-[#E2D4BC]'
+                }`}
+              >
+                <ListOrdered className="w-4 h-4" />
+                <span>播放清單</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                    shelfTab === 'playlist'
+                      ? 'bg-amber-300 text-[#2C221E]'
+                      : 'bg-[#8B5A2B] text-white'
+                  }`}
+                >
+                  {playlistItems.length}
+                </span>
+              </button>
             </div>
 
-            {/* 書架專屬查詢功能：檔案名稱、類別標籤 */}
-            <div className="space-y-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5] text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
-                  <Search className="w-3.5 h-3.5 text-[#8B5A2B]" />
-                  <span>書架快速查詢：</span>
-                </span>
-                {(shelfSearchTitle || shelfSearchTag) && (
+            {/* 分頁 1：館藏語音選片書架 */}
+            {shelfTab === 'shelf' && (
+              <>
+                {/* 書架專屬查詢功能：檔案名稱、類別標籤 */}
+                <div className="space-y-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5] text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
+                      <Search className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                      <span>書架快速查詢：</span>
+                    </span>
+                    {(shelfSearchTitle || shelfSearchTag) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShelfSearchTitle('');
+                          setShelfSearchTag('');
+                        }}
+                        className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-0.5 cursor-pointer font-medium"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>清空條件</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {/* 檔案名稱查詢 */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="查詢檔案名稱..."
+                        value={shelfSearchTitle}
+                        onChange={(e) => setShelfSearchTitle(e.target.value)}
+                        className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                      />
+                    </div>
+
+                    {/* 類別標籤查詢 (下拉選單方式) */}
+                    <div className="relative">
+                      <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <select
+                        value={shelfSearchTag}
+                        onChange={(e) => setShelfSearchTag(e.target.value)}
+                        className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                      >
+                        <option value="">
+                          全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                        </option>
+                        {availableShelfTags.map(({ tag, count }) => (
+                          <option key={tag} value={tag}>
+                            #{tag} ({count} 部)
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 批次加入播放清單快捷操作列 */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      setShelfSearchTitle('');
-                      setShelfSearchTag('');
+                      setIsMultiSelectMode((v) => !v);
+                      if (isMultiSelectMode) setSelectedShelfIds([]);
                     }}
-                    className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-0.5 cursor-pointer font-medium"
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+                      isMultiSelectMode
+                        ? 'bg-[#8B5A2B] text-white border-[#8B5A2B] shadow-xs'
+                        : 'bg-white text-[#5C3A1B] border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                    }`}
                   >
-                    <X className="w-3 h-3" />
-                    <span>清空條件</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {/* 檔案名稱查詢 */}
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="查詢檔案名稱..."
-                    value={shelfSearchTitle}
-                    onChange={(e) => setShelfSearchTitle(e.target.value)}
-                    className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
-                  />
-                </div>
-
-                {/* 類別標籤查詢 (下拉選單方式) */}
-                <div className="relative">
-                  <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <select
-                    value={shelfSearchTag}
-                    onChange={(e) => setShelfSearchTag(e.target.value)}
-                    className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
-                  >
-                    <option value="">
-                      全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
-                    </option>
-                    {availableShelfTags.map(({ tag, count }) => (
-                      <option key={tag} value={tag}>
-                        #{tag} ({count} 部)
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-            </div>
-
-            {/* 書架分頁設定與上方換頁切換列 (以 5 的倍數做選取) */}
-            <div className="p-2.5 rounded-xl bg-[#EFE6D5] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-[#3A2518] font-semibold">
-                  第 <strong className="font-mono text-[#8B5A2B]">{safeShelfPage}</strong> /{' '}
-                  <strong className="font-mono text-[#8B5A2B]">{totalShelfPages}</strong> 頁
-                </span>
-                <div className="flex items-center gap-1">
-                  <label className="text-[#5C3A1B] text-[11px] font-medium">每頁：</label>
-                  <select
-                    value={shelfPageSize}
-                    onChange={(e) => {
-                      setShelfPageSize(Number(e.target.value));
-                      setShelfCurrentPage(1);
-                    }}
-                    className="px-1.5 py-0.5 rounded border border-[#C8B598] bg-white text-[11px] font-semibold text-[#2C221E] cursor-pointer"
-                  >
-                    {[5, 10, 15, 20, 25].map((size) => (
-                      <option key={size} value={size}>
-                        {size} 部 / 頁
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* 上方翻頁按鈕 */}
-              {totalShelfPages > 1 && (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    disabled={safeShelfPage <= 1}
-                    onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
-                    className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <ChevronLeft className="w-3 h-3" />
-                    <span>上頁</span>
+                    {isMultiSelectMode ? (
+                      <CheckSquare className="w-3.5 h-3.5" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isMultiSelectMode ? '結束多選模式' : '多選加入清單'}</span>
                   </button>
 
                   <button
                     type="button"
-                    disabled={safeShelfPage >= totalShelfPages}
-                    onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
-                    className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                    onClick={handleAddAllFilteredToPlaylist}
+                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] flex items-center gap-1 transition cursor-pointer"
+                    title="將目前分類或搜尋出的所有語音檔案一次加入播放清單"
                   >
-                    <span>下頁</span>
-                    <ChevronRight className="w-3 h-3" />
+                    <Plus className="w-3 h-3" />
+                    <span>加入搜尋全部 ({shelfFilteredItems.length})</span>
                   </button>
                 </div>
-              )}
-            </div>
 
-            {/* 書架語音項目列表 */}
-            <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
-              {paginatedShelfItems.length === 0 ? (
-                <div className="py-10 text-center text-xs text-[#7A6855]">
-                  此分類或搜尋條件下沒有符合的語音檔
-                </div>
-              ) : (
-                paginatedShelfItems.map((item, idxInPage) => {
-                  const isSelected = item.id === currentItem.id;
-                  const cat = categories.find((c) => c.id === item.categoryId);
-                  const globalSeq = shelfStartIndex + idxInPage + 1;
-
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => handleSelectShelfAudio(item)}
-                      className={`group flex items-start gap-3 p-3 rounded-xl border transition cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#3A2518] text-[#FAF5EC] border-[#3A2518] shadow-md'
-                          : 'bg-white hover:bg-[#FAF4E8] text-[#2C221E] border-[#E5D9C5]'
-                      }`}
-                    >
-                      <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
-                        <img
-                          src={item.coverImageUrl}
-                          alt={item.title}
-                          className="w-full h-full object-cover"
-                        />
-                        <div
-                          className={`absolute inset-0 flex items-center justify-center bg-black/40 transition ${
-                            isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                          }`}
+                {/* 多選操作懸浮列（當開啟多選模式時顯示） */}
+                {isMultiSelectMode && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-[#5C3A1B]">
+                        已選取 <strong className="font-mono text-[#8B5A2B] text-sm">{selectedShelfIds.length}</strong> 部語音
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllOnCurrentPage}
+                          className="px-2 py-0.5 rounded bg-white border border-[#DFCEB4] text-[11px] font-medium text-[#5C3A1B] hover:bg-[#FAF4E8] cursor-pointer"
                         >
-                          <Play className="w-5 h-5 text-white fill-current" />
-                        </div>
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                          {/* 選片書架清單序號：依照查詢條件從 1 開始 */}
-                          <span
-                            className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
-                              isSelected ? 'bg-white/20 text-white' : 'bg-[#3A2518] text-white'
-                            }`}
-                            title={`清單序號：第 ${globalSeq} 筆`}
-                          >
-                            #{globalSeq}
-                          </span>
-                          {/* 語音檔獨立編號（館藏分類編號 + 流水號） */}
-                          <span
-                            className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
-                              isSelected
-                                ? 'bg-white/20 text-amber-200'
-                                : 'bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B]'
-                            }`}
-                            title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
-                          >
-                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
-                          </span>
-                          {cat && (
-                            <span
-                              className="px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
-                              style={{ backgroundColor: cat.themeColor }}
-                            >
-                              [{cat.code}] {cat.name}
-                            </span>
-                          )}
-                          <span
-                            className={`text-[11px] font-mono ${
-                              isSelected ? 'text-amber-200' : 'text-[#7A6855]'
-                            }`}
-                          >
-                            {formatDuration(item.duration)}
-                          </span>
-                        </div>
-
-                        <h4 className="font-bold font-serif-tc text-sm truncate">
-                          {item.title}
-                        </h4>
-                        <p
-                          className={`text-xs line-clamp-1 mt-0.5 ${
-                            isSelected ? 'text-[#E2D4C0]' : 'text-[#6E5D4F]'
-                          }`}
+                          全選本頁
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSelectAllFiltered}
+                          className="px-2 py-0.5 rounded bg-white border border-[#DFCEB4] text-[11px] font-medium text-[#5C3A1B] hover:bg-[#FAF4E8] cursor-pointer"
                         >
-                          {item.description}
-                        </p>
-
-                        {/* 類別標籤徽章展示 */}
-                        {item.tags && item.tags.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                            {item.tags.slice(0, 3).map((tag) => (
-                              <span
-                                key={tag}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShelfSearchTag(tag);
-                                }}
-                                title={`點擊過濾標籤 #${tag}`}
-                                className={`text-[10px] px-1.5 py-0.2 rounded transition cursor-pointer ${
-                                  shelfSearchTag === tag
-                                    ? 'bg-[#8B5A2B] text-white font-bold shadow-xs'
-                                    : isSelected
-                                    ? 'bg-white/15 text-[#FAF5EC] hover:bg-white/25'
-                                    : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
-                                }`}
-                              >
-                                #{tag}
-                              </span>
-                            ))}
-                            {item.tags.length > 3 && (
-                              <span className="text-[10px] text-[#8B735B]">
-                                +{item.tags.length - 3}
-                              </span>
-                            )}
-                          </div>
+                          全選全部
+                        </button>
+                        {selectedShelfIds.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleDeselectAll}
+                            className="px-1.5 py-0.5 text-[11px] text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
+                          >
+                            清除
+                          </button>
                         )}
                       </div>
                     </div>
-                  );
-                })
-              )}
-            </div>
 
-            {/* 書架底部翻頁控制列 */}
-            {totalShelfPages > 1 && (
-              <div className="flex items-center justify-between pt-2 border-t border-[#E5D9C5] text-xs">
-                <span className="text-[#7A6855] text-[11px]">
-                  共 {totalShelfCount} 部語音
-                </span>
+                    <button
+                      type="button"
+                      disabled={selectedShelfIds.length === 0}
+                      onClick={handleAddSelectedToPlaylist}
+                      className="w-full py-2 px-3 rounded-lg bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>將選取的 {selectedShelfIds.length} 部加入播放清單</span>
+                    </button>
+                  </div>
+                )}
 
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    disabled={safeShelfPage <= 1}
-                    onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
-                    className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <ChevronLeft className="w-3 h-3" />
-                    <span>上一頁</span>
-                  </button>
-
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalShelfPages }, (_, i) => i + 1).map((pageNum) => (
-                      <button
-                        key={pageNum}
-                        type="button"
-                        onClick={() => setShelfCurrentPage(pageNum)}
-                        className={`w-6 h-6 rounded-md font-mono text-[11px] font-bold transition cursor-pointer ${
-                          pageNum === safeShelfPage
-                            ? 'bg-[#8B5A2B] text-white shadow-xs'
-                            : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
-                        }`}
+                {/* 書架分頁設定與上方換頁切換列 (以 5 的倍數做選取) */}
+                <div className="p-2.5 rounded-xl bg-[#EFE6D5] border border-[#DFCEB4] flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#3A2518] font-semibold">
+                      第 <strong className="font-mono text-[#8B5A2B]">{safeShelfPage}</strong> /{' '}
+                      <strong className="font-mono text-[#8B5A2B]">{totalShelfPages}</strong> 頁
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <label className="text-[#5C3A1B] text-[11px] font-medium">每頁：</label>
+                      <select
+                        value={shelfPageSize}
+                        onChange={(e) => {
+                          setShelfPageSize(Number(e.target.value));
+                          setShelfCurrentPage(1);
+                        }}
+                        className="px-1.5 py-0.5 rounded border border-[#C8B598] bg-white text-[11px] font-semibold text-[#2C221E] cursor-pointer"
                       >
-                        {pageNum}
-                      </button>
-                    ))}
+                        {[5, 10, 15, 20, 25].map((size) => (
+                          <option key={size} value={size}>
+                            {size} 部 / 頁
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={safeShelfPage >= totalShelfPages}
-                    onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
-                    className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>下一頁</span>
-                    <ChevronRight className="w-3 h-3" />
-                  </button>
+                  {/* 上方翻頁按鈕 */}
+                  {totalShelfPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeShelfPage <= 1}
+                        onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
+                        className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                        <span>上頁</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={safeShelfPage >= totalShelfPages}
+                        onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
+                        className="px-2 py-0.5 rounded border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <span>下頁</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 書架語音項目列表 */}
+                <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
+                  {paginatedShelfItems.length === 0 ? (
+                    <div className="py-10 text-center text-xs text-[#7A6855]">
+                      此分類或搜尋條件下沒有符合的語音檔
+                    </div>
+                  ) : (
+                    paginatedShelfItems.map((item, idxInPage) => {
+                      const isSelected = item.id === currentItem.id;
+                      const cat = categories.find((c) => c.id === item.categoryId);
+                      const globalSeq = shelfStartIndex + idxInPage + 1;
+                      const isCheckedInMulti = selectedShelfIds.includes(item.id);
+                      const inPlaylist = playlistItemIds.includes(item.id);
+
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            if (isMultiSelectMode) {
+                              toggleSelectShelfItem(item.id);
+                            } else {
+                              handleSelectShelfAudio(item);
+                            }
+                          }}
+                          className={`group flex items-start gap-2.5 sm:gap-3 p-3 rounded-xl border transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#3A2518] text-[#FAF5EC] border-[#3A2518] shadow-md ring-2 ring-amber-400/40'
+                              : 'bg-white hover:bg-[#FAF4E8] text-[#2C221E] border-[#E5D9C5]'
+                          }`}
+                        >
+                          {/* 多選勾選框 */}
+                          {isMultiSelectMode && (
+                            <div
+                              className="pt-1 shrink-0"
+                              onClick={(e) => toggleSelectShelfItem(item.id, e)}
+                            >
+                              {isCheckedInMulti ? (
+                                <CheckSquare className="w-5 h-5 text-emerald-600 fill-emerald-100" />
+                              ) : (
+                                <Square className="w-5 h-5 text-[#8B735B]" />
+                              )}
+                            </div>
+                          )}
+
+                          <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
+                            <img
+                              src={item.coverImageUrl}
+                              alt={item.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <div
+                              className={`absolute inset-0 flex items-center justify-center bg-black/40 transition ${
+                                isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                              }`}
+                            >
+                              <Play className="w-5 h-5 text-white fill-current" />
+                            </div>
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {/* 選片書架清單序號：依照查詢條件從 1 開始 */}
+                                <span
+                                  className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
+                                    isSelected ? 'bg-white/20 text-white' : 'bg-[#3A2518] text-white'
+                                  }`}
+                                  title={`清單序號：第 ${globalSeq} 筆`}
+                                >
+                                  #{globalSeq}
+                                </span>
+                                {/* 語音檔獨立編號（館藏分類編號 + 流水號） */}
+                                <span
+                                  className={`px-1.5 py-0.2 rounded font-mono text-[10px] font-bold ${
+                                    isSelected
+                                      ? 'bg-white/20 text-amber-200'
+                                      : 'bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B]'
+                                  }`}
+                                  title="語音檔獨立編號（館藏分類編號 + 上傳順序流水號）"
+                                >
+                                  {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
+                                </span>
+                                {cat && (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-medium text-white"
+                                    style={{ backgroundColor: cat.themeColor }}
+                                  >
+                                    [{cat.code}] {cat.name}
+                                  </span>
+                                )}
+                                <span
+                                  className={`text-[11px] font-mono ${
+                                    isSelected ? 'text-amber-200' : 'text-[#7A6855]'
+                                  }`}
+                                >
+                                  {formatDuration(item.duration)}
+                                </span>
+                              </div>
+
+                              {/* 單筆快速加入/移出播放清單按鈕 */}
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className="shrink-0"
+                              >
+                                {inPlaylist ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleRemoveFromPlaylist(item.id, e)}
+                                    className="px-2 py-0.5 rounded-md bg-emerald-600/15 hover:bg-red-500/15 text-emerald-700 hover:text-red-700 border border-emerald-600/30 text-[10px] font-medium transition cursor-pointer flex items-center gap-0.5 group/btn"
+                                    title="已在播放清單中，點擊可移出"
+                                  >
+                                    <Check className="w-3 h-3 group-hover/btn:hidden" />
+                                    <X className="w-3 h-3 hidden group-hover/btn:inline" />
+                                    <span className="group-hover/btn:hidden">已在清單</span>
+                                    <span className="hidden group-hover/btn:inline">移出清單</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleAddToPlaylist(item, e)}
+                                    className="px-2 py-0.5 rounded-md bg-[#FAF4E8] hover:bg-[#8B5A2B] hover:text-white text-[#8B5A2B] border border-[#DFCEB4] text-[10px] font-medium transition cursor-pointer flex items-center gap-0.5"
+                                    title="加入播放清單"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    <span>+ 清單</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <h4 className="font-bold font-serif-tc text-sm truncate">
+                              {item.title}
+                            </h4>
+                            <p
+                              className={`text-xs line-clamp-1 mt-0.5 ${
+                                isSelected ? 'text-[#E2D4C0]' : 'text-[#6E5D4F]'
+                              }`}
+                            >
+                              {item.description}
+                            </p>
+
+                            {/* 類別標籤徽章展示 */}
+                            {item.tags && item.tags.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                {item.tags.slice(0, 3).map((tag) => (
+                                  <span
+                                    key={tag}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setShelfSearchTag(tag);
+                                    }}
+                                    title={`點擊過濾標籤 #${tag}`}
+                                    className={`text-[10px] px-1.5 py-0.2 rounded transition cursor-pointer ${
+                                      shelfSearchTag === tag
+                                        ? 'bg-[#8B5A2B] text-white font-bold shadow-xs'
+                                        : isSelected
+                                        ? 'bg-white/15 text-[#FAF5EC] hover:bg-white/25'
+                                        : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
+                                    }`}
+                                  >
+                                    #{tag}
+                                  </span>
+                                ))}
+                                {item.tags.length > 3 && (
+                                  <span className="text-[10px] text-[#8B735B]">
+                                    +{item.tags.length - 3}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* 書架底部翻頁控制列 */}
+                {totalShelfPages > 1 && (
+                  <div className="flex items-center justify-between pt-2 border-t border-[#E5D9C5] text-xs">
+                    <span className="text-[#7A6855] text-[11px]">
+                      共 {totalShelfCount} 部語音
+                    </span>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeShelfPage <= 1}
+                        onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
+                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                        <span>上一頁</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalShelfPages }, (_, i) => i + 1).map((pageNum) => (
+                          <button
+                            key={pageNum}
+                            type="button"
+                            onClick={() => setShelfCurrentPage(pageNum)}
+                            className={`w-6 h-6 rounded-md font-mono text-[11px] font-bold transition cursor-pointer ${
+                              pageNum === safeShelfPage
+                                ? 'bg-[#8B5A2B] text-white shadow-xs'
+                                : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={safeShelfPage >= totalShelfPages}
+                        onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
+                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <span>下一頁</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 分頁 2：播放清單 (支援使用者自訂與設定調整播放順序) */}
+            {shelfTab === 'playlist' && (
+              <div className="space-y-3">
+                {/* 播放清單頂部資訊與控制卡片 */}
+                <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#E5D9C5] space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="font-bold text-[#5C3A1B]">播放清單概況：</span>
+                      <span className="text-[#7A6855] ml-1">
+                        共 <strong className="text-[#8B5A2B] font-mono">{playlistItems.length}</strong> 部，總計約{' '}
+                        <strong className="text-[#8B5A2B] font-mono">{formatDuration(totalPlaylistDuration)}</strong>
+                      </span>
+                    </div>
+
+                    {/* 快速切換放映順序模式 */}
+                    <button
+                      type="button"
+                      onClick={cycleLoopMode}
+                      className="px-2.5 py-1 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                      title="點擊切換放映模式"
+                    >
+                      {playbackLoopMode === 'sequential' && (
+                        <>
+                          <ListOrdered className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>循序放映</span>
+                        </>
+                      )}
+                      {playbackLoopMode === 'playlist' && (
+                        <>
+                          <Repeat className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>清單循環</span>
+                        </>
+                      )}
+                      {playbackLoopMode === 'single' && (
+                        <>
+                          <Repeat1 className="w-3.5 h-3.5 text-amber-700" />
+                          <span>單曲循環</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* 快捷整理按鈕列 */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-[#E5D9C5]/60 text-xs">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={playlistItems.length <= 1}
+                        onClick={handleShufflePlaylist}
+                        className="px-2 py-1 rounded-md bg-white border border-[#D5C5AE] hover:bg-[#FAF4E8] disabled:opacity-40 text-[#5C3A1B] text-[11px] font-medium flex items-center gap-1 transition cursor-pointer"
+                        title="隨機重新排列播放清單順序"
+                      >
+                        <Shuffle className="w-3 h-3 text-[#8B5A2B]" />
+                        <span>隨機排列</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={playlistItems.length <= 1}
+                        onClick={handleReversePlaylist}
+                        className="px-2 py-1 rounded-md bg-white border border-[#D5C5AE] hover:bg-[#FAF4E8] disabled:opacity-40 text-[#5C3A1B] text-[11px] font-medium flex items-center gap-1 transition cursor-pointer"
+                        title="將清單播放順序倒轉反向"
+                      >
+                        <RotateCcw className="w-3 h-3 text-[#8B5A2B]" />
+                        <span>反轉順序</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={playlistItems.length === 0}
+                        onClick={handleClearPlaylist}
+                        className="px-2 py-1 rounded-md bg-white border border-[#E5D9C5] hover:bg-red-50 hover:text-red-700 hover:border-red-300 disabled:opacity-40 text-[#8B5A2B] text-[11px] font-medium flex items-center gap-1 transition cursor-pointer"
+                        title="清空目前播放清單"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>清空清單</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShelfTab('shelf')}
+                        className="px-2 py-1 rounded-md bg-[#8B5A2B] hover:bg-[#6E4420] text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                        title="切換回館藏書架挑選更多語音加入"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>挑選加入</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 清單項目列表 (支援上下移動調整播放順序) */}
+                <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
+                  {playlistItems.length === 0 ? (
+                    <div className="py-12 px-4 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] space-y-3">
+                      <div className="w-12 h-12 rounded-full bg-[#EFE6D5] text-[#8B5A2B] flex items-center justify-center mx-auto">
+                        <ListOrdered className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-bold text-[#3A2518]">播放清單目前是空的</p>
+                        <p className="text-xs text-[#7A6855] max-w-xs mx-auto leading-relaxed">
+                          您可以切換至「館藏選片書架」，單部點選「+ 清單」或開啟「多選加入清單」一次勾選多筆語音加入！
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShelfTab('shelf')}
+                        className="px-4 py-1.5 rounded-lg bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>前往選片書架挑選</span>
+                      </button>
+                    </div>
+                  ) : (
+                    playlistItems.map((item, index) => {
+                      const isCurrent = item.id === currentItem.id;
+                      const cat = categories.find((c) => c.id === item.categoryId);
+
+                      return (
+                        <div
+                          key={`playlist_${item.id}_${index}`}
+                          onClick={() => {
+                            pendingAutoPlayRef.current = true;
+                            handleSelectShelfAudio(item);
+                          }}
+                          className={`group flex items-center gap-2.5 p-2.5 rounded-xl border transition cursor-pointer ${
+                            isCurrent
+                              ? 'bg-[#3A2518] text-[#FAF5EC] border-[#3A2518] shadow-md ring-2 ring-amber-400/50'
+                              : 'bg-white hover:bg-[#FAF4E8] text-[#2C221E] border-[#E5D9C5]'
+                          }`}
+                        >
+                          {/* 順位編號與播放指示標籤 */}
+                          <div className="flex flex-col items-center justify-center shrink-0 w-7">
+                            <span
+                              className={`font-mono text-xs font-bold ${
+                                isCurrent ? 'text-amber-300' : 'text-[#8B5A2B]'
+                              }`}
+                            >
+                              #{index + 1}
+                            </span>
+                            {isCurrent && (
+                              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping mt-0.5" />
+                            )}
+                          </div>
+
+                          {/* 封面小縮圖 */}
+                          <div className="relative w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
+                            <img
+                              src={item.coverImageUrl}
+                              alt={item.title}
+                              className="w-full h-full object-cover"
+                            />
+                            {isCurrent && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <Play className="w-4 h-4 text-amber-400 fill-current" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 標題與資訊 */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              {cat && (
+                                <span
+                                  className="px-1.5 py-0.2 rounded text-[9px] font-semibold text-white shrink-0"
+                                  style={{ backgroundColor: cat.themeColor }}
+                                >
+                                  {cat.name}
+                                </span>
+                              )}
+                              <span
+                                className={`text-[10px] font-mono shrink-0 ${
+                                  isCurrent ? 'text-amber-200' : 'text-[#7A6855]'
+                                }`}
+                              >
+                                {formatDuration(item.duration)}
+                              </span>
+                              {isCurrent && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-400/25 text-amber-300 font-bold border border-amber-400/40">
+                                  放映中
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-bold font-serif-tc text-xs truncate mt-0.5">
+                              {item.title}
+                            </h4>
+                          </div>
+
+                          {/* 順序調整控制按鈕群 */}
+                          <div
+                            className="flex items-center gap-0.5 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* 移至頂部 */}
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={(e) => handleMoveToTopInPlaylist(index, e)}
+                              className={`p-1.5 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer ${
+                                isCurrent ? 'text-white/80 hover:text-white' : 'text-[#7A6855] hover:text-[#2C221E]'
+                              }`}
+                              title="移到最前面第 1 順位"
+                            >
+                              <ArrowUpToLine className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 上移 */}
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={(e) => handleMoveUpInPlaylist(index, e)}
+                              className={`p-1.5 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer ${
+                                isCurrent ? 'text-white/80 hover:text-white' : 'text-[#7A6855] hover:text-[#2C221E]'
+                              }`}
+                              title="順序往前上移一位"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 下移 */}
+                            <button
+                              type="button"
+                              disabled={index === playlistItems.length - 1}
+                              onClick={(e) => handleMoveDownInPlaylist(index, e)}
+                              className={`p-1.5 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer ${
+                                isCurrent ? 'text-white/80 hover:text-white' : 'text-[#7A6855] hover:text-[#2C221E]'
+                              }`}
+                              title="順序往後下移一位"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 移出清單 */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveFromPlaylist(item.id, e)}
+                              className={`p-1.5 rounded hover:bg-red-500/20 hover:text-red-300 transition cursor-pointer ${
+                                isCurrent ? 'text-white/60' : 'text-[#8B5A2B]'
+                              }`}
+                              title="從播放清單移除"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
