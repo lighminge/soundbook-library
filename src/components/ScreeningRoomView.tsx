@@ -41,10 +41,22 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpToLine,
+  Save,
+  FolderPlus,
+  Folder,
+  FolderOpen,
+  Bookmark,
+  BookmarkPlus,
+  Music2,
 } from 'lucide-react';
-import { AudioItem, Category, PlaybackSlide } from '../types';
+import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
-import { fetchAudioBlobFromGoogleDrive } from '../services/storageService';
+import {
+  fetchAudioBlobFromGoogleDrive,
+  loadSavedPlaylists,
+  saveSavedPlaylist,
+  deleteSavedPlaylist,
+} from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
 import {
   parseSrtContent,
@@ -164,6 +176,28 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 全螢幕模式下的浮動播放清單展開開關
   const [showFullscreenPlaylist, setShowFullscreenPlaylist] = useState<boolean>(false);
+
+  // 已儲存的播放清單列表 (來自 Firestore / LocalStorage)
+  const [savedPlaylists, setSavedPlaylists] = useState<SavedPlaylist[]>([]);
+  const [isLoadingPlaylists, setIsLoadingPlaylists] = useState<boolean>(false);
+
+  // 當前選用/綁定的已儲存播放清單 ID (若為自訂臨時清單則為 null)
+  const [activeSavedPlaylistId, setActiveSavedPlaylistId] = useState<string | null>(() => {
+    return localStorage.getItem('soundbook_active_saved_playlist_id') || null;
+  });
+
+  // 儲存播放清單 Modal 狀態與表單
+  const [showSavePlaylistModal, setShowSavePlaylistModal] = useState<boolean>(false);
+  const [savePlaylistName, setSavePlaylistName] = useState<string>('');
+  const [savePlaylistDesc, setSavePlaylistDesc] = useState<string>('');
+  const [saveAsNewMode, setSaveAsNewMode] = useState<boolean>(false);
+
+  // 管理已儲存清單 Modal 狀態
+  const [showManagePlaylistsModal, setShowManagePlaylistsModal] = useState<boolean>(false);
+  const [manageSearchQuery, setManageSearchQuery] = useState<string>('');
+  const [editingPlaylistData, setEditingPlaylistData] = useState<SavedPlaylist | null>(null);
+  const [deleteConfirmPlaylist, setDeleteConfirmPlaylist] = useState<SavedPlaylist | null>(null);
+  const [playlistPickerAddAudioId, setPlaylistPickerAddAudioId] = useState<string>('');
 
   // 放映室「播放時的文字顯示與導讀講稿」單筆時間區段即時修改狀態
   const [isEditingSegment, setIsEditingSegment] = useState<boolean>(false);
@@ -806,6 +840,168 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       showToast(`🎉 已將符合條件的 ${newIds.length} 部語音全數加入播放清單！`);
     }
     setShelfTab('playlist');
+  };
+
+  // 載入與重新整理已儲存的播放清單
+  const refreshSavedPlaylists = async () => {
+    setIsLoadingPlaylists(true);
+    try {
+      const list = await loadSavedPlaylists();
+      setSavedPlaylists(list);
+    } catch (err) {
+      console.warn('載入已儲存播放清單失敗:', err);
+    } finally {
+      setIsLoadingPlaylists(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshSavedPlaylists();
+  }, []);
+
+  // 選取已儲存的播放清單
+  const handleSelectSavedPlaylist = (playlistId: string) => {
+    if (!playlistId) {
+      setActiveSavedPlaylistId(null);
+      localStorage.removeItem('soundbook_active_saved_playlist_id');
+      showToast('ℹ️ 已切換為自訂/未綁定播放佇列');
+      return;
+    }
+    const target = savedPlaylists.find((p) => p.id === playlistId);
+    if (!target) return;
+
+    setActiveSavedPlaylistId(target.id);
+    localStorage.setItem('soundbook_active_saved_playlist_id', target.id);
+    setPlaylistItemIds(target.audioItemIds);
+
+    // 如果當前播放的語音不在選取的清單中，切換至該清單的第一首
+    if (target.audioItemIds.length > 0) {
+      const firstItem = audioItems.find((a) => a.id === target.audioItemIds[0]);
+      if (firstItem && firstItem.id !== currentItem?.id) {
+        onSelectAudio(firstItem);
+      }
+    }
+    showToast(`📂 已載入播放清單：「${target.name}」（共 ${target.audioItemIds.length} 部語音）`);
+  };
+
+  // 開啟「儲存播放清單」彈出視窗
+  const handleOpenSaveModal = (asNew = false) => {
+    if (playlistItemIds.length === 0) {
+      showToast('⚠️ 播放清單內尚無語音檔，請先至選片書架加入語音');
+      return;
+    }
+    const currentSaved = savedPlaylists.find((p) => p.id === activeSavedPlaylistId);
+    if (currentSaved && !asNew) {
+      setSavePlaylistName(currentSaved.name);
+      setSavePlaylistDesc(currentSaved.description || '');
+      setSaveAsNewMode(false);
+    } else {
+      setSavePlaylistName(currentSaved ? `${currentSaved.name} (複本)` : `精選播放清單 ${new Date().toLocaleDateString('zh-TW')}`);
+      setSavePlaylistDesc(currentSaved?.description || '');
+      setSaveAsNewMode(true);
+    }
+    setShowSavePlaylistModal(true);
+  };
+
+  // 確認儲存/更新播放清單
+  const handleConfirmSavePlaylist = async () => {
+    const trimmedName = savePlaylistName.trim();
+    if (!trimmedName) {
+      showToast('⚠️ 請輸入播放清單名稱');
+      return;
+    }
+    if (playlistItemIds.length === 0) {
+      showToast('⚠️ 播放清單內沒有語音檔');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    let targetPlaylist: SavedPlaylist;
+
+    if (!saveAsNewMode && activeSavedPlaylistId) {
+      const existing = savedPlaylists.find((p) => p.id === activeSavedPlaylistId);
+      targetPlaylist = {
+        id: activeSavedPlaylistId,
+        name: trimmedName,
+        description: savePlaylistDesc.trim(),
+        audioItemIds: playlistItemIds,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      };
+      await saveSavedPlaylist(targetPlaylist);
+      showToast(`💾 已成功更新播放清單：「${targetPlaylist.name}」！`);
+    } else {
+      targetPlaylist = {
+        id: `playlist_${Date.now()}`,
+        name: trimmedName,
+        description: savePlaylistDesc.trim(),
+        audioItemIds: playlistItemIds,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await saveSavedPlaylist(targetPlaylist);
+      setActiveSavedPlaylistId(targetPlaylist.id);
+      localStorage.setItem('soundbook_active_saved_playlist_id', targetPlaylist.id);
+      showToast(`🎉 已成功建立並保存新播放清單：「${targetPlaylist.name}」！`);
+    }
+
+    await refreshSavedPlaylists();
+    setShowSavePlaylistModal(false);
+  };
+
+  // 確認刪除已儲存播放清單
+  const handleConfirmDeleteSavedPlaylist = async (playlist: SavedPlaylist) => {
+    await deleteSavedPlaylist(playlist.id);
+    if (activeSavedPlaylistId === playlist.id) {
+      setActiveSavedPlaylistId(null);
+      localStorage.removeItem('soundbook_active_saved_playlist_id');
+    }
+    await refreshSavedPlaylists();
+    setDeleteConfirmPlaylist(null);
+    if (editingPlaylistData?.id === playlist.id) {
+      setEditingPlaylistData(null);
+    }
+    showToast(`🗑️ 已刪除播放清單：「${playlist.name}」`);
+  };
+
+  // 在管理面板中建立全新空白播放清單
+  const handleCreateNewBlankPlaylist = async () => {
+    const name = `新播放清單 #${savedPlaylists.length + 1}`;
+    const now = new Date().toISOString();
+    const newPlaylist: SavedPlaylist = {
+      id: `playlist_${Date.now()}`,
+      name,
+      description: '',
+      audioItemIds: currentItem ? [currentItem.id] : [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await saveSavedPlaylist(newPlaylist);
+    await refreshSavedPlaylists();
+    setEditingPlaylistData(newPlaylist);
+    showToast(`✨ 已建立「${name}」，可直接編輯內容與加入語音`);
+  };
+
+  // 在編輯面板中儲存對特定播放清單的修改
+  const handleSaveEditedPlaylistData = async () => {
+    if (!editingPlaylistData) return;
+    const trimmed = editingPlaylistData.name.trim();
+    if (!trimmed) {
+      showToast('⚠️ 播放清單名稱不能為空');
+      return;
+    }
+    const updated: SavedPlaylist = {
+      ...editingPlaylistData,
+      name: trimmed,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveSavedPlaylist(updated);
+    if (activeSavedPlaylistId === updated.id) {
+      setPlaylistItemIds(updated.audioItemIds);
+    }
+    await refreshSavedPlaylists();
+    setEditingPlaylistData(null);
+    showToast(`✅ 已儲存播放清單「${updated.name}」的修改！`);
   };
 
   // 監聽原生 Fullscreen 變化，確保 Esc 鍵或手勢退出時狀態同步
@@ -2566,6 +2762,96 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     </button>
                   </div>
 
+                  {/* 已儲存播放清單選取列（下拉選取已儲存清單、快速儲存/更新、管理庫） */}
+                  <div className="space-y-2 pt-2 border-t border-[#E5D9C5]/80">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
+                        <FolderOpen className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                        <span>已儲存播放清單：</span>
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSaveModal(false)}
+                          className="text-[11px] text-[#2E5A44] hover:text-[#1F3D2E] font-semibold flex items-center gap-0.5 cursor-pointer bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition"
+                          title="將目前選取的清單保存至雲端與本機"
+                        >
+                          <Save className="w-3 h-3" />
+                          <span>{activeSavedPlaylistId ? '儲存更新' : '保存此清單'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingPlaylistData(null);
+                            setShowManagePlaylistsModal(true);
+                          }}
+                          className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold flex items-center gap-0.5 cursor-pointer hover:underline"
+                        >
+                          <span>管理清單 ({savedPlaylists.length})</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={activeSavedPlaylistId || ''}
+                        onChange={(e) => handleSelectSavedPlaylist(e.target.value)}
+                        className="flex-1 min-w-0 pl-2.5 pr-8 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer truncate font-medium shadow-2xs"
+                      >
+                        <option value="">
+                          {activeSavedPlaylistId
+                            ? '切換為未儲存/自訂清單'
+                            : `自訂/當前播放佇列 (${playlistItems.length} 部)`}
+                        </option>
+                        {savedPlaylists.length > 0 && (
+                          <optgroup label="已儲存的播放清單">
+                            {savedPlaylists.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                📁 {p.name} ({p.audioItemIds.length} 部)
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSaveModal(true)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] text-xs font-medium flex items-center gap-1 transition cursor-pointer shrink-0"
+                        title="將目前清單另存為新播放清單"
+                      >
+                        <FolderPlus className="w-3.5 h-3.5" />
+                        <span>另存新檔</span>
+                      </button>
+                    </div>
+
+                    {/* 若目前綁定已儲存清單，顯示清單狀態橫條 */}
+                    {activeSavedPlaylistId && (() => {
+                      const activeP = savedPlaylists.find((p) => p.id === activeSavedPlaylistId);
+                      if (!activeP) return null;
+                      return (
+                        <div className="flex items-center justify-between text-[11px] bg-white/90 p-2 rounded-lg border border-[#E5D9C5] shadow-2xs">
+                          <span className="text-[#6E5D4F] truncate">
+                            正在放映：<strong className="text-[#8B5A2B] font-bold">{activeP.name}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPlaylistData(activeP);
+                              setShowManagePlaylistsModal(true);
+                            }}
+                            className="text-[10px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold underline cursor-pointer shrink-0 ml-1"
+                          >
+                            修改內容
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
                   {/* 快捷整理按鈕列 */}
                   <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-[#E5D9C5]/60 text-xs">
                     <div className="flex items-center gap-1">
@@ -2937,6 +3223,614 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition"
               >
                 關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 1. 「儲存播放清單」彈出視窗 (支援另存新檔或覆蓋更新) */}
+      {showSavePlaylistModal && (
+        <div className="fixed inset-0 z-[130] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border-2 border-[#8B5A2B] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
+                  <Save className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base">儲存播放清單</h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    將目前放映室挑選的 {playlistItems.length} 部語音儲存至雲端與本機
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSavePlaylistModal(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* 若目前已綁定既有清單，提供「更新覆蓋」或「另存新檔」選項 */}
+              {activeSavedPlaylistId && (() => {
+                const activeP = savedPlaylists.find((p) => p.id === activeSavedPlaylistId);
+                if (!activeP) return null;
+                return (
+                  <div className="p-3 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4] space-y-2 text-xs">
+                    <span className="font-bold text-[#5C3A1B]">選擇儲存方式：</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSaveAsNewMode(false);
+                          setSavePlaylistName(activeP.name);
+                          setSavePlaylistDesc(activeP.description || '');
+                        }}
+                        className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
+                          !saveAsNewMode
+                            ? 'bg-[#3A2518] text-white border-[#3A2518] shadow-xs'
+                            : 'bg-white text-[#3A2518] border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                        }`}
+                      >
+                        <p className="font-bold">更新現有清單</p>
+                        <p className="text-[10px] opacity-80 truncate">{activeP.name}</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSaveAsNewMode(true);
+                          setSavePlaylistName(`${activeP.name} (複本)`);
+                        }}
+                        className={`p-2.5 rounded-lg border text-left transition cursor-pointer ${
+                          saveAsNewMode
+                            ? 'bg-[#8B5A2B] text-white border-[#8B5A2B] shadow-xs'
+                            : 'bg-white text-[#3A2518] border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                        }`}
+                      >
+                        <p className="font-bold">另存為新清單</p>
+                        <p className="text-[10px] opacity-80">保留原清單，建立新複本</p>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div>
+                <label className="block text-xs font-bold text-[#5C3A1B] mb-1">
+                  播放清單名稱 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={savePlaylistName}
+                  onChange={(e) => setSavePlaylistName(e.target.value)}
+                  placeholder="例如：晚安床邊故事集、歷史經典導讀..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#5C3A1B] mb-1">
+                  播放清單說明 (選填)
+                </label>
+                <textarea
+                  rows={2}
+                  value={savePlaylistDesc}
+                  onChange={(e) => setSavePlaylistDesc(e.target.value)}
+                  placeholder="簡短描述這份播放清單的主題或收錄特色..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                />
+              </div>
+
+              {/* 清單預覽摘要 */}
+              <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#E5D9C5] space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-[#5C3A1B] font-semibold">
+                  <span>包含語音內容：</span>
+                  <span className="font-mono">
+                    共 {playlistItems.length} 部 · 約 {formatDuration(totalPlaylistDuration)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {playlistItems.map((item, idx) => (
+                    <span
+                      key={item.id}
+                      className="px-2 py-0.5 rounded bg-white border border-[#DFCEB4] text-[10px] text-[#3A2518] truncate max-w-[200px]"
+                    >
+                      #{idx + 1} {item.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-3 bg-[#F4ECE0] border-t border-[#E5D9C5] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowSavePlaylistModal(false)}
+                className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#EFE6D5] text-xs font-medium text-[#5C3A1B] cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSavePlaylist}
+                className="px-5 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>確認儲存</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. 「已儲存的播放清單管理」彈出視窗 (支援 新增、修改、刪除、載入) */}
+      {showManagePlaylistsModal && (
+        <div className="fixed inset-0 z-[130] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border-2 border-[#8B5A2B] animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
+            {/* Modal 頂部標題 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                  <FolderOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base">
+                    {editingPlaylistData ? `編輯播放清單：${editingPlaylistData.name}` : '已儲存的播放清單管理'}
+                  </h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    {editingPlaylistData
+                      ? '調整此清單名稱、說明、語音排列順序與增減項目'
+                      : '瀏覽、載入放映、編輯內容或刪除已保存的播放清單'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManagePlaylistsModal(false);
+                  setEditingPlaylistData(null);
+                  setDeleteConfirmPlaylist(null);
+                }}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 模式 A：清單管理總覽列表 */}
+            {!editingPlaylistData ? (
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                {/* 搜尋過濾與新增按鈕列 */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="搜尋播放清單名稱或說明..."
+                      value={manageSearchQuery}
+                      onChange={(e) => setManageSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <button
+                      type="button"
+                      onClick={handleCreateNewBlankPlaylist}
+                      className="px-3 py-1.5 rounded-xl bg-[#8B5A2B] hover:bg-[#6E4420] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5" />
+                      <span>建立新播放清單</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 清單列表 */}
+                {savedPlaylists.length === 0 ? (
+                  <div className="py-12 px-4 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-[#EFE6D5] text-[#8B5A2B] flex items-center justify-center mx-auto">
+                      <FolderOpen className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-[#3A2518]">目前尚無已儲存的播放清單</p>
+                      <p className="text-xs text-[#7A6855] max-w-sm mx-auto leading-relaxed">
+                        您可以點選上方「建立新播放清單」，或先在放映室書架挑選語音後點選「保存清單」！
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateNewBlankPlaylist}
+                      className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5" />
+                      <span>建立第一份播放清單</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {savedPlaylists
+                      .filter((p) => {
+                        const q = manageSearchQuery.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          (p.description && p.description.toLowerCase().includes(q))
+                        );
+                      })
+                      .map((p) => {
+                        const isCurrentlyActive = activeSavedPlaylistId === p.id;
+                        // 計算清單總時長
+                        const pDuration = p.audioItemIds.reduce((sum, id) => {
+                          const it = audioItems.find((a) => a.id === id);
+                          return sum + (it?.duration || 0);
+                        }, 0);
+
+                        return (
+                          <div
+                            key={p.id}
+                            className={`p-4 rounded-xl border transition space-y-3 ${
+                              isCurrentlyActive
+                                ? 'bg-[#FFF9EE] border-amber-400 ring-2 ring-amber-400/40 shadow-md'
+                                : 'bg-white hover:bg-[#FAF6EE] border-[#E5D9C5]'
+                            }`}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-1.5">
+                                    <Folder className="w-4 h-4 text-[#8B5A2B]" />
+                                    <span>{p.name}</span>
+                                  </h4>
+                                  {isCurrentlyActive && (
+                                    <span className="px-2 py-0.5 rounded-full bg-amber-400 text-[#2C221E] font-bold text-[10px] flex items-center gap-1">
+                                      <Play className="w-2.5 h-2.5 fill-current" />
+                                      放映中
+                                    </span>
+                                  )}
+                                </div>
+                                {p.description && (
+                                  <p className="text-xs text-[#6E5D4F] line-clamp-1">{p.description}</p>
+                                )}
+                              </div>
+
+                              {/* 操作按鈕群：載入、編輯、刪除 */}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleSelectSavedPlaylist(p.id);
+                                    setShowManagePlaylistsModal(false);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-2xs ${
+                                    isCurrentlyActive
+                                      ? 'bg-amber-400 text-[#2C221E]'
+                                      : 'bg-[#2E5A44] hover:bg-[#234735] text-white'
+                                  }`}
+                                  title="載入此清單至放映室播放"
+                                >
+                                  <Play className="w-3 h-3 fill-current" />
+                                  <span>{isCurrentlyActive ? '重新載入' : '載入放映'}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingPlaylistData(p)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFE6D5] border border-[#D5C5AE] text-[#5C3A1B] text-xs font-medium flex items-center gap-1 transition cursor-pointer"
+                                  title="修改此播放清單內容與順序"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                  <span>修改</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteConfirmPlaylist(p)}
+                                  className="p-1.5 rounded-lg hover:bg-red-50 text-[#8B735B] hover:text-red-700 transition cursor-pointer"
+                                  title="刪除此播放清單"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* 統計與曲目縮圖預覽 */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E5D9C5]/60 text-xs">
+                              <span className="text-[#7A6855] text-[11px] font-mono">
+                                收錄 {p.audioItemIds.length} 部語音 · 總時長約 {formatDuration(pDuration)}
+                              </span>
+
+                              {/* 前 4 張縮圖 */}
+                              <div className="flex items-center gap-1 overflow-x-auto">
+                                {p.audioItemIds.slice(0, 4).map((id) => {
+                                  const it = audioItems.find((a) => a.id === id);
+                                  if (!it) return null;
+                                  return (
+                                    <img
+                                      key={id}
+                                      src={it.coverImageUrl}
+                                      alt={it.title}
+                                      title={it.title}
+                                      className="w-6 h-6 rounded object-cover border border-[#D5C5AE]"
+                                    />
+                                  );
+                                })}
+                                {p.audioItemIds.length > 4 && (
+                                  <span className="text-[10px] text-[#7A6855] font-mono">
+                                    +{p.audioItemIds.length - 4}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* 模式 B：特定播放清單內容修改面板 (編輯名稱、說明、調序、刪曲、加曲) */
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setEditingPlaylistData(null)}
+                    className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-semibold cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span>返回清單列表</span>
+                  </button>
+                  <span className="text-xs text-[#7A6855]">
+                    共 {editingPlaylistData.audioItemIds.length} 部語音
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#5C3A1B] mb-1">
+                      播放清單名稱 <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={editingPlaylistData.name}
+                      onChange={(e) =>
+                        setEditingPlaylistData({ ...editingPlaylistData, name: e.target.value })
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#5C3A1B] mb-1">
+                      播放清單說明
+                    </label>
+                    <input
+                      type="text"
+                      value={editingPlaylistData.description || ''}
+                      onChange={(e) =>
+                        setEditingPlaylistData({ ...editingPlaylistData, description: e.target.value })
+                      }
+                      placeholder="簡述此播放清單特色..."
+                      className="w-full px-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                    />
+                  </div>
+                </div>
+
+                {/* 從館藏追加語音快捷選單 */}
+                <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#E5D9C5] space-y-2 text-xs">
+                  <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
+                    <Plus className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                    <span>追加館藏語音至此清單：</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={playlistPickerAddAudioId}
+                      onChange={(e) => setPlaylistPickerAddAudioId(e.target.value)}
+                      className="flex-1 min-w-0 pl-2.5 pr-8 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer truncate"
+                    >
+                      <option value="">選擇要加入的語音檔案...</option>
+                      {audioItems
+                        .filter((a) => !editingPlaylistData.audioItemIds.includes(a.id))
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.title} ({formatDuration(a.duration)})
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled={!playlistPickerAddAudioId}
+                      onClick={() => {
+                        if (!playlistPickerAddAudioId) return;
+                        setEditingPlaylistData({
+                          ...editingPlaylistData,
+                          audioItemIds: [...editingPlaylistData.audioItemIds, playlistPickerAddAudioId],
+                        });
+                        setPlaylistPickerAddAudioId('');
+                        showToast('➕ 已加入該語音至清單！');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#8B5A2B] hover:bg-[#6E4420] disabled:opacity-40 text-white font-semibold text-xs cursor-pointer flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>加入</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 清單曲目排列與刪減區 */}
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {editingPlaylistData.audioItemIds.map((id, index) => {
+                    const it = audioItems.find((a) => a.id === id);
+                    if (!it) return null;
+
+                    return (
+                      <div
+                        key={`edit_track_${id}_${index}`}
+                        className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-[#E5D9C5] text-xs"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="font-mono text-xs font-bold text-[#8B5A2B] w-5 text-center shrink-0">
+                            #{index + 1}
+                          </span>
+                          <img
+                            src={it.coverImageUrl}
+                            alt=""
+                            className="w-8 h-8 rounded object-cover border border-[#D5C5AE] shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <p className="font-bold text-[#2C221E] truncate">{it.title}</p>
+                            <span className="text-[10px] text-[#7A6855] font-mono">
+                              {formatDuration(it.duration)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 順序調整控制 */}
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {/* 移至頂部 */}
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => {
+                              const nextIds = [...editingPlaylistData.audioItemIds];
+                              const [moved] = nextIds.splice(index, 1);
+                              nextIds.unshift(moved);
+                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                            }}
+                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                            title="移至第 1 順位"
+                          >
+                            <ArrowUpToLine className="w-3 h-3" />
+                          </button>
+
+                          {/* 上移 */}
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => {
+                              const nextIds = [...editingPlaylistData.audioItemIds];
+                              const tmp = nextIds[index - 1];
+                              nextIds[index - 1] = nextIds[index];
+                              nextIds[index] = tmp;
+                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                            }}
+                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                            title="上移"
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </button>
+
+                          {/* 下移 */}
+                          <button
+                            type="button"
+                            disabled={index === editingPlaylistData.audioItemIds.length - 1}
+                            onClick={() => {
+                              const nextIds = [...editingPlaylistData.audioItemIds];
+                              const tmp = nextIds[index + 1];
+                              nextIds[index + 1] = nextIds[index];
+                              nextIds[index] = tmp;
+                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                            }}
+                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                            title="下移"
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </button>
+
+                          {/* 移出 */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextIds = editingPlaylistData.audioItemIds.filter((_, idx) => idx !== index);
+                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                            }}
+                            className="p-1 rounded hover:bg-red-50 text-red-600 cursor-pointer ml-1"
+                            title="從此清單移除"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Modal 底部按鈕 */}
+            <div className="px-6 py-3 bg-[#F4ECE0] border-t border-[#E5D9C5] flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-[#7A6855]">
+                {isLoadingPlaylists ? '正在同步雲端清單...' : '支援跨裝置自動同步保存'}
+              </span>
+
+              <div className="flex items-center gap-2">
+                {editingPlaylistData ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setEditingPlaylistData(null)}
+                      className="px-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-xs font-medium text-[#5C3A1B] cursor-pointer"
+                    >
+                      取消編輯
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveEditedPlaylistData}
+                      className="px-4 py-1.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>確認儲存清單修改</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowManagePlaylistsModal(false)}
+                    className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition"
+                  >
+                    關閉
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. 刪除播放清單二度確認對話框 */}
+      {deleteConfirmPlaylist && (
+        <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-sm w-full p-6 space-y-4 border-2 border-red-500/40 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div className="text-center space-y-1">
+              <h4 className="font-bold text-sm text-[#2C221E]">確定要刪除此播放清單？</h4>
+              <p className="text-xs text-[#7A6855] leading-relaxed">
+                確定要刪除「<strong className="text-red-700">{deleteConfirmPlaylist.name}</strong>
+                」嗎？此動作將同步從雲端及本機徹底刪除，且無法復原。
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmPlaylist(null)}
+                className="flex-1 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#5C3A1B] cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmDeleteSavedPlaylist(deleteConfirmPlaylist)}
+                className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md cursor-pointer"
+              >
+                確定刪除
               </button>
             </div>
           </div>

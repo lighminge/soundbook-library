@@ -44,6 +44,15 @@ export interface AudioItem {
   updatedAt: string;
 }
 
+export interface SavedPlaylist {
+  id: string; // e.g. "playlist_1730592000000"
+  name: string; // 播放清單名稱
+  description?: string; // 播放清單說明
+  audioItemIds: string[]; // 播放清單內語音檔案的 ID 排序列表
+  createdAt: string; // ISO 8601 時間字串
+  updatedAt: string; // ISO 8601 時間字串
+}
+
 export interface CloudConfig {
   // Firebase 設定
   firebaseApiKey: string;

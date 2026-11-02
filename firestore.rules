@@ -60,6 +60,16 @@ rules_version = '2';
 //   - data: string (required, 1..900000 chars) - Base64-encoded audio chunk payload
 //   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //
+// Collection: playlists
+// Document ID: {playlistId} (matches field `id`, e.g., "playlist_1730000000000")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal playlistId) - Unique playlist identifier
+//   - name: string (required, 1..100 chars) - Playlist title / name
+//   - description: string (optional, 0..1000 chars) - Playlist description or curation notes
+//   - audioItemIds: list of strings (required, 0..500 items, each string 1..128 chars) - Ordered list of audio item IDs
+//   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -296,6 +306,36 @@ service cloud.firestore {
         isValidDateString(data.createdAt);
     }
 
+    // Validate Playlist document schema and field bounds
+    function isValidPlaylist(data, playlistId) {
+      let requiredFields = [
+        'id',
+        'name',
+        'audioItemIds',
+        'createdAt',
+        'updatedAt'
+      ];
+      let allowedFields = [
+        'id',
+        'name',
+        'description',
+        'audioItemIds',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == playlistId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('name', 1, 100) &&
+        isValidOptionalString('description', 0, 1000) &&
+        isValidList(data.audioItemIds, 500) &&
+        (data.audioItemIds.size() == 0 || (data.audioItemIds[0] is string && data.audioItemIds[0].size() >= 1 && data.audioItemIds[0].size() <= 128)) &&
+        isValidDateString(data.createdAt) &&
+        isValidDateString(data.updatedAt);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -324,6 +364,15 @@ service cloud.firestore {
       allow create: if isValidAudioChunk(request.resource.data, chunkId);
       allow update: if isValidAudioChunk(request.resource.data, chunkId) &&
                        areImmutableFieldsUnchanged(['id']);
+      allow delete: if true;
+    }
+
+    // Saved Playlists (playlists/{playlistId})
+    match /playlists/{playlistId} {
+      allow read: if true;
+      allow create: if isValidPlaylist(request.resource.data, playlistId);
+      allow update: if isValidPlaylist(request.resource.data, playlistId) &&
+                       areImmutableFieldsUnchanged(['id', 'createdAt']);
       allow delete: if true;
     }
 

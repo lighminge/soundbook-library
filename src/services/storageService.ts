@@ -9,7 +9,7 @@ import {
   doc,
   Firestore,
 } from 'firebase/firestore';
-import { AudioItem, Category, CloudConfig, PlaybackSlide } from '../types';
+import { AudioItem, Category, CloudConfig, PlaybackSlide, SavedPlaylist } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
 import {
   base64ToBlob,
@@ -21,6 +21,7 @@ import {
 const CONFIG_STORAGE_KEY = 'soundbook_cloud_config_v1';
 const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
 const LOCAL_AUDIO_ITEMS_KEY = 'soundbook_audio_items_v1';
+const LOCAL_PLAYLISTS_KEY = 'soundbook_saved_playlists_v1';
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB1MHVQ_CnTOxl2LSwoaPAZQogWtjrb-Ls',
@@ -347,6 +348,111 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
   const db = getDbInstance();
   if (db) {
     await setDoc(doc(db, 'audioItems', sanitizedItem.id), sanitizedItem);
+  }
+}
+
+/**
+ * 載入所有已儲存的播放清單（優先自 Firestore 同步，離線或未就緒時使用本機 LocalStorage）
+ */
+export async function loadSavedPlaylists(): Promise<SavedPlaylist[]> {
+  let localPlaylists: SavedPlaylist[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAYLISTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) localPlaylists = parsed;
+    }
+  } catch (e) {
+    console.warn('讀取本地播放清單失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'playlists'));
+      if (!snap.empty) {
+        const remotePlaylists: SavedPlaylist[] = snap.docs.map((d) => d.data() as SavedPlaylist);
+        // 合併並以雲端資料為主
+        const map = new Map<string, SavedPlaylist>();
+        localPlaylists.forEach((p) => map.set(p.id, p));
+        remotePlaylists.forEach((p) => map.set(p.id, p));
+        const merged = Array.from(map.values()).sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.createdAt).getTime() -
+            new Date(a.updatedAt || a.createdAt).getTime()
+        );
+        try {
+          localStorage.setItem(LOCAL_PLAYLISTS_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore
+        }
+        return merged;
+      }
+    } catch (e) {
+      console.warn('從 Firestore 讀取播放清單受限或失敗，使用本地儲存清單:', e);
+    }
+  }
+
+  return localPlaylists;
+}
+
+/**
+ * 儲存/更新單一播放清單（同時保存至本地 LocalStorage 與雲端 Firestore）
+ */
+export async function saveSavedPlaylist(playlist: SavedPlaylist): Promise<void> {
+  const sanitized: SavedPlaylist = JSON.parse(JSON.stringify(playlist));
+
+  // 1. 本機 LocalStorage 儲存
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAYLISTS_KEY);
+    let currentList: SavedPlaylist[] = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(currentList)) currentList = [];
+    const idx = currentList.findIndex((p) => p.id === sanitized.id);
+    if (idx >= 0) {
+      currentList[idx] = sanitized;
+    } else {
+      currentList.unshift(sanitized);
+    }
+    localStorage.setItem(LOCAL_PLAYLISTS_KEY, JSON.stringify(currentList));
+  } catch (e) {
+    console.warn('本地儲存播放清單失敗:', e);
+  }
+
+  // 2. 雲端 Firestore 儲存
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'playlists', sanitized.id), sanitized);
+    } catch (e) {
+      console.warn('Firestore 儲存播放清單失敗，已保存在本地:', e);
+    }
+  }
+}
+
+/**
+ * 刪除單一播放清單（同時於本地 LocalStorage 與雲端 Firestore 刪除）
+ */
+export async function deleteSavedPlaylist(playlistId: string): Promise<void> {
+  // 1. 本地 LocalStorage 刪除
+  try {
+    const raw = localStorage.getItem(LOCAL_PLAYLISTS_KEY);
+    let currentList: SavedPlaylist[] = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(currentList)) {
+      currentList = currentList.filter((p) => p.id !== playlistId);
+      localStorage.setItem(LOCAL_PLAYLISTS_KEY, JSON.stringify(currentList));
+    }
+  } catch (e) {
+    console.warn('本地刪除播放清單失敗:', e);
+  }
+
+  // 2. 雲端 Firestore 刪除
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await deleteDoc(doc(db, 'playlists', playlistId));
+    } catch (e) {
+      console.warn('Firestore 刪除播放清單失敗:', e);
+    }
   }
 }
 
