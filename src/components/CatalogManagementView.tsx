@@ -2101,9 +2101,44 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                     </div>
                   </div>
 
-                  {/* 卡片下半部：左欄「類別標籤設定」+ 右欄「館藏說明內容編輯」（底部貼齊對齊） */}
+                  {/* 卡片下半部：左欄「館藏說明內容編輯」+ 右欄「類別標籤設定」（兩區塊底部貼齊對齊） */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
-                    {/* 左欄 7 欄：類別標籤 (繪本、小說、童話...) 標記與管理 */}
+                    {/* 左欄 5 欄：說明內容即時編輯（高度自動伸展，底部與右方類別標籤區塊貼齊） */}
+                    <div className="lg:col-span-5 flex flex-col space-y-2 bg-[#FAF6EE] p-3.5 rounded-xl border border-[#E5D9C5] h-full">
+                      <div className="flex items-center justify-between shrink-0">
+                        <label className="text-xs font-bold text-[#5C3A1B] flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>館藏說明內容（修改後自動即時儲存）：</span>
+                        </label>
+                        {editingDescriptions[item.id] !== undefined &&
+                          editingDescriptions[item.id] !== item.description && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleSaveItemDescription(item, editingDescriptions[item.id])
+                              }
+                              className="px-2 py-0.5 rounded bg-[#2E5A44] text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>立即儲存說明</span>
+                            </button>
+                          )}
+                      </div>
+                      <textarea
+                        value={descValue}
+                        onChange={(e) =>
+                          setEditingDescriptions((prev) => ({
+                            ...prev,
+                            [item.id]: e.target.value,
+                          }))
+                        }
+                        onBlur={(e) => handleSaveItemDescription(item, e.target.value)}
+                        placeholder="請輸入此語音檔的館藏說明內容..."
+                        className="w-full flex-1 min-h-[140px] p-3 rounded-xl border border-[#D5C5AE] bg-white focus:bg-white text-xs text-[#2C221E] leading-relaxed focus:outline-none focus:border-[#8B5A2B] resize-y shadow-2xs"
+                      />
+                    </div>
+
+                    {/* 右欄 7 欄：類別標籤 (繪本、小說、童話...) 標記與管理 */}
                     <div className="lg:col-span-7 space-y-2.5 bg-[#FAF6EE] p-3.5 rounded-xl border border-[#E5D9C5] flex flex-col justify-between h-full">
                       <div className="space-y-2.5">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2216,41 +2251,6 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           <span>新增類別</span>
                         </button>
                       </div>
-                    </div>
-
-                    {/* 右欄 5 欄：說明內容即時編輯（高度自動伸展，底部與左方類別標籤區塊貼齊） */}
-                    <div className="lg:col-span-5 flex flex-col space-y-2 bg-[#FAF6EE] p-3.5 rounded-xl border border-[#E5D9C5] h-full">
-                      <div className="flex items-center justify-between shrink-0">
-                        <label className="text-xs font-bold text-[#5C3A1B] flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
-                          <span>館藏說明內容（修改後自動即時儲存）：</span>
-                        </label>
-                        {editingDescriptions[item.id] !== undefined &&
-                          editingDescriptions[item.id] !== item.description && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleSaveItemDescription(item, editingDescriptions[item.id])
-                              }
-                              className="px-2 py-0.5 rounded bg-[#2E5A44] text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>立即儲存說明</span>
-                            </button>
-                          )}
-                      </div>
-                      <textarea
-                        value={descValue}
-                        onChange={(e) =>
-                          setEditingDescriptions((prev) => ({
-                            ...prev,
-                            [item.id]: e.target.value,
-                          }))
-                        }
-                        onBlur={(e) => handleSaveItemDescription(item, e.target.value)}
-                        placeholder="請輸入此語音檔的館藏說明內容..."
-                        className="w-full flex-1 min-h-[140px] p-3 rounded-xl border border-[#D5C5AE] bg-white focus:bg-white text-xs text-[#2C221E] leading-relaxed focus:outline-none focus:border-[#8B5A2B] resize-y shadow-2xs"
-                      />
                     </div>
                   </div>
                 </div>

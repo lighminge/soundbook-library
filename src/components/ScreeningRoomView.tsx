@@ -48,6 +48,7 @@ import {
   Bookmark,
   BookmarkPlus,
   Music2,
+  User,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -221,9 +222,10 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [editSegText, setEditSegText] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // 「館藏語音選片書架」專屬查詢狀態（檔案名稱、類別標籤）
+  // 「館藏語音選片書架」專屬查詢狀態（檔案名稱、類別標籤、主講人）
   const [shelfSearchTitle, setShelfSearchTitle] = useState('');
   const [shelfSearchTag, setShelfSearchTag] = useState('');
+  const [shelfSearchSpeaker, setShelfSearchSpeaker] = useState('');
 
   // 「館藏語音選片書架」專屬分頁狀態（以 5 的倍數做選取）
   const [shelfPageSize, setShelfPageSize] = useState<number>(5);
@@ -352,7 +354,49 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   }, [availableShelfTags, shelfSearchTag]);
 
-  // 當使用者在「搜尋館藏語音」輸入關鍵字或選取標籤時：若播放清單內有內容，自動清空並切回「館藏選片書架」顯示查詢結果
+  // 統計可用主講人與筆數（以當前選取分類為主，全選則統計全部館藏）
+  const availableShelfSpeakers = useMemo(() => {
+    const targetItems =
+      selectedCategoryId === 'all'
+        ? audioItems
+        : audioItems.filter((i) => i.categoryId === selectedCategoryId);
+
+    const speakerCountMap: Record<string, number> = {};
+    let unassignedCount = 0;
+    targetItems.forEach((item) => {
+      const sp = item.speaker?.trim();
+      if (sp) {
+        speakerCountMap[sp] = (speakerCountMap[sp] || 0) + 1;
+      } else {
+        unassignedCount++;
+      }
+    });
+
+    const list = Object.keys(speakerCountMap)
+      .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+      .map((speaker) => ({
+        speaker,
+        count: speakerCountMap[speaker],
+      }));
+
+    return {
+      speakers: list,
+      unassignedCount,
+    };
+  }, [audioItems, selectedCategoryId]);
+
+  // 當分類切換時，若已選取的主講人不在新分類的主講人名單中，自動重設為全部主講人
+  useEffect(() => {
+    if (
+      shelfSearchSpeaker &&
+      shelfSearchSpeaker !== '__unassigned__' &&
+      !availableShelfSpeakers.speakers.some((s) => s.speaker === shelfSearchSpeaker)
+    ) {
+      setShelfSearchSpeaker('');
+    }
+  }, [availableShelfSpeakers, shelfSearchSpeaker]);
+
+  // 當使用者在「搜尋館藏語音」輸入關鍵字或選取標籤、主講人時：若播放清單內有內容，自動清空並切回「館藏選片書架」顯示查詢結果
   const handleSearchQueryChange = (val: string) => {
     setSearchQuery(val);
     if (val.trim()) {
@@ -367,6 +411,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const handleShelfSearchTagChange = (tagVal: string) => {
     setShelfSearchTag(tagVal);
     if (tagVal) {
+      if (playlistItemIds.length > 0) {
+        setPlaylistItemIds([]);
+        setActiveSavedPlaylistId(null);
+      }
+      setShelfTab('shelf');
+    }
+  };
+
+  const handleShelfSearchSpeakerChange = (spVal: string) => {
+    setShelfSearchSpeaker(spVal);
+    if (spVal) {
       if (playlistItemIds.length > 0) {
         setPlaylistItemIds([]);
         setActiveSavedPlaylistId(null);
@@ -401,16 +456,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
-  // 「館藏語音選片書架」專屬篩選：分類 + 檔案名稱查詢 + 類別標籤查詢
+  // 「館藏語音選片書架」專屬篩選：分類 + 關鍵字 + 檔案名稱查詢 + 類別標籤查詢 + 主講人查詢
   const shelfFilteredItems = audioItems.filter((item) => {
     // 1. 分類篩選
     const matchCat =
       selectedCategoryId === 'all' || item.categoryId === selectedCategoryId;
-    // 2. 頂部通用搜尋 (標題或說明)
+    // 2. 頂部通用搜尋 (標題、說明或主講人)
     const matchGeneral =
       !searchQuery.trim() ||
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase());
+      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.speaker && item.speaker.toLowerCase().includes(searchQuery.toLowerCase()));
     // 3. 書架專屬檔案名稱查詢
     const qTitle = shelfSearchTitle.trim().toLowerCase();
     const matchTitle = !qTitle || item.title.toLowerCase().includes(qTitle);
@@ -419,8 +475,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     const itemTags = item.tags || [];
     const matchTag =
       !qTag || itemTags.some((tag) => tag.toLowerCase().includes(qTag));
+    // 5. 主講人篩選
+    let matchSpeaker = true;
+    if (shelfSearchSpeaker === '__unassigned__') {
+      matchSpeaker = !item.speaker || !item.speaker.trim();
+    } else if (shelfSearchSpeaker) {
+      matchSpeaker = item.speaker?.trim() === shelfSearchSpeaker;
+    }
 
-    return matchCat && matchGeneral && matchTitle && matchTag;
+    return matchCat && matchGeneral && matchTitle && matchTag && matchSpeaker;
   });
 
   // 「館藏語音選片書架」分頁計算（以 5 的倍數做選取：5, 10, 15, 20, 25）
@@ -433,7 +496,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     shelfStartIndex + shelfPageSize
   );
 
-  // 當分類、搜尋關鍵字、書架檔案名稱查詢、類別標籤查詢或每頁筆數變更時，自動回到第 1 頁
+  // 當分類、搜尋關鍵字、書架檔案名稱查詢、類別標籤查詢、主講人或每頁筆數變更時，自動回到第 1 頁
   useEffect(() => {
     setShelfCurrentPage(1);
   }, [
@@ -441,6 +504,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     searchQuery,
     shelfSearchTitle,
     shelfSearchTag,
+    shelfSearchSpeaker,
     shelfPageSize,
   ]);
 
@@ -1536,7 +1600,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         </div>
       </div>
 
-      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方，包含關鍵字與類別標籤下拉查詢） */}
+      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方，包含關鍵字、主講人與類別標籤下拉查詢） */}
       <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm border border-[#E2D5C1] space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -1546,24 +1610,25 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <div>
               <h3 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-2">
                 <span>搜尋館藏語音</span>
-                {(searchQuery.trim() || shelfSearchTag) && (
+                {(searchQuery.trim() || shelfSearchTag || shelfSearchSpeaker) && (
                   <span className="text-[11px] px-2 py-0.2 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {shelfFilteredItems.length} 部
                   </span>
                 )}
               </h3>
               <p className="text-[11px] text-[#7A6855]">
-                依標題關鍵字、故事內容說明或選取類別標籤即時檢索可放映之語音作品
+                依標題關鍵字、故事內容說明、主講人或選取類別標籤即時檢索可放映之語音作品
               </p>
             </div>
           </div>
 
-          {(searchQuery || shelfSearchTag) && (
+          {(searchQuery || shelfSearchTag || shelfSearchSpeaker) && (
             <button
               type="button"
               onClick={() => {
                 setSearchQuery('');
                 setShelfSearchTag('');
+                setShelfSearchSpeaker('');
                 setShelfTab('shelf');
               }}
               className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
@@ -1576,11 +1641,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
           {/* 1. 關鍵字搜尋 */}
-          <div className="relative sm:col-span-7 lg:col-span-8">
+          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-6">
             <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
-              placeholder="搜尋館藏語音標題或內容關鍵字..."
+              placeholder="搜尋館藏語音標題、說明或主講人關鍵字..."
               value={searchQuery}
               onChange={(e) => handleSearchQueryChange(e.target.value)}
               className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
@@ -1596,8 +1661,33 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             )}
           </div>
 
-          {/* 2. 類別標籤下拉選取查詢 */}
-          <div className="relative sm:col-span-5 lg:col-span-4">
+          {/* 2. 主講人下拉選單查詢 */}
+          <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
+            <User className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={shelfSearchSpeaker}
+              onChange={(e) => handleShelfSearchSpeakerChange(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
+            >
+              <option value="">
+                全部主講人 {availableShelfSpeakers.speakers.length === 0 ? '(尚無主講人)' : '(不限)'}
+              </option>
+              {availableShelfSpeakers.speakers.map(({ speaker, count }) => (
+                <option key={speaker} value={speaker}>
+                  🎙️ {speaker} ({count} 部)
+                </option>
+              ))}
+              {availableShelfSpeakers.unassignedCount > 0 && (
+                <option value="__unassigned__">
+                  ❓ 尚未指定主講人 ({availableShelfSpeakers.unassignedCount} 部)
+                </option>
+              )}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {/* 3. 類別標籤下拉選取查詢 */}
+          <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <Tag className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
               value={shelfSearchTag}
@@ -2831,35 +2921,52 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                               {item.description}
                             </p>
 
-                            {/* 類別標籤徽章展示 */}
-                            {item.tags && item.tags.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                                {item.tags.slice(0, 3).map((tag) => (
-                                  <span
-                                    key={tag}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setShelfSearchTag(tag);
-                                    }}
-                                    title={`點擊過濾標籤 #${tag}`}
-                                    className={`text-[10px] px-1.5 py-0.2 rounded transition cursor-pointer ${
-                                      shelfSearchTag === tag
-                                        ? 'bg-[#8B5A2B] text-white font-bold shadow-xs'
-                                        : isSelected
-                                        ? 'bg-white/15 text-[#FAF5EC] hover:bg-white/25'
-                                        : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
-                                    }`}
-                                  >
-                                    #{tag}
-                                  </span>
-                                ))}
-                                {item.tags.length > 3 && (
-                                  <span className="text-[10px] text-[#8B735B]">
-                                    +{item.tags.length - 3}
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            {/* 主講人與類別標籤徽章展示 */}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              {item.speaker && (
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleShelfSearchSpeakerChange(item.speaker!);
+                                  }}
+                                  title={`主講人：${item.speaker}（點擊過濾此主講人）`}
+                                  className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.2 rounded font-medium border transition cursor-pointer ${
+                                    shelfSearchSpeaker === item.speaker
+                                      ? 'bg-amber-600 border-amber-600 text-white font-bold shadow-xs'
+                                      : isSelected
+                                      ? 'bg-white/20 border-white/30 text-amber-200 hover:bg-white/30'
+                                      : 'bg-[#F2E8DC] border-[#D8C7B2] text-[#5C3A1B] hover:bg-[#EAE0D2]'
+                                  }`}
+                                >
+                                  <User className="w-2.5 h-2.5" />
+                                  <span>{item.speaker}</span>
+                                </span>
+                              )}
+                              {item.tags && item.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={tag}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShelfSearchTag(tag);
+                                  }}
+                                  title={`點擊過濾標籤 #${tag}`}
+                                  className={`text-[10px] px-1.5 py-0.2 rounded transition cursor-pointer ${
+                                    shelfSearchTag === tag
+                                      ? 'bg-[#8B5A2B] text-white font-bold shadow-xs'
+                                      : isSelected
+                                      ? 'bg-white/15 text-[#FAF5EC] hover:bg-white/25'
+                                      : 'bg-[#FAF4E8] border border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
+                                  }`}
+                                >
+                                  #{tag}
+                                </span>
+                              ))}
+                              {item.tags && item.tags.length > 3 && (
+                                <span className="text-[10px] text-[#8B735B]">
+                                  +{item.tags.length - 3}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );

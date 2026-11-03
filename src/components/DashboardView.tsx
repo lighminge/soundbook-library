@@ -58,6 +58,7 @@ import {
   HardDrive,
   Database,
   FolderPlus,
+  ChevronLeft,
   ChevronRight,
   Search,
   X,
@@ -65,6 +66,7 @@ import {
   ChevronDown,
   Layers,
   Shuffle,
+  User,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
@@ -331,9 +333,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [audioItems, categories]
   );
 
-  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態（關鍵字、類別標籤下拉選單）
+  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態（關鍵字、主講人、類別標籤下拉選單）
   const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
   const [quickSearchTag, setQuickSearchTag] = useState('');
+  const [quickSearchSpeaker, setQuickSearchSpeaker] = useState('');
+
+  // 每個館藏主題書架之分頁狀態（當前頁碼與每頁數量，預設每頁 8 部）
+  const [categoryPageMap, setCategoryPageMap] = useState<Record<string, number>>({});
+  const [categoryPageSizeMap, setCategoryPageSizeMap] = useState<Record<string, number>>({});
+
+  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用主講人與筆數
+  const availableDashboardSpeakers = useMemo(() => {
+    const speakerCountMap: Record<string, number> = {};
+    let unassignedCount = 0;
+    audioItems.forEach((item) => {
+      const sp = item.speaker?.trim();
+      if (sp) {
+        speakerCountMap[sp] = (speakerCountMap[sp] || 0) + 1;
+      } else {
+        unassignedCount++;
+      }
+    });
+
+    const list = Object.keys(speakerCountMap)
+      .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+      .map((speaker) => ({
+        speaker,
+        count: speakerCountMap[speaker],
+      }));
+
+    return {
+      speakers: list,
+      unassignedCount,
+    };
+  }, [audioItems]);
 
   // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數
   const availableDashboardTags = useMemo(() => {
@@ -355,11 +388,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }));
   }, [audioItems]);
 
-  // 快速檢索篩選：比對語音檔案名稱、館藏分類、類別標籤下拉選取與故事說明內容
+  // 快速檢索篩選：比對語音檔案名稱、館藏分類、主講人、類別標籤下拉選取與故事說明內容
   const matchedAudioItems = useMemo(() => {
     const q = quickSearchKeyword.trim().toLowerCase();
     const t = quickSearchTag.trim();
-    if (!q && !t) return [];
+    const s = quickSearchSpeaker.trim();
+    if (!q && !t && !s) return [];
 
     return audioItems.filter((item) => {
       // 1. 關鍵字比對 (若有輸入)
@@ -368,11 +402,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         const matchTitle = (item.title || '').toLowerCase().includes(q);
         const matchDesc = (item.description || '').toLowerCase().includes(q);
         const matchTags = (item.tags || []).some((tag) => tag.toLowerCase().includes(q));
+        const matchSpeaker = (item.speaker || '').toLowerCase().includes(q);
         const cat = categories.find((c) => c.id === item.categoryId);
         const matchCat = cat
           ? cat.name.toLowerCase().includes(q) || cat.code.toLowerCase().includes(q)
           : false;
-        matchKw = matchTitle || matchDesc || matchTags || matchCat;
+        matchKw = matchTitle || matchDesc || matchTags || matchSpeaker || matchCat;
       }
 
       // 2. 類別標籤下拉選取比對 (若有選取)
@@ -381,9 +416,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         matchTag = (item.tags || []).includes(t);
       }
 
-      return matchKw && matchTag;
+      // 3. 主講人下拉選單比對 (若有選取)
+      let matchSpeaker = true;
+      if (s === '__unassigned__') {
+        matchSpeaker = !item.speaker || !item.speaker.trim();
+      } else if (s) {
+        matchSpeaker = item.speaker?.trim() === s;
+      }
+
+      return matchKw && matchTag && matchSpeaker;
     });
-  }, [audioItems, categories, quickSearchKeyword, quickSearchTag]);
+  }, [audioItems, categories, quickSearchKeyword, quickSearchTag, quickSearchSpeaker]);
 
   const visibleCategories =
     selectedAisle === 'all'
@@ -466,14 +509,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div>
               <h2 className="text-base font-bold font-serif-tc text-[#2C221E] flex items-center gap-2">
                 <span>館藏語音快速檢索</span>
-                {(quickSearchKeyword.trim() || quickSearchTag) && (
+                {(quickSearchKeyword.trim() || quickSearchTag || quickSearchSpeaker) && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {matchedAudioItems.length} 筆
                   </span>
                 )}
               </h2>
               <p className="text-xs text-[#7A6855]">
-                輸入關鍵字或選取類別標籤，即時比對語音檔案名稱、分類名稱、類別標籤與說明內容
+                輸入關鍵字或選取主講人、類別標籤，即時比對語音檔案名稱、主講人、分類名稱、類別標籤與說明內容
               </p>
             </div>
           </div>
@@ -491,12 +534,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>隨機播放 {matchedAudioItems.length > 0 ? `(${matchedAudioItems.length})` : ''}</span>
             </button>
 
-            {(quickSearchKeyword || quickSearchTag) && (
+            {(quickSearchKeyword || quickSearchTag || quickSearchSpeaker) && (
               <button
                 type="button"
                 onClick={() => {
                   setQuickSearchKeyword('');
                   setQuickSearchTag('');
+                  setQuickSearchSpeaker('');
                 }}
                 className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#EFE6D5] px-2.5 py-1.5 rounded-lg transition"
               >
@@ -507,14 +551,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* 檢索輸入與類別標籤下拉選取列 */}
+        {/* 檢索輸入與主講人、類別標籤下拉選取列 */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
           {/* 1. 關鍵字輸入 */}
-          <div className="relative sm:col-span-7 lg:col-span-8">
+          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-6">
             <Search className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
-              placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、寓言、標題關鍵字）..."
+              placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、主講人、標題關鍵字）..."
               value={quickSearchKeyword}
               onChange={(e) => setQuickSearchKeyword(e.target.value)}
               className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
@@ -531,8 +575,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {/* 2. 類別標籤下拉選單 */}
-          <div className="relative sm:col-span-5 lg:col-span-4">
+          {/* 2. 主講人下拉選單 */}
+          <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
+            <User className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={quickSearchSpeaker}
+              onChange={(e) => setQuickSearchSpeaker(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
+            >
+              <option value="">
+                全部主講人 {availableDashboardSpeakers.speakers.length === 0 ? '(尚無主講人)' : '(不限)'}
+              </option>
+              {availableDashboardSpeakers.speakers.map(({ speaker, count }) => (
+                <option key={speaker} value={speaker}>
+                  🎙️ {speaker} ({count} 部)
+                </option>
+              ))}
+              {availableDashboardSpeakers.unassignedCount > 0 && (
+                <option value="__unassigned__">
+                  ❓ 尚未指定主講人 ({availableDashboardSpeakers.unassignedCount} 部)
+                </option>
+              )}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {/* 3. 類別標籤下拉選單 */}
+          <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <Tag className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
               value={quickSearchTag}
@@ -553,15 +622,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* 檢索結果展示 */}
-        {quickSearchKeyword.trim() || quickSearchTag ? (
+        {quickSearchKeyword.trim() || quickSearchTag || quickSearchSpeaker ? (
           matchedAudioItems.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
               <p className="font-semibold text-sm text-[#5C3A1B]">
                 找不到符合條件的語音檔
                 {quickSearchKeyword && `「${quickSearchKeyword}」`}
+                {quickSearchSpeaker && ` [主講人: ${quickSearchSpeaker === '__unassigned__' ? '尚未指定' : quickSearchSpeaker}]`}
                 {quickSearchTag && ` [標籤: #${quickSearchTag}]`}
               </p>
-              <p>請嘗試其他關鍵字或切換類別標籤，或確認該館藏是否已在「語音檔案庫」中建立。</p>
+              <p>請嘗試其他關鍵字或切換主講人、類別標籤，或確認該館藏是否已在「語音檔案庫」中建立。</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
@@ -615,28 +685,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {item.description}
                       </p>
 
-                      {item.tags && item.tags.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                          {item.tags.slice(0, 3).map((tag) => (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setQuickSearchTag(tag);
-                              }}
-                              className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer ${
-                                quickSearchTag === tag
-                                  ? 'bg-[#8B5A2B] text-white border-[#8B5A2B]'
-                                  : 'bg-[#FAF4E8] border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
-                              }`}
-                              title={`點選以篩選標籤 #${tag}`}
-                            >
-                              #{tag}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                      {/* 主講人與標籤展示 */}
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        {item.speaker && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setQuickSearchSpeaker(item.speaker!);
+                            }}
+                            className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer flex items-center gap-0.5 font-medium ${
+                              quickSearchSpeaker === item.speaker
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                : 'bg-[#F2E8DC] border-[#D8C7B2] text-[#5C3A1B] hover:bg-[#EAE0D2]'
+                            }`}
+                            title={`主講人：${item.speaker}（點擊過濾此主講人）`}
+                          >
+                            <User className="w-2.5 h-2.5" />
+                            <span>{item.speaker}</span>
+                          </button>
+                        )}
+                        {item.tags && item.tags.slice(0, 3).map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setQuickSearchTag(tag);
+                            }}
+                            className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer ${
+                              quickSearchTag === tag
+                                ? 'bg-[#8B5A2B] text-white border-[#8B5A2B]'
+                                : 'bg-[#FAF4E8] border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
+                            }`}
+                          >
+                            #{tag}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 );
@@ -795,6 +881,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               return a.id.localeCompare(b.id);
             });
 
+          // 本分類專屬分頁計算（預設每頁 8 部，亦可自選 4, 8, 12, 16 或全部）
+          const pageSize = categoryPageSizeMap[category.id] || 8;
+          const totalCount = itemsInCat.length;
+          const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+          const currentPage = categoryPageMap[category.id] || 1;
+          const safePage = Math.min(currentPage, totalPages);
+          const paginatedItems = itemsInCat.slice((safePage - 1) * pageSize, safePage * pageSize);
+
           return (
             <section
               key={category.id}
@@ -820,12 +914,73 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <h3 className="text-xl font-bold font-serif-tc tracking-wide">
                         {category.name}
                       </h3>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
+                        共 {itemsInCat.length} 部
+                      </span>
                     </div>
                     <p className="text-xs md:text-sm text-white/85 mt-1">{category.description}</p>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
+                  {/* 標題列分頁控制項（依需求加入分頁，避免語音檔太多時畫面被拉太長） */}
+                  {itemsInCat.length > 0 && (
+                    <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-white/25 text-xs shadow-xs">
+                      {/* 每頁部數下拉選單 */}
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          const newSize = Number(e.target.value);
+                          setCategoryPageSizeMap((prev) => ({ ...prev, [category.id]: newSize }));
+                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                        }}
+                        className="bg-black/50 text-white text-[11px] font-medium rounded px-1.5 py-0.5 border border-white/25 focus:outline-none cursor-pointer"
+                        title="切換每頁顯示館藏數量"
+                      >
+                        <option value={4} className="bg-[#2B1B11] text-white">每頁 4 部</option>
+                        <option value={8} className="bg-[#2B1B11] text-white">每頁 8 部</option>
+                        <option value={12} className="bg-[#2B1B11] text-white">每頁 12 部</option>
+                        <option value={16} className="bg-[#2B1B11] text-white">每頁 16 部</option>
+                        <option value={9999} className="bg-[#2B1B11] text-white">顯示全部</option>
+                      </select>
+
+                      {/* 翻頁按鈕與頁碼 */}
+                      <div className="flex items-center gap-0.5 pl-1 border-l border-white/20">
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() =>
+                            setCategoryPageMap((prev) => ({
+                              ...prev,
+                              [category.id]: Math.max(1, safePage - 1),
+                            }))
+                          }
+                          className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                          title="上一頁"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-[11px] font-mono px-1 font-semibold whitespace-nowrap">
+                          {safePage} / {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() =>
+                            setCategoryPageMap((prev) => ({
+                              ...prev,
+                              [category.id]: Math.min(totalPages, safePage + 1),
+                            }))
+                          }
+                          className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                          title="下一頁"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
                   <button
                     type="button"
@@ -871,91 +1026,152 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {itemsInCat.map((item) => {
-                      const callNumber =
-                        audioCallNumberMap.get(item.id) || `${category.code}-1`;
-                      return (
-                        <div
-                          key={item.id}
-                          className="group relative flex flex-col rounded-r-xl rounded-l-md bg-[#FFFDF9] book-spine-effect overflow-hidden border border-[#DFD2BE] hover:-translate-y-1.5 transition-all duration-200"
-                        >
-                          {/* 左側精裝書背裝飾條 */}
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      {paginatedItems.map((item) => {
+                        const callNumber =
+                          audioCallNumberMap.get(item.id) || `${category.code}-1`;
+                        return (
                           <div
-                            className="absolute left-0 top-0 bottom-0 w-3 z-10"
-                            style={{ backgroundColor: category.themeColor }}
-                          />
-
-                          {/* 封面圖與快速播放按鈕 */}
-                          <div className="relative h-44 w-full pl-3 overflow-hidden bg-[#2C221E]">
-                            <img
-                              src={item.coverImageUrl}
-                              alt={item.title}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            key={item.id}
+                            className="group relative flex flex-col rounded-r-xl rounded-l-md bg-[#FFFDF9] book-spine-effect overflow-hidden border border-[#DFD2BE] hover:-translate-y-1.5 transition-all duration-200"
+                          >
+                            {/* 左側精裝書背裝飾條 */}
+                            <div
+                              className="absolute left-0 top-0 bottom-0 w-3 z-10"
+                              style={{ backgroundColor: category.themeColor }}
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
-                            {/* 語音檔獨立編號（館藏分類編號 + 上傳順序流水號） */}
-                            <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center shadow-sm">
-                              <span className="text-amber-300 font-bold tracking-wider">{callNumber}</span>
-                            </span>
+                            {/* 封面圖與快速播放按鈕 */}
+                            <div className="relative h-44 w-full pl-3 overflow-hidden bg-[#2C221E]">
+                              <img
+                                src={item.coverImageUrl}
+                                alt={item.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
 
-                            {/* 時長與插圖數量 */}
-                            <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between text-white text-xs">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/60 backdrop-blur-xs">
-                                <Clock className="w-3 h-3 text-amber-300" />
-                                {formatDuration(item.duration)}
+                              {/* 語音檔獨立編號（館藏分類編號 + 上傳順序流水號） */}
+                              <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center shadow-sm">
+                                <span className="text-amber-300 font-bold tracking-wider">{callNumber}</span>
                               </span>
-                              <span className="px-2 py-0.5 rounded bg-black/60 text-[11px] text-amber-200">
-                                {item.playbackDisplay.slides.length} 張展演圖
-                              </span>
-                            </div>
-                          </div>
 
-                          {/* 書籍資訊內容 */}
-                          <div className="flex-1 p-4 pl-5 flex flex-col justify-between space-y-3">
-                            <div>
-                              {/* 語音檔獨立編號與所屬館藏分類 */}
-                              <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
-                                <span className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-[10px] font-bold shadow-xs">
-                                  {callNumber}
+                              {/* 時長與插圖數量 */}
+                              <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between text-white text-xs">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/60 backdrop-blur-xs">
+                                  <Clock className="w-3 h-3 text-amber-300" />
+                                  {formatDuration(item.duration)}
                                 </span>
-                                <span
-                                  className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
-                                  style={{ backgroundColor: category.themeColor }}
-                                >
-                                  [{category.code}] {category.name}
+                                <span className="px-2 py-0.5 rounded bg-black/60 text-[11px] text-amber-200">
+                                  {item.playbackDisplay.slides.length} 張展演圖
                                 </span>
                               </div>
-                              <h4 className="font-bold font-serif-tc text-base text-[#2C221E] line-clamp-1 group-hover:text-[#8B5A2B] transition-colors">
-                                {item.title}
-                              </h4>
-                              <p className="text-xs text-[#6E5D4F] mt-1.5 line-clamp-2 leading-relaxed">
-                                {item.description || '尚無館藏說明'}
-                              </p>
                             </div>
 
-                          <div className="pt-2 border-t border-[#EFE6D5] flex items-center justify-between gap-2">
-                            <button
-                              onClick={() => onSelectForPlayback(item)}
-                              className="flex-1 py-2 px-3 rounded-lg bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC] text-xs font-medium flex items-center justify-center gap-1.5 transition cursor-pointer"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                              <span>放映室播放</span>
-                            </button>
-                            <button
-                              onClick={() => onSelectForEdit(item)}
-                              title="編輯語音檔、封面與播放圖文"
-                              className="p-2 rounded-lg border border-[#DCCB88] bg-[#FAF4E8] hover:bg-[#EFE2C8] text-[#5C3A1B] transition cursor-pointer"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
+                            {/* 書籍資訊內容 */}
+                            <div className="flex-1 p-4 pl-5 flex flex-col justify-between space-y-3">
+                              <div>
+                                {/* 語音檔獨立編號與所屬館藏分類 + 主講人 */}
+                                <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                                  <span className="px-2 py-0.5 rounded bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] font-mono text-[10px] font-bold shadow-xs">
+                                    {callNumber}
+                                  </span>
+                                  <span
+                                    className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
+                                    style={{ backgroundColor: category.themeColor }}
+                                  >
+                                    [{category.code}] {category.name}
+                                  </span>
+                                  {item.speaker && (
+                                    <span
+                                      className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[10px] font-medium bg-[#F0E6D8] text-[#5C3A1B] border border-[#D8C7B2]"
+                                      title={`主講人：${item.speaker}`}
+                                    >
+                                      <User className="w-2.5 h-2.5" />
+                                      <span>{item.speaker}</span>
+                                    </span>
+                                  )}
+                                </div>
+                                <h4 className="font-bold font-serif-tc text-base text-[#2C221E] line-clamp-1 group-hover:text-[#8B5A2B] transition-colors">
+                                  {item.title}
+                                </h4>
+                                <p className="text-xs text-[#6E5D4F] mt-1.5 line-clamp-2 leading-relaxed">
+                                  {item.description || '尚無館藏說明'}
+                                </p>
+                              </div>
+
+                              <div className="pt-2 border-t border-[#EFE6D5] flex items-center justify-between gap-2">
+                                <button
+                                  onClick={() => onSelectForPlayback(item)}
+                                  className="flex-1 py-2 px-3 rounded-lg bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC] text-xs font-medium flex items-center justify-center gap-1.5 transition cursor-pointer"
+                                >
+                                  <Play className="w-3.5 h-3.5 fill-current" />
+                                  <span>放映室播放</span>
+                                </button>
+                                <button
+                                  onClick={() => onSelectForEdit(item)}
+                                  title="編輯語音檔、封面與播放圖文"
+                                  className="p-2 rounded-lg border border-[#DCCB88] bg-[#FAF4E8] hover:bg-[#EFE2C8] text-[#5C3A1B] transition cursor-pointer"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
                           </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 書架底部翻頁工具列（當主題館藏超過一頁時顯示） */}
+                    {totalPages > 1 && (
+                      <div className="mt-6 pt-4 border-t border-[#DFD2BE] flex flex-wrap items-center justify-between gap-3 text-xs text-[#5C3A1B]">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">
+                            顯示第 {(safePage - 1) * pageSize + 1} 至 {Math.min(safePage * pageSize, itemsInCat.length)} 部
+                            （本主題共 {itemsInCat.length} 部）
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={safePage <= 1}
+                            onClick={() => {
+                              setCategoryPageMap((prev) => ({
+                                ...prev,
+                                [category.id]: Math.max(1, safePage - 1),
+                              }));
+                              document.getElementById(`category-shelf-${category.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 font-medium text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <span>上一頁</span>
+                          </button>
+
+                          <span className="px-3 py-1 rounded-lg bg-[#FAF4E8] border border-[#D5C5AE] font-mono font-bold text-xs text-[#5C3A1B]">
+                            第 {safePage} / {totalPages} 頁
+                          </span>
+
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages}
+                            onClick={() => {
+                              setCategoryPageMap((prev) => ({
+                                ...prev,
+                                [category.id]: Math.min(totalPages, safePage + 1),
+                              }));
+                              document.getElementById(`category-shelf-${category.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#FAF4E8] disabled:opacity-40 font-medium text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                          >
+                            <span>下一頁</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
-                  </div>
+                    )}
+                  </>
                 )}
               </div>
 
