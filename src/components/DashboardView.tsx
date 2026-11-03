@@ -341,6 +341,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 每個館藏主題書架之分頁狀態（當前頁碼與每頁數量，預設每頁 8 部）
   const [categoryPageMap, setCategoryPageMap] = useState<Record<string, number>>({});
   const [categoryPageSizeMap, setCategoryPageSizeMap] = useState<Record<string, number>>({});
+  // 每個館藏主題書架之主講人篩選狀態（點擊標題列主講人統計標籤即可快速切換）
+  const [categorySpeakerFilterMap, setCategorySpeakerFilterMap] = useState<Record<string, string>>({});
+
+  const handleToggleCategorySpeakerFilter = (catId: string, speaker: string) => {
+    setCategorySpeakerFilterMap((prev) => {
+      const current = prev[catId];
+      if (current === speaker) {
+        const next = { ...prev };
+        delete next[catId];
+        return next;
+      }
+      return { ...prev, [catId]: speaker };
+    });
+    setCategoryPageMap((prev) => ({ ...prev, [catId]: 1 }));
+  };
+
+  const handleClearCategorySpeakerFilter = (catId: string) => {
+    setCategorySpeakerFilterMap((prev) => {
+      const next = { ...prev };
+      delete next[catId];
+      return next;
+    });
+    setCategoryPageMap((prev) => ({ ...prev, [catId]: 1 }));
+  };
 
   // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用主講人與筆數
   const availableDashboardSpeakers = useMemo(() => {
@@ -881,13 +905,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               return a.id.localeCompare(b.id);
             });
 
+          // 統計本主題館藏每位主講人的語音檔案數
+          const speakerCountMap: Record<string, number> = {};
+          let unassignedSpeakerCount = 0;
+          itemsInCat.forEach((item) => {
+            const sp = item.speaker?.trim();
+            if (sp) {
+              speakerCountMap[sp] = (speakerCountMap[sp] || 0) + 1;
+            } else {
+              unassignedSpeakerCount++;
+            }
+          });
+          const sortedSpeakerStats = Object.entries(speakerCountMap)
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-TW'))
+            .map(([speaker, count]) => ({ speaker, count }));
+
+          const activeSpeakerFilter = categorySpeakerFilterMap[category.id] || '';
+
+          const filteredCategoryItems = itemsInCat.filter((item) => {
+            if (!activeSpeakerFilter) return true;
+            if (activeSpeakerFilter === '__unassigned__') {
+              return !item.speaker || !item.speaker.trim();
+            }
+            return item.speaker?.trim() === activeSpeakerFilter;
+          });
+
           // 本分類專屬分頁計算（預設每頁 8 部，亦可自選 4, 8, 12, 16 或全部）
           const pageSize = categoryPageSizeMap[category.id] || 8;
-          const totalCount = itemsInCat.length;
+          const totalCount = filteredCategoryItems.length;
           const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
           const currentPage = categoryPageMap[category.id] || 1;
           const safePage = Math.min(currentPage, totalPages);
-          const paginatedItems = itemsInCat.slice((safePage - 1) * pageSize, safePage * pageSize);
+          const paginatedItems = filteredCategoryItems.slice((safePage - 1) * pageSize, safePage * pageSize);
 
           return (
             <section
@@ -917,14 +966,84 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
                         共 {itemsInCat.length} 部
                       </span>
+                      {activeSpeakerFilter && (
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400 text-[#2B1B11] font-bold shadow-xs">
+                          主講人篩選：{activeSpeakerFilter === '__unassigned__' ? '未指定' : activeSpeakerFilter} ({totalCount} 部)
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs md:text-sm text-white/85 mt-1">{category.description}</p>
+
+                    {/* 主講人語音檔案數統計徽章列 */}
+                    {itemsInCat.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2 border-t border-white/15 text-xs">
+                        <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
+                          <User className="w-3.5 h-3.5 text-amber-300" />
+                          <span>主講人統計：</span>
+                        </span>
+                        {sortedSpeakerStats.length > 0 ? (
+                          sortedSpeakerStats.map(({ speaker, count }) => {
+                            const isFilterActive = activeSpeakerFilter === speaker;
+                            return (
+                              <button
+                                key={speaker}
+                                type="button"
+                                onClick={() => handleToggleCategorySpeakerFilter(category.id, speaker)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                                  isFilterActive
+                                    ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                                    : 'bg-black/30 hover:bg-black/45 text-[#FAF5EC] border-white/20'
+                                }`}
+                                title={`主講人「${speaker}」在此主題共 ${count} 部語音（點擊可篩選）`}
+                              >
+                                <span>{speaker}</span>
+                                <span className={isFilterActive ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-300 font-mono font-bold'}>
+                                  ({count} 部)
+                                </span>
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-white/70 italic">尚無指定主講人</span>
+                        )}
+
+                        {unassignedSpeakerCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCategorySpeakerFilter(category.id, '__unassigned__')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                              activeSpeakerFilter === '__unassigned__'
+                                ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                                : 'bg-black/25 hover:bg-black/40 text-white/80 border-white/15'
+                            }`}
+                            title={`尚未指定主講人的語音共 ${unassignedSpeakerCount} 部（點擊可篩選）`}
+                          >
+                            <span>未指定</span>
+                            <span className={activeSpeakerFilter === '__unassigned__' ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-200/90 font-mono font-bold'}>
+                              ({unassignedSpeakerCount} 部)
+                            </span>
+                          </button>
+                        )}
+
+                        {activeSpeakerFilter && (
+                          <button
+                            type="button"
+                            onClick={() => handleClearCategorySpeakerFilter(category.id)}
+                            className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/25 hover:bg-white/35 text-[11px] text-white border border-white/30 cursor-pointer transition font-medium ml-1"
+                            title="清除主講人篩選，顯示本主題全部語音"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>清除篩選 (顯示全部 {itemsInCat.length} 部)</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
                   {/* 標題列分頁控制項（依需求加入分頁，避免語音檔太多時畫面被拉太長） */}
-                  {itemsInCat.length > 0 && (
+                  {totalCount > 0 && (
                     <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-white/25 text-xs shadow-xs">
                       {/* 每頁部數下拉選單 */}
                       <select
@@ -984,13 +1103,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
                   <button
                     type="button"
-                    disabled={itemsInCat.length === 0}
-                    onClick={() => onStartShufflePlayback(itemsInCat, category.id)}
+                    disabled={filteredCategoryItems.length === 0}
+                    onClick={() => onStartShufflePlayback(filteredCategoryItems, category.id)}
                     className="px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
                     title={`隨機排列並播放「${category.name}」主題館藏語音`}
                   >
                     <Shuffle className="w-3.5 h-3.5" />
-                    <span>隨機播放 {itemsInCat.length > 0 ? `(${itemsInCat.length})` : ''}</span>
+                    <span>隨機播放 {filteredCategoryItems.length > 0 ? `(${filteredCategoryItems.length})` : ''}</span>
                   </button>
 
                   <button
@@ -1012,18 +1131,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               {/* 書架展示層 */}
               <div className="p-6 pb-4 bg-gradient-to-b from-[#F8F3E8] to-[#EFE6D5]">
-                {itemsInCat.length === 0 ? (
+                {filteredCategoryItems.length === 0 ? (
                   <div className="py-10 text-center border-2 border-dashed border-[#D5C5AE] rounded-xl bg-[#FAF6EE]">
                     <p className="text-[#7A6855] text-sm mb-3">
-                      「{category.name}」書架目前尚無語音館藏
+                      {activeSpeakerFilter ? '目前篩選的主講人在此主題尚無符合的語音檔' : `「${category.name}」書架目前尚無語音館藏`}
                     </p>
-                    <button
-                      onClick={() => onNavigateToUpload(category.id)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>立即上傳第一部語音檔</span>
-                    </button>
+                    {activeSpeakerFilter ? (
+                      <button
+                        onClick={() => handleClearCategorySpeakerFilter(category.id)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                        <span>清除主講人篩選 (顯示全部)</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onNavigateToUpload(category.id)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>立即上傳第一部語音檔</span>
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -1056,13 +1185,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 <span className="text-amber-300 font-bold tracking-wider">{callNumber}</span>
                               </span>
 
-                              {/* 時長與插圖數量 */}
-                              <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between text-white text-xs">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/60 backdrop-blur-xs">
+                              {/* 時長、主講人與插圖數量（時長與展演圖中間顯示主講人） */}
+                              <div className="absolute bottom-2.5 left-5 right-3 flex items-center justify-between gap-1 text-white text-xs">
+                                {/* 時長 */}
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs shrink-0 shadow-xs">
                                   <Clock className="w-3 h-3 text-amber-300" />
-                                  {formatDuration(item.duration)}
+                                  <span className="font-mono text-[11px]">{formatDuration(item.duration)}</span>
                                 </span>
-                                <span className="px-2 py-0.5 rounded bg-black/60 text-[11px] text-amber-200">
+
+                                {/* 顯示主講人（位於時長與展演圖中間） */}
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-[11px] max-w-[110px] truncate shrink-0 shadow-xs border border-white/10"
+                                  title={item.speaker ? `主講人：${item.speaker}` : '主講人：尚未指定'}
+                                >
+                                  <User className="w-3 h-3 text-amber-300 shrink-0" />
+                                  <span className={`truncate ${item.speaker ? 'text-[#F3D5B5] font-medium' : 'text-white/60 italic'}`}>
+                                    {item.speaker || '未指定'}
+                                  </span>
+                                </span>
+
+                                {/* 展演圖數量 */}
+                                <span className="px-2 py-0.5 rounded bg-black/65 backdrop-blur-xs text-[11px] text-amber-200 shrink-0 shadow-xs">
                                   {item.playbackDisplay.slides.length} 張展演圖
                                 </span>
                               </div>
@@ -1127,8 +1270,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <div className="mt-6 pt-4 border-t border-[#DFD2BE] flex flex-wrap items-center justify-between gap-3 text-xs text-[#5C3A1B]">
                         <div className="flex items-center gap-2">
                           <span className="font-medium">
-                            顯示第 {(safePage - 1) * pageSize + 1} 至 {Math.min(safePage * pageSize, itemsInCat.length)} 部
-                            （本主題共 {itemsInCat.length} 部）
+                            顯示第 {(safePage - 1) * pageSize + 1} 至 {Math.min(safePage * pageSize, totalCount)} 部
+                            （{activeSpeakerFilter ? `主講人篩選共 ${totalCount} 部，本主題總計 ${itemsInCat.length} 部` : `本主題共 ${itemsInCat.length} 部`}）
                           </span>
                         </div>
 
