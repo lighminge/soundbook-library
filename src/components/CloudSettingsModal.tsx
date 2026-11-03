@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import { CloudConfig } from '../types';
 import {
@@ -17,6 +19,7 @@ import {
   getCloudConfig,
   saveCloudConfig,
   testGoogleDriveConnection,
+  isAppCheckActive,
 } from '../services/storageService';
 
 interface CloudSettingsModalProps {
@@ -379,6 +382,67 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   className="w-full px-3 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Firebase App Check (reCAPTCHA Enterprise) 防護設定 */}
+          <div className="p-4 rounded-xl bg-[#F2F7F4] border border-[#CDE3D5] space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-[#1B5E20] font-bold text-sm">
+                <ShieldCheck className="w-4 h-4 text-[#2E7D32]" />
+                <span>3. Firebase App Check (reCAPTCHA Enterprise) 雲端防護</span>
+                <span
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${
+                    config.recaptchaEnterpriseSiteKey
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : 'bg-amber-100 text-amber-800 border-amber-300'
+                  }`}
+                >
+                  {config.recaptchaEnterpriseSiteKey ? '🛡️ 已設定金鑰 (安全保護中)' : '尚未設定金鑰'}
+                </span>
+              </div>
+              <a
+                href="https://console.firebase.google.com/project/soundbook-library-db/appcheck"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-[#2E7D32] hover:underline flex items-center gap-1 font-semibold"
+              >
+                <span>開啟 App Check 控制台</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="text-xs text-[#35523A] space-y-1.5 bg-white/80 p-3 rounded-lg border border-[#CDE3D5]">
+              <p className="font-bold text-[#1B5E20]">🛡️ 如何啟用 reCAPTCHA Enterprise 雲端防護？</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>
+                  前往 Firebase 控制台 ➔ <strong>App Check</strong> ➔ 在 Web 應用程式 (<code>soundbook-library-db</code>) 點擊 <strong>「註冊 (Register)」</strong>。
+                </li>
+                <li>
+                  提供者請選擇 <strong>reCAPTCHA Enterprise</strong>，依提示建立或綁定 Google Cloud 金鑰（授權網域請包含 <code>soundbook-library-db.web.app</code> 與 <code>localhost</code>）。
+                </li>
+                <li>
+                  將產生的 <strong>網站金鑰 (Site Key)</strong> 貼在下方欄位後點擊儲存，聲書閣將自動為每次 Firestore 讀寫附加安全權杖，徹底阻絕惡意爬蟲與未授權寫入。
+                </li>
+              </ol>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#1B5E20] mb-1">
+                reCAPTCHA Enterprise 網站金鑰 (Site Key)
+              </label>
+              <input
+                type="text"
+                value={config.recaptchaEnterpriseSiteKey || ''}
+                onChange={(e) =>
+                  setConfig({ ...config, recaptchaEnterpriseSiteKey: e.target.value.trim() })
+                }
+                placeholder="例如：6Lxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                className="w-full px-3 py-2 rounded-lg border border-[#BBD9C5] bg-white text-xs font-mono focus:border-[#2E7D32] focus:ring-1 focus:ring-[#2E7D32] outline-none"
+              />
+              <p className="text-[11px] text-[#6A8270] mt-1">
+                💡 說明：若未填寫此金鑰，系統將以原先設定的 Firestore 安全性規則正常運作；填入後將立即啟用 App Check 雙層驗證防護。
+              </p>
             </div>
           </div>
 

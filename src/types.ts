@@ -92,4 +92,6 @@ export interface CloudConfig {
   // Google 雲端硬碟設定 (GAS Web App URL 或 Google Drive API Folder)
   googleDriveScriptUrl: string;
   googleDriveFolderId: string;
+  // Firebase App Check (reCAPTCHA Enterprise) 雲端防護金鑰
+  recaptchaEnterpriseSiteKey?: string;
 }

@@ -1,4 +1,5 @@
 import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, AppCheck } from 'firebase/app-check';
 import {
   getFirestore,
   collection,
@@ -36,9 +37,16 @@ export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
     'https://script.google.com/macros/s/AKfycbyk81N8kBN2uTbyv3S2qIzb_8NSV3KGZLiaIXc0C8O9PIS3sb_8K7N5RbYf8e3xYxwpgA/exec',
   googleDriveFolderId:
     import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID || '1WgIKuwXgLkg86EKvtCHPxwJ9O5QjSBIt',
+  recaptchaEnterpriseSiteKey:
+    import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY || '',
 };
 
 let firestoreDb: Firestore | null = null;
+let appCheckInstance: AppCheck | null = null;
+
+export function isAppCheckActive(): boolean {
+  return appCheckInstance !== null;
+}
 
 /**
  * 自動從使用者貼上的完整 Google Drive 網址或字串中擷取純粹的 Folder ID
@@ -65,6 +73,7 @@ export function getCloudConfig(): CloudConfig {
       return {
         ...DEFAULT_CLOUD_CONFIG,
         ...parsed,
+        recaptchaEnterpriseSiteKey: (parsed.recaptchaEnterpriseSiteKey ?? DEFAULT_CLOUD_CONFIG.recaptchaEnterpriseSiteKey ?? '').trim(),
         googleDriveScriptUrl: (parsed.googleDriveScriptUrl || DEFAULT_CLOUD_CONFIG.googleDriveScriptUrl).trim(),
         googleDriveFolderId: extractDriveFolderId(parsed.googleDriveFolderId || DEFAULT_CLOUD_CONFIG.googleDriveFolderId),
       };
@@ -78,11 +87,13 @@ export function getCloudConfig(): CloudConfig {
 export async function saveCloudConfig(config: CloudConfig): Promise<void> {
   const cleaned: CloudConfig = {
     ...config,
+    recaptchaEnterpriseSiteKey: (config.recaptchaEnterpriseSiteKey || '').trim(),
     googleDriveScriptUrl: (config.googleDriveScriptUrl || '').trim(),
     googleDriveFolderId: extractDriveFolderId(config.googleDriveFolderId || ''),
   };
   localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cleaned));
   firestoreDb = null; // 重新初始化
+  appCheckInstance = null; // 重新初始化 App Check
 
   // 同步將 Google Drive 設定儲存至 Firebase Firestore，讓手機與電腦跨裝置自動共用！
   await writeDriveConfigToFirestore(cleaned.googleDriveScriptUrl, cleaned.googleDriveFolderId);
@@ -214,6 +225,27 @@ export function getDbInstance(): Firestore | null {
       });
     }
     firestoreDb = getFirestore(app);
+
+    // 若有設定 reCAPTCHA Enterprise Site Key 且在瀏覽器環境，自動啟用 Firebase App Check 雲端防護
+    if (typeof window !== 'undefined' && config.recaptchaEnterpriseSiteKey && !appCheckInstance) {
+      try {
+        if (
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1'
+        ) {
+          (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+        }
+
+        appCheckInstance = initializeAppCheck(app, {
+          provider: new ReCaptchaEnterpriseProvider(config.recaptchaEnterpriseSiteKey),
+          isTokenAutoRefreshEnabled: true,
+        });
+        console.log('Firebase App Check (reCAPTCHA Enterprise) 防護已啟動');
+      } catch (appCheckErr) {
+        console.warn('Firebase App Check 初始化略過或失敗:', appCheckErr);
+      }
+    }
+
     return firestoreDb;
   } catch (err) {
     console.error('Firebase 初始化失敗:', err);
