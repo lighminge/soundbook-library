@@ -61,6 +61,26 @@ export interface SavedPlaylist {
   updatedAt: string; // ISO 8601 時間字串
 }
 
+export type UserRole = 'admin' | 'user' | 'guest';
+
+export interface AppUser {
+  id: string; // e.g. "user_admin" or "user_1730592000000"
+  username: string; // 登入帳號（不重複，如 admin）
+  password: string; // 密碼
+  displayName: string; // 顯示姓名或職稱（如 系統管理者）
+  role: 'admin' | 'user'; // 帳號角色
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+}
+
+export interface CurrentUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  isGuest?: boolean;
+}
+
 export interface CloudConfig {
   // Firebase 設定
   firebaseApiKey: string;

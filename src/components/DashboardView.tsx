@@ -189,6 +189,7 @@ interface DashboardViewProps {
   onStartShufflePlayback: (items: AudioItem[], categoryId?: string) => void;
   onAddCategory: (newCat: Omit<Category, 'id' | 'createdAt' | 'order'>) => void;
   onOpenCloudSettings: () => void;
+  isGuest?: boolean;
 }
 
 export function getCategoryIcon(iconName: string, className = 'w-5 h-5') {
@@ -315,6 +316,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onStartShufflePlayback,
   onAddCategory,
   onOpenCloudSettings,
+  isGuest = false,
 }) => {
   const [selectedAisle, setSelectedAisle] = useState<string>('all');
   const [showNewCatModal, setShowNewCatModal] = useState(false);
@@ -504,22 +506,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => onNavigateToUpload()}
-              className="flex items-center gap-2 px-5 py-3 rounded-xl bg-[#D4A373] hover:bg-[#E2B485] text-[#2B1B11] font-semibold text-sm shadow-lg transition cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>上傳新語音館藏</span>
-            </button>
-            <button
-              onClick={() => setShowNewCatModal(true)}
-              className="flex items-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-[#FAF5EC] border border-white/20 text-sm font-medium transition cursor-pointer"
-            >
-              <FolderPlus className="w-4 h-4" />
-              <span>新增館藏分類</span>
-            </button>
-          </div>
+          {!isGuest ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => onNavigateToUpload()}
+                className="flex items-center gap-2 px-5 py-3 rounded-xl bg-[#D4A373] hover:bg-[#E2B485] text-[#2B1B11] font-semibold text-sm shadow-lg transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>上傳新語音館藏</span>
+              </button>
+              <button
+                onClick={() => setShowNewCatModal(true)}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-[#FAF5EC] border border-white/20 text-sm font-medium transition cursor-pointer"
+              >
+                <FolderPlus className="w-4 h-4" />
+                <span>新增館藏分類</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-[#FAF5EC] text-xs">
+              <Compass className="w-4 h-4 text-[#D4A373]" />
+              <span>訪客瀏覽模式 · 歡迎自由檢索與聆聽館藏</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1119,13 +1128,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span>進入本廳放映室</span>
                   </button>
-                  <button
-                    onClick={() => onNavigateToUpload(category.id)}
-                    className="px-3.5 py-2 rounded-lg bg-[#FAF5EC] hover:bg-white text-[#2B1B11] text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>在此分類上傳語音</span>
-                  </button>
+                  {!isGuest && (
+                    <button
+                      onClick={() => onNavigateToUpload(category.id)}
+                      className="px-3.5 py-2 rounded-lg bg-[#FAF5EC] hover:bg-white text-[#2B1B11] text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>在此分類上傳語音</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1144,7 +1155,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <X className="w-4 h-4" />
                         <span>清除主講人篩選 (顯示全部)</span>
                       </button>
-                    ) : (
+                    ) : !isGuest ? (
                       <button
                         onClick={() => onNavigateToUpload(category.id)}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
@@ -1152,7 +1163,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <Plus className="w-4 h-4" />
                         <span>立即上傳第一部語音檔</span>
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 ) : (
                   <>
@@ -1251,13 +1262,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   <Play className="w-3.5 h-3.5 fill-current" />
                                   <span>放映室播放</span>
                                 </button>
-                                <button
-                                  onClick={() => onSelectForEdit(item)}
-                                  title="編輯語音檔、封面與播放圖文"
-                                  className="p-2 rounded-lg border border-[#DCCB88] bg-[#FAF4E8] hover:bg-[#EFE2C8] text-[#5C3A1B] transition cursor-pointer"
-                                >
-                                  <Edit3 className="w-4 h-4" />
-                                </button>
+                                {!isGuest && (
+                                  <button
+                                    onClick={() => onSelectForEdit(item)}
+                                    title="編輯語音檔、封面與播放圖文"
+                                    className="p-2 rounded-lg border border-[#DCCB88] bg-[#FAF4E8] hover:bg-[#EFE2C8] text-[#5C3A1B] transition cursor-pointer"
+                                  >
+                                    <Edit3 className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>

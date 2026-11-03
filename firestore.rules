@@ -79,6 +79,17 @@ rules_version = '2';
 //   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
+// Collection: systemUsers
+// Document ID: {userId} (matches field `id`, e.g., "user_admin" or "user_1730000000000")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal userId) - Unique user identifier
+//   - username: string (required, 1..50 chars) - Login account name
+//   - displayName: string (required, 1..50 chars) - Display name or title
+//   - password: string (required, 1..100 chars) - User password credential
+//   - role: string (required, must be 'admin' or 'user') - User system role
+//   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Account creation timestamp string
+//   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -371,6 +382,39 @@ service cloud.firestore {
         isValidDateString(data.updatedAt);
     }
 
+    // Validate SystemUser document schema and field bounds
+    function isValidSystemUser(data, userId) {
+      let requiredFields = [
+        'id',
+        'username',
+        'displayName',
+        'password',
+        'role',
+        'createdAt',
+        'updatedAt'
+      ];
+      let allowedFields = [
+        'id',
+        'username',
+        'displayName',
+        'password',
+        'role',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == userId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('username', 1, 50) &&
+        validStringLength('displayName', 1, 50) &&
+        validStringLength('password', 1, 100) &&
+        data.role is string && (data.role == 'admin' || data.role == 'user') &&
+        isValidDateString(data.createdAt) &&
+        isValidDateString(data.updatedAt);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -418,6 +462,17 @@ service cloud.firestore {
       allow update: if isValidPlaylist(request.resource.data, playlistId) &&
                        areImmutableFieldsUnchanged(['id', 'createdAt']);
       allow delete: if true;
+    }
+
+    // System User Management (systemUsers/{userId})
+    match /systemUsers/{userId} {
+      allow read: if true;
+      allow create: if isValidSystemUser(request.resource.data, userId);
+      allow update: if isValidSystemUser(request.resource.data, userId) &&
+                       areImmutableFieldsUnchanged(['id', 'createdAt']) &&
+                       (resource.data.username != 'admin' || request.resource.data.username == 'admin') &&
+                       (resource.data.id != 'user_admin' || request.resource.data.username == 'admin');
+      allow delete: if resource.data.username != 'admin' && resource.data.id != 'user_admin';
     }
 
     // Default deny for all other collections and paths

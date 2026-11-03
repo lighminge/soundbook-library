@@ -192,7 +192,7 @@ async function ensureDriveConfigSynced(): Promise<void> {
   }
 }
 
-function getDbInstance(): Firestore | null {
+export function getDbInstance(): Firestore | null {
   const config = getCloudConfig();
   if (!isFirebaseConfigured(config)) return null;
 

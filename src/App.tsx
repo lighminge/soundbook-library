@@ -9,8 +9,13 @@ import {
   Github,
   Database,
   HardDrive,
+  Users,
+  LogOut,
+  Shield,
+  User as UserIcon,
+  Compass,
 } from 'lucide-react';
-import { AudioItem, Category } from './types';
+import { AudioItem, Category, CurrentUser } from './types';
 import {
   deleteCategoryItem,
   isGoogleDriveConfigured,
@@ -19,6 +24,9 @@ import {
   saveAudioItem,
   saveCategoryItem,
 } from './services/storageService';
+import { getCurrentSessionUser, logout, GUEST_USER } from './services/authService';
+import { LoginView } from './components/LoginView';
+import { UserManagerModal } from './components/UserManagerModal';
 import { DashboardView } from './components/DashboardView';
 import { ScreeningRoomView } from './components/ScreeningRoomView';
 import { AudioLibraryView } from './components/AudioLibraryView';
@@ -28,11 +36,17 @@ import { CloudSettingsModal } from './components/CloudSettingsModal';
 type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog';
 
 export function App() {
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
+  const [isUserManagerOpen, setIsUserManagerOpen] = useState(false);
+
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [categories, setCategories] = useState<Category[]>([]);
   const [audioItems, setAudioItems] = useState<AudioItem[]>([]);
   const [dataSource, setDataSource] = useState<'firebase' | 'local'>('local');
   const [driveConnected, setDriveConnected] = useState<boolean>(false);
+
+  const isGuest = currentUser?.role === 'guest' || currentUser?.isGuest === true;
+  const isAdmin = currentUser?.role === 'admin';
 
   // 放映室目前選取播放的語音檔與分類篩選
   const [activeAudioForPlayback, setActiveAudioForPlayback] = useState<AudioItem | null>(null);
@@ -89,13 +103,19 @@ export function App() {
     if (
       tabFromUrl === 'screening' ||
       tabFromUrl === 'dashboard' ||
-      tabFromUrl === 'library' ||
-      tabFromUrl === 'catalog'
+      (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog'))
     ) {
       setActiveTab(tabFromUrl as any);
     }
     reloadAllData();
   }, []);
+
+  // 訪客模式保護：若處於訪客模式且目前頁籤為上傳或管理，自動導回總覽
+  useEffect(() => {
+    if (isGuest && (activeTab === 'library' || activeTab === 'catalog')) {
+      setActiveTab('dashboard');
+    }
+  }, [isGuest, activeTab]);
 
   // 新增分類
   const handleAddCategory = async (
@@ -227,6 +247,24 @@ export function App() {
     return await removeAudioItem(itemId, nextItems, targetItem);
   };
 
+  // 登入驗證防護：若尚未登入，顯示系統登入驗證畫面
+  if (!currentUser) {
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          reloadAllData();
+        }}
+        onGuestLogin={() => {
+          const guest = getCurrentSessionUser() || GUEST_USER;
+          setCurrentUser(guest);
+          setActiveTab('dashboard');
+          reloadAllData();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F6F1E7] text-[#2C221E]">
       {/* 頂部圖書館導覽列 */}
@@ -235,7 +273,7 @@ export function App() {
           {/* 左側品牌標誌 */}
           <div
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-3 cursor-pointer"
+            className="flex items-center gap-3 cursor-pointer shrink-0"
           >
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center text-[#261A13] shadow-inner">
               <Library className="w-5 h-5 stroke-[2.2]" />
@@ -281,43 +319,95 @@ export function App() {
               <span>2. 放映室 (Screening Room)</span>
             </button>
 
-            <button
-              onClick={() => {
-                setEditingAudioItem(null);
-                setActiveTab('library');
-              }}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
-                activeTab === 'library'
-                  ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
-                  : 'text-[#E6D7C3] hover:bg-white/10'
-              }`}
-            >
-              <FolderKanban className="w-4 h-4" />
-              <span>3. 語音檔案庫 (上傳與編輯)</span>
-            </button>
+            {!isGuest && (
+              <>
+                <button
+                  onClick={() => {
+                    setEditingAudioItem(null);
+                    setActiveTab('library');
+                  }}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+                    activeTab === 'library'
+                      ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
+                      : 'text-[#E6D7C3] hover:bg-white/10'
+                  }`}
+                >
+                  <FolderKanban className="w-4 h-4" />
+                  <span>3. 語音檔案庫 (上傳與編輯)</span>
+                </button>
 
-            <button
-              onClick={() => setActiveTab('catalog')}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
-                activeTab === 'catalog'
-                  ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
-                  : 'text-[#E6D7C3] hover:bg-white/10'
-              }`}
-            >
-              <Tags className="w-4 h-4" />
-              <span>4. 館藏資料管理</span>
-            </button>
+                <button
+                  onClick={() => setActiveTab('catalog')}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+                    activeTab === 'catalog'
+                      ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
+                      : 'text-[#E6D7C3] hover:bg-white/10'
+                  }`}
+                >
+                  <Tags className="w-4 h-4" />
+                  <span>4. 館藏資料管理</span>
+                </button>
+              </>
+            )}
           </nav>
 
-          {/* 右側雲端連線設定按鈕 */}
+          {/* 右側使用者資訊、管理與設定按鈕 */}
           <div className="flex items-center gap-2">
+            {/* 使用者身分徽章 */}
+            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 border border-[#4A3427] text-xs">
+              {isAdmin ? (
+                <>
+                  <Shield className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-amber-200 font-medium">管理者 ({currentUser.username})</span>
+                </>
+              ) : isGuest ? (
+                <>
+                  <Compass className="w-3.5 h-3.5 text-amber-300" />
+                  <span className="text-[#E6D7C3]">訪客模式 (瀏覽/播放)</span>
+                </>
+              ) : (
+                <>
+                  <UserIcon className="w-3.5 h-3.5 text-stone-300" />
+                  <span className="text-[#E6D7C3]">{currentUser.displayName || currentUser.username}</span>
+                </>
+              )}
+            </div>
+
+            {/* 系統使用者管理按鈕（限管理員） */}
+            {isAdmin && (
+              <button
+                onClick={() => setIsUserManagerOpen(true)}
+                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs font-medium text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                title="系統使用者帳號管理（新增、修改、刪除）"
+              >
+                <Users className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">帳號管理</span>
+              </button>
+            )}
+
+            {/* 雲端設定按鈕（限管理者與編輯員，訪客不顯示） */}
+            {!isGuest && (
+              <button
+                onClick={() => setIsCloudModalOpen(true)}
+                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-medium text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer"
+                title="設定 Firebase (soundbook-library-db) 與 Google 雲端硬碟"
+              >
+                <Settings className="w-4 h-4 text-[#D4A373]" />
+                <span className="hidden xl:inline">雲端連線</span>
+              </button>
+            )}
+
+            {/* 登出按鈕 */}
             <button
-              onClick={() => setIsCloudModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-medium text-[#F3D5B5] flex items-center gap-2 transition cursor-pointer"
-              title="設定 Firebase (soundbook-library-db) 與 Google 雲端硬碟"
+              onClick={() => {
+                logout();
+                setCurrentUser(null);
+              }}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-xs font-medium text-red-200 flex items-center gap-1.5 transition cursor-pointer"
+              title="登出系統"
             >
-              <Settings className="w-4 h-4 text-[#D4A373]" />
-              <span className="hidden sm:inline">雲端連線設定</span>
+              <LogOut className="w-3.5 h-3.5 text-red-400" />
+              <span className="hidden sm:inline">登出</span>
             </button>
           </div>
         </div>
@@ -343,27 +433,31 @@ export function App() {
           <Radio className="w-3.5 h-3.5" />
           <span>放映室</span>
         </button>
-        <button
-          onClick={() => {
-            setEditingAudioItem(null);
-            setActiveTab('library');
-          }}
-          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
-            activeTab === 'library' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
-          }`}
-        >
-          <FolderKanban className="w-3.5 h-3.5" />
-          <span>語音檔案庫</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('catalog')}
-          className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
-            activeTab === 'catalog' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
-          }`}
-        >
-          <Tags className="w-3.5 h-3.5" />
-          <span>館藏資料管理</span>
-        </button>
+        {!isGuest && (
+          <>
+            <button
+              onClick={() => {
+                setEditingAudioItem(null);
+                setActiveTab('library');
+              }}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
+                activeTab === 'library' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
+              }`}
+            >
+              <FolderKanban className="w-3.5 h-3.5" />
+              <span>語音檔案庫</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('catalog')}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${
+                activeTab === 'catalog' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
+              }`}
+            >
+              <Tags className="w-3.5 h-3.5" />
+              <span>館藏管理</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* 主內容區 */}
@@ -374,6 +468,7 @@ export function App() {
             audioItems={audioItems}
             dataSource={dataSource}
             driveConnected={driveConnected}
+            isGuest={isGuest}
             onSelectForPlayback={(item) => {
               setActiveAudioForPlayback(item);
               setScreeningCategoryFilter('all');
@@ -408,6 +503,7 @@ export function App() {
             initialCategoryFilter={screeningCategoryFilter}
             initialPlaylistIds={screeningInitialPlaylistIds}
             initialAutoPlay={screeningInitialAutoPlay}
+            isGuest={isGuest}
             onClearInitialPlaylist={() => {
               setScreeningInitialPlaylistIds([]);
               setScreeningInitialAutoPlay(false);
@@ -421,7 +517,7 @@ export function App() {
           />
         )}
 
-        {activeTab === 'library' && (
+        {activeTab === 'library' && !isGuest && (
           <AudioLibraryView
             categories={categories}
             audioItems={audioItems}
@@ -437,7 +533,7 @@ export function App() {
           />
         )}
 
-        {activeTab === 'catalog' && (
+        {activeTab === 'catalog' && !isGuest && (
           <CatalogManagementView
             categories={categories}
             audioItems={audioItems}
@@ -493,6 +589,15 @@ export function App() {
         onClose={() => setIsCloudModalOpen(false)}
         onSaved={reloadAllData}
       />
+
+      {/* 系統使用者帳號管理 Modal（管理員專屬） */}
+      {isAdmin && (
+        <UserManagerModal
+          isOpen={isUserManagerOpen}
+          onClose={() => setIsUserManagerOpen(false)}
+          currentUserId={currentUser.id}
+        />
+      )}
     </div>
   );
 }
