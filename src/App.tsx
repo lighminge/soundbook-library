@@ -37,6 +37,19 @@ export function App() {
   // 放映室目前選取播放的語音檔與分類篩選
   const [activeAudioForPlayback, setActiveAudioForPlayback] = useState<AudioItem | null>(null);
   const [screeningCategoryFilter, setScreeningCategoryFilter] = useState<string>('all');
+  // 放映室啟動隨機播放時帶入的自訂播放佇列與自動播放標記
+  const [screeningInitialPlaylistIds, setScreeningInitialPlaylistIds] = useState<string[]>([]);
+  const [screeningInitialAutoPlay, setScreeningInitialAutoPlay] = useState<boolean>(false);
+
+  const handleStartShufflePlayback = (items: AudioItem[], categoryId?: string) => {
+    if (!items || items.length === 0) return;
+    const shuffled = [...items].sort(() => Math.random() - 0.5);
+    setActiveAudioForPlayback(shuffled[0]);
+    setScreeningInitialPlaylistIds(shuffled.map((i) => i.id));
+    setScreeningInitialAutoPlay(true);
+    setScreeningCategoryFilter(categoryId || 'all');
+    setActiveTab('screening');
+  };
 
   // 語音檔案庫目前選取編輯的語音檔與預設上傳分類
   const [editingAudioItem, setEditingAudioItem] = useState<AudioItem | null>(null);
@@ -381,6 +394,7 @@ export function App() {
               if (firstInCat) setActiveAudioForPlayback(firstInCat);
               setActiveTab('screening');
             }}
+            onStartShufflePlayback={handleStartShufflePlayback}
             onAddCategory={handleAddCategory}
             onOpenCloudSettings={() => setIsCloudModalOpen(true)}
           />
@@ -392,6 +406,12 @@ export function App() {
             audioItems={audioItems}
             activeAudio={activeAudioForPlayback}
             initialCategoryFilter={screeningCategoryFilter}
+            initialPlaylistIds={screeningInitialPlaylistIds}
+            initialAutoPlay={screeningInitialAutoPlay}
+            onClearInitialPlaylist={() => {
+              setScreeningInitialPlaylistIds([]);
+              setScreeningInitialAutoPlay(false);
+            }}
             onSelectAudio={(item) => setActiveAudioForPlayback(item)}
             onEditAudio={(item) => {
               setEditingAudioItem(item);

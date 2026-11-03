@@ -74,6 +74,9 @@ interface ScreeningRoomViewProps {
   audioItems: AudioItem[];
   activeAudio: AudioItem | null;
   initialCategoryFilter?: string;
+  initialPlaylistIds?: string[];
+  initialAutoPlay?: boolean;
+  onClearInitialPlaylist?: () => void;
   onSelectAudio: (item: AudioItem) => void;
   onEditAudio: (item: AudioItem) => void;
   onSaveAudioItem: (item: AudioItem) => Promise<void>;
@@ -116,6 +119,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   audioItems,
   activeAudio,
   initialCategoryFilter = 'all',
+  initialPlaylistIds,
+  initialAutoPlay = false,
+  onClearInitialPlaylist,
   onSelectAudio,
   onEditAudio,
   onSaveAudioItem,
@@ -133,28 +139,31 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [manualSegmentIndex, setManualSegmentIndex] = useState<number | null>(null);
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
-  // 放映室「播放清單」功能：持久化儲存語音 ID 序列
+  // 放映室「播放清單」功能：僅在放映室當前畫面週期內暫存，不寫入 localStorage；離開放映室後自動清空
   const [playlistItemIds, setPlaylistItemIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('soundbook_screening_playlist');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    return [];
+    return initialPlaylistIds && initialPlaylistIds.length > 0 ? initialPlaylistIds : [];
   });
 
-  // 當 playlistItemIds 異動時自動存入 localStorage
+  // 當由外部（如「館藏總覽」隨機播放按鈕）傳入 initialPlaylistIds 時同步套用
   useEffect(() => {
-    try {
-      localStorage.setItem('soundbook_screening_playlist', JSON.stringify(playlistItemIds));
-    } catch {
-      // ignore
+    if (initialPlaylistIds && initialPlaylistIds.length > 0) {
+      setPlaylistItemIds(initialPlaylistIds);
+      if (initialAutoPlay) {
+        pendingAutoPlayRef.current = true;
+      }
+      onClearInitialPlaylist?.();
     }
-  }, [playlistItemIds]);
+  }, [initialPlaylistIds, initialAutoPlay, onClearInitialPlaylist]);
+
+  // 離開放映室頁面（組件卸載）時，清空暫存播放清單
+  useEffect(() => {
+    return () => {
+      setPlaylistItemIds([]);
+      setActiveSavedPlaylistId(null);
+      localStorage.removeItem('soundbook_screening_playlist');
+      localStorage.removeItem('soundbook_active_saved_playlist_id');
+    };
+  }, []);
 
   // 有效的播放清單項目 (自動過濾已不存在的語音)
   const playlistItems: AudioItem[] = useMemo(() => {
@@ -268,30 +277,34 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       currentItem?.id
     );
 
-  // 當切換曲目時重置播放狀態
+  // 當切換曲目時重置播放狀態（保留 pendingAutoPlayRef，讓新曲目就緒後立即自動放映）
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
     setManualSlideIndex(null);
     setManualSegmentIndex(null);
     setIsEditingSegment(false);
-    pendingAutoPlayRef.current = false;
     if (currentItem) {
       setDuration(currentItem.duration || 20);
     }
   }, [currentItem?.id]);
 
-  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源；若手機使用者已按下播放則自動開始播放
+  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源；若使用者已按下播放則自動開始播放
   useEffect(() => {
     const audio = audioRef.current;
     if (audio && playableScreeningUrl) {
       audio.load();
       if (pendingAutoPlayRef.current) {
-        pendingAutoPlayRef.current = false;
         audio
           .play()
-          .then(() => setIsPlaying(true))
-          .catch((err) => console.warn('自動開始播放失敗:', err));
+          .then(() => {
+            setIsPlaying(true);
+            pendingAutoPlayRef.current = false;
+          })
+          .catch((err) => {
+            console.warn('自動開始播放待 canplay:', err);
+            // 保留 pendingAutoPlayRef.current = true，交由 onCanPlay 事件觸發播放
+          });
       }
     }
   }, [playableScreeningUrl]);
@@ -338,6 +351,40 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setShelfSearchTag('');
     }
   }, [availableShelfTags, shelfSearchTag]);
+
+  // 當使用者在「搜尋館藏語音」輸入關鍵字或選取標籤時：若播放清單內有內容，自動清空並切回「館藏選片書架」顯示查詢結果
+  const handleSearchQueryChange = (val: string) => {
+    setSearchQuery(val);
+    if (val.trim()) {
+      if (playlistItemIds.length > 0) {
+        setPlaylistItemIds([]);
+        setActiveSavedPlaylistId(null);
+      }
+      setShelfTab('shelf');
+    }
+  };
+
+  const handleShelfSearchTagChange = (tagVal: string) => {
+    setShelfSearchTag(tagVal);
+    if (tagVal) {
+      if (playlistItemIds.length > 0) {
+        setPlaylistItemIds([]);
+        setActiveSavedPlaylistId(null);
+      }
+      setShelfTab('shelf');
+    }
+  };
+
+  const handleShelfSearchTitleChange = (titleVal: string) => {
+    setShelfSearchTitle(titleVal);
+    if (titleVal.trim()) {
+      if (playlistItemIds.length > 0) {
+        setPlaylistItemIds([]);
+        setActiveSavedPlaylistId(null);
+      }
+      setShelfTab('shelf');
+    }
+  };
 
   // 點選書架上的語音檔時，切換曲目；手機版自動平滑捲動至下方的播放舞台，電腦版則平滑定位至頂部播放視角
   const handleSelectShelfAudio = (item: AudioItem) => {
@@ -1099,14 +1146,21 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     localStorage.removeItem('soundbook_active_saved_playlist_id');
 
     pendingAutoPlayRef.current = true;
-    onSelectAudio(shuffled[0]);
+    const targetItem = shuffled[0];
+    onSelectAudio(targetItem);
 
-    if (shuffled[0].id === currentItem?.id && audioRef.current && playableScreeningUrl) {
-      audioRef.current.currentTime = 0;
-      audioRef.current
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch((err) => console.warn('自動開始播放失敗:', err));
+    const audio = audioRef.current;
+    if (audio) {
+      if (currentItem?.id === targetItem.id && playableScreeningUrl) {
+        audio.currentTime = 0;
+        audio
+          .play()
+          .then(() => {
+            setIsPlaying(true);
+            pendingAutoPlayRef.current = false;
+          })
+          .catch((err) => console.warn('直接播放失敗:', err));
+      }
     }
 
     if (window.innerWidth < 1024) {
@@ -1120,7 +1174,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       }
     }
 
-    showToast(`🔀 已啟動書架隨機放映！正在播放：${shuffled[0].title}（共 ${shuffled.length} 部）`);
+    showToast(`🔀 已啟動書架隨機放映！正在播放：${targetItem.title}（共 ${shuffled.length} 部）`);
   };
 
   // 監聽原生 Fullscreen 變化，確保 Esc 鍵或手勢退出時狀態同步
@@ -1409,6 +1463,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         loop={playbackLoopMode === 'single'}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
+        onCanPlay={() => {
+          if (pendingAutoPlayRef.current && audioRef.current) {
+            pendingAutoPlayRef.current = false;
+            audioRef.current
+              .play()
+              .then(() => setIsPlaying(true))
+              .catch((err) => console.warn('onCanPlay 自動開始播放失敗:', err));
+          }
+        }}
         onTimeUpdate={() => {
           if (audioRef.current) {
             const t = audioRef.current.currentTime;
@@ -1501,6 +1564,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               onClick={() => {
                 setSearchQuery('');
                 setShelfSearchTag('');
+                setShelfTab('shelf');
               }}
               className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
             >
@@ -1518,13 +1582,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               type="text"
               placeholder="搜尋館藏語音標題或內容關鍵字..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchQueryChange(e.target.value)}
               className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
             />
             {searchQuery && (
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
+                onClick={() => handleSearchQueryChange('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B735B] hover:text-[#2C221E] cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -1537,7 +1601,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <Tag className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
               value={shelfSearchTag}
-              onChange={(e) => setShelfSearchTag(e.target.value)}
+              onChange={(e) => handleShelfSearchTagChange(e.target.value)}
               className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
               <option value="">
@@ -2454,7 +2518,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         type="text"
                         placeholder="查詢檔案名稱..."
                         value={shelfSearchTitle}
-                        onChange={(e) => setShelfSearchTitle(e.target.value)}
+                        onChange={(e) => handleShelfSearchTitleChange(e.target.value)}
                         className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
                       />
                     </div>
@@ -2464,7 +2528,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select
                         value={shelfSearchTag}
-                        onChange={(e) => setShelfSearchTag(e.target.value)}
+                        onChange={(e) => handleShelfSearchTagChange(e.target.value)}
                         className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                       >
                         <option value="">
@@ -3588,6 +3652,80 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     </span>
                   )}
                 </div>
+
+                {/* 清單上方分頁控制列（以 5 的倍數做選取：5, 10, 15, 20, 25） */}
+                {totalManageCount > 0 && (
+                  <div className="py-2 px-3 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5] flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs">
+                    <div className="flex items-center gap-2 text-[#7A6855]">
+                      <span>每頁顯示</span>
+                      <select
+                        value={managePageSize}
+                        onChange={(e) => {
+                          setManagePageSize(Number(e.target.value));
+                          setManageCurrentPage(1);
+                        }}
+                        className="px-2 py-1 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer font-medium"
+                      >
+                        <option value={5}>5 筆</option>
+                        <option value={10}>10 筆</option>
+                        <option value={15}>15 筆</option>
+                        <option value={20}>20 筆</option>
+                        <option value={25}>25 筆</option>
+                      </select>
+                      <span className="hidden sm:inline">
+                        （顯示第 {manageStartIndex + 1} - {Math.min(manageStartIndex + managePageSize, totalManageCount)} 筆，共 {totalManageCount} 筆）
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeManagePage <= 1}
+                        onClick={() => setManageCurrentPage((p) => Math.max(1, p - 1))}
+                        className="p-1.5 rounded-lg border border-[#D5C5AE] bg-white text-[#5C3A1B] hover:bg-[#FAF4E8] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                        title="上一頁"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+
+                      {Array.from({ length: totalManagePages }, (_, i) => i + 1)
+                        .filter(
+                          (page) =>
+                            page === 1 ||
+                            page === totalManagePages ||
+                            Math.abs(page - safeManagePage) <= 1
+                        )
+                        .map((page, idx, arr) => (
+                          <React.Fragment key={`top_page_${page}`}>
+                            {idx > 0 && arr[idx - 1] !== page - 1 && (
+                              <span className="px-1 text-[#7A6855]">...</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setManageCurrentPage(page)}
+                              className={`w-7 h-7 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                                safeManagePage === page
+                                  ? 'bg-[#8B5A2B] text-white shadow-xs'
+                                  : 'bg-white border border-[#D5C5AE] text-[#5C3A1B] hover:bg-[#FAF4E8]'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          </React.Fragment>
+                        ))}
+
+                      <button
+                        type="button"
+                        disabled={safeManagePage >= totalManagePages}
+                        onClick={() => setManageCurrentPage((p) => Math.min(totalManagePages, p + 1))}
+                        className="p-1.5 rounded-lg border border-[#D5C5AE] bg-white text-[#5C3A1B] hover:bg-[#FAF4E8] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                        title="下一頁"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* 清單列表 */}
                 {savedPlaylists.length === 0 ? (

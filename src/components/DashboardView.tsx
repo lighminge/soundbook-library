@@ -64,6 +64,7 @@ import {
   Tag,
   ChevronDown,
   Layers,
+  Shuffle,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
@@ -183,6 +184,7 @@ interface DashboardViewProps {
   onSelectForEdit: (item: AudioItem) => void;
   onNavigateToUpload: (defaultCategoryId?: string) => void;
   onNavigateToScreeningCategory: (categoryId: string) => void;
+  onStartShufflePlayback: (items: AudioItem[], categoryId?: string) => void;
   onAddCategory: (newCat: Omit<Category, 'id' | 'createdAt' | 'order'>) => void;
   onOpenCloudSettings: () => void;
 }
@@ -308,6 +310,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectForEdit,
   onNavigateToUpload,
   onNavigateToScreeningCategory,
+  onStartShufflePlayback,
   onAddCategory,
   onOpenCloudSettings,
 }) => {
@@ -475,18 +478,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          {(quickSearchKeyword || quickSearchTag) && (
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+            {/* 快速檢索結果「隨機播放」功能 */}
             <button
-              onClick={() => {
-                setQuickSearchKeyword('');
-                setQuickSearchTag('');
-              }}
-              className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer self-start sm:self-center bg-[#EFE6D5] px-2.5 py-1 rounded-lg transition"
+              type="button"
+              disabled={matchedAudioItems.length === 0}
+              onClick={() => onStartShufflePlayback(matchedAudioItems, 'all')}
+              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              title="將檢索結果隨機排列並進入放映室立即播放"
             >
-              <X className="w-3.5 h-3.5" />
-              <span>重置檢索條件</span>
+              <Shuffle className="w-3.5 h-3.5" />
+              <span>隨機播放 {matchedAudioItems.length > 0 ? `(${matchedAudioItems.length})` : ''}</span>
             </button>
-          )}
+
+            {(quickSearchKeyword || quickSearchTag) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickSearchKeyword('');
+                  setQuickSearchTag('');
+                }}
+                className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#EFE6D5] px-2.5 py-1.5 rounded-lg transition"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>重置檢索條件</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 檢索輸入與類別標籤下拉選取列 */}
@@ -807,7 +825,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5 self-end md:self-center">
+                <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
+                  {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
+                  <button
+                    type="button"
+                    disabled={itemsInCat.length === 0}
+                    onClick={() => onStartShufflePlayback(itemsInCat, category.id)}
+                    className="px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
+                    title={`隨機排列並播放「${category.name}」主題館藏語音`}
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    <span>隨機播放 {itemsInCat.length > 0 ? `(${itemsInCat.length})` : ''}</span>
+                  </button>
+
                   <button
                     onClick={() => onNavigateToScreeningCategory(category.id)}
                     className="px-3.5 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer"
