@@ -144,3 +144,70 @@ export function getAudioItemSequenceMap(audioItems: AudioItem[]): Map<string, nu
   });
   return map;
 }
+
+/**
+ * 辨識並取得語音檔案之顯示類型（例如：MP3, WAV, M4A, AAC, OGG, WEBM, FLAC 等）
+ */
+export function getAudioFileType(
+  item: AudioItem | { mimeType?: string; audioUrl?: string; title?: string }
+): string {
+  const mime = (item.mimeType || '').toLowerCase().trim();
+  if (mime) {
+    if (mime.includes('mpeg') || mime.includes('mp3')) return 'MP3';
+    if (mime.includes('wav') || mime.includes('wave')) return 'WAV';
+    if (mime.includes('m4a') || mime.includes('mp4')) return 'M4A';
+    if (mime.includes('aac')) return 'AAC';
+    if (mime.includes('ogg') || mime.includes('opus')) return 'OGG';
+    if (mime.includes('webm')) return 'WEBM';
+    if (mime.includes('flac')) return 'FLAC';
+    if (mime.includes('caf')) return 'CAF';
+    if (mime.includes('aiff') || mime.includes('aif')) return 'AIFF';
+    if (mime.includes('amr')) return 'AMR';
+    if (mime.includes('3gp')) return '3GP';
+    if (mime.includes('wma')) return 'WMA';
+    if (mime.startsWith('audio/')) {
+      const sub = mime.split('/')[1]?.split(';')[0]?.trim();
+      if (sub && sub !== 'octet-stream') {
+        return sub.toUpperCase();
+      }
+    }
+  }
+
+  // 若 MIME 無法識別，嘗試從 title 取得副檔名
+  const title = (item.title || '').trim();
+  const extMatch = /\.([a-zA-Z0-9]{2,5})$/.exec(title);
+  if (extMatch) {
+    const ext = extMatch[1].toLowerCase();
+    if (
+      ext in AUDIO_EXT_MIME ||
+      ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'webm', 'flac', 'caf', 'aiff', 'amr', 'wma'].includes(ext)
+    ) {
+      return ext.toUpperCase();
+    }
+  }
+
+  // 嘗試從 audioUrl 取得副檔名或 data URL mime
+  const url = (item.audioUrl || '').trim();
+  if (url.startsWith('data:audio/')) {
+    const dataMimeMatch = /^data:audio\/([a-zA-Z0-9_-]+)/i.exec(url);
+    if (dataMimeMatch) {
+      const sub = dataMimeMatch[1].toLowerCase();
+      if (sub === 'mpeg' || sub === 'mp3') return 'MP3';
+      if (sub === 'wav' || sub === 'wave') return 'WAV';
+      if (sub === 'mp4' || sub === 'm4a') return 'M4A';
+      return sub.toUpperCase();
+    }
+  }
+
+  const urlPath = url.split('?')[0].split('#')[0];
+  const urlExtMatch = /\.([a-zA-Z0-9]{2,5})$/.exec(urlPath);
+  if (urlExtMatch) {
+    const ext = urlExtMatch[1].toLowerCase();
+    if (ext in AUDIO_EXT_MIME) {
+      return ext.toUpperCase();
+    }
+  }
+
+  // 預設常見類型
+  return 'MP3';
+}

@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  FileAudio,
   Loader2,
   Download,
   User,
@@ -42,7 +43,7 @@ import {
   saveSavedSpeaker,
   deleteSavedSpeaker,
 } from '../services/storageService';
-import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
+import { getAudioItemCallNumberMap, getAudioFileType } from '../utils/audioFileUtils';
 
 interface CatalogManagementViewProps {
   categories: Category[];
@@ -1814,6 +1815,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               const listSeq = globalIdx + 1;
               const callNumber =
                 audioCallNumberMap.get(item.id) || (currentCat ? `${currentCat.code}-1` : 'CAT-1');
+              const fileType = getAudioFileType(item);
               const titleValue =
                 editingTitles[item.id] !== undefined
                   ? editingTitles[item.id]
@@ -1881,6 +1883,14 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                               [{currentCat.code}] {currentCat.name}
                             </span>
                           )}
+                          {/* 語音檔案類型（例如：MP3, WAV, M4A 等） */}
+                          <span
+                            className="px-2 py-0.5 rounded-md bg-[#2B4C7E]/12 border border-[#2B4C7E]/30 text-[#2B4C7E] font-mono text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-2xs shrink-0"
+                            title={`語音檔案類型：${fileType}`}
+                          >
+                            <FileAudio className="w-3 h-3 text-[#2B4C7E]" />
+                            <span>{fileType}</span>
+                          </span>
                           {item.speaker && (
                             <span
                               className="px-2 py-0.5 rounded bg-[#8B5A2B]/15 border border-[#8B5A2B]/30 text-[#5C3A1B] font-semibold text-[10px] flex items-center gap-1 shrink-0"
@@ -1936,10 +1946,19 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
                     {/* 第二列：語音檔案名稱修改（左側寬敞空間，儲存按鈕絕不被遮擋） */}
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
-                      <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
-                        <span>語音檔案名稱：</span>
-                      </label>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <label className="text-xs font-bold text-[#5C3A1B] flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>語音檔案名稱：</span>
+                        </label>
+                        <span
+                          className="px-1.5 py-0.5 rounded bg-[#2B4C7E]/12 border border-[#2B4C7E]/30 text-[#2B4C7E] font-mono text-[10px] font-bold tracking-wider flex items-center gap-0.5"
+                          title={`語音檔案類型：${fileType}`}
+                        >
+                          <FileAudio className="w-2.5 h-2.5" />
+                          <span>{fileType}</span>
+                        </span>
+                      </div>
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <input
                           type="text"
