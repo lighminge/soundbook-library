@@ -269,7 +269,7 @@ export function App() {
     <div className="min-h-screen flex flex-col bg-[#F6F1E7] text-[#2C221E]">
       {/* 頂部圖書館導覽列 */}
       <header className="sticky top-0 z-40 bg-[#261A13] text-[#FAF5EC] border-b border-[#4A3427] shadow-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 lg:h-18 flex items-center justify-between gap-2 sm:gap-4">
           {/* 左側品牌標誌 */}
           <div
             onClick={() => setActiveTab('dashboard')}
@@ -293,29 +293,29 @@ export function App() {
             </div>
           </div>
 
-          {/* 中間主功能切換頁籤 (桌面版，放大字體並保持整齊不超出導覽列) */}
+          {/* 中間主功能切換頁籤 (桌面版，字體加大至與「聲書閣」相同大小 text-base xl:text-lg) */}
           <nav className="hidden lg:flex items-center gap-1.5 bg-[#1B120D] p-1.5 rounded-xl border border-[#3E2C22] shrink-0">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 xl:px-4 py-2 rounded-lg text-sm xl:text-[15px] font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'dashboard'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <LayoutDashboard className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
+              <LayoutDashboard className="w-5 h-5 shrink-0 stroke-[2.2]" />
               <span>館藏總覽</span>
             </button>
 
             <button
               onClick={() => setActiveTab('screening')}
-              className={`px-3.5 xl:px-4 py-2 rounded-lg text-sm xl:text-[15px] font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'screening'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <Radio className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
+              <Radio className="w-5 h-5 shrink-0 stroke-[2.2]" />
               <span>放映室</span>
             </button>
 
@@ -326,25 +326,25 @@ export function App() {
                     setEditingAudioItem(null);
                     setActiveTab('library');
                   }}
-                  className={`px-3.5 xl:px-4 py-2 rounded-lg text-sm xl:text-[15px] font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'library'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <FolderKanban className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
+                  <FolderKanban className="w-5 h-5 shrink-0 stroke-[2.2]" />
                   <span>語音檔案庫</span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('catalog')}
-                  className={`px-3.5 xl:px-4 py-2 rounded-lg text-sm xl:text-[15px] font-bold flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'catalog'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <Tags className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
+                  <Tags className="w-5 h-5 shrink-0 stroke-[2.2]" />
                   <span>館藏資料管理</span>
                 </button>
               </>
@@ -414,23 +414,23 @@ export function App() {
       </header>
 
       {/* 平板與手機版頂部次導覽列 */}
-      <div className="lg:hidden bg-[#332219] text-[#FAF5EC] px-3 py-2 flex items-center justify-around gap-1.5 border-b border-[#4A3427]">
+      <div className="lg:hidden bg-[#332219] text-[#FAF5EC] px-2 sm:px-3 py-2 flex items-center justify-around gap-1.5 border-b border-[#4A3427]">
         <button
           onClick={() => setActiveTab('dashboard')}
-          className={`flex-1 py-2 px-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+          className={`flex-1 py-2 px-1 rounded-lg text-sm sm:text-base font-bold font-serif-tc tracking-wider flex items-center justify-center gap-1.5 transition ${
             activeTab === 'dashboard' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
           }`}
         >
-          <LayoutDashboard className="w-4 h-4 shrink-0" />
+          <LayoutDashboard className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
           <span>總覽</span>
         </button>
         <button
           onClick={() => setActiveTab('screening')}
-          className={`flex-1 py-2 px-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+          className={`flex-1 py-2 px-1 rounded-lg text-sm sm:text-base font-bold font-serif-tc tracking-wider flex items-center justify-center gap-1.5 transition ${
             activeTab === 'screening' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
           }`}
         >
-          <Radio className="w-4 h-4 shrink-0" />
+          <Radio className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
           <span>放映室</span>
         </button>
         {!isGuest && (
@@ -440,20 +440,20 @@ export function App() {
                 setEditingAudioItem(null);
                 setActiveTab('library');
               }}
-              className={`flex-1 py-2 px-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+              className={`flex-1 py-2 px-1 rounded-lg text-sm sm:text-base font-bold font-serif-tc tracking-wider flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'library' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
               }`}
             >
-              <FolderKanban className="w-4 h-4 shrink-0" />
+              <FolderKanban className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
               <span>語音檔案庫</span>
             </button>
             <button
               onClick={() => setActiveTab('catalog')}
-              className={`flex-1 py-2 px-2 rounded-lg text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+              className={`flex-1 py-2 px-1 rounded-lg text-sm sm:text-base font-bold font-serif-tc tracking-wider flex items-center justify-center gap-1.5 transition ${
                 activeTab === 'catalog' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
               }`}
             >
-              <Tags className="w-3.5 h-3.5" />
+              <Tags className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
               <span>館藏管理</span>
             </button>
           </>
