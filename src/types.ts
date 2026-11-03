@@ -30,6 +30,7 @@ export interface AudioItem {
   id: string;
   title: string;
   categoryId: string;
+  speaker?: string; // 主講人
   description: string;
   tags?: string[]; // 類別標籤（例如：['繪本', '小說', '童話', '科普']）
   duration: number; // 秒數
@@ -42,6 +43,13 @@ export interface AudioItem {
   playbackDisplay: PlaybackDisplay;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Speaker {
+  id: string; // e.g. "speaker_1730592000000"
+  name: string; // 主講人姓名
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
 }
 
 export interface SavedPlaylist {

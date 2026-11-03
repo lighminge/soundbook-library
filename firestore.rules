@@ -25,6 +25,7 @@ rules_version = '2';
 //   - id: string (required, immutable, 1..128 chars, must equal audioId) - Unique audio item identifier
 //   - title: string (required, 1..200 chars) - Audio book/recording title
 //   - categoryId: string (required, 1..128 chars) - Reference to categories/{categoryId}
+//   - speaker: string (optional, 0..100 chars) - Speaker / narrator name
 //   - tags: list (optional, 0..50 string items) - Category/genre tags for the audio item (e.g., ["繪本", "小說"])
 //   - description: string (required, 0..5000 chars) - Description and background notes
 //   - duration: number (required, 0..86400) - Audio duration in seconds
@@ -47,6 +48,14 @@ rules_version = '2';
 //           - startSegmentIndex: number (optional, 1..10000)
 //           - endSegmentIndex: number (optional, 1..10000)
 //   - createdAt: string (required, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
+//
+// Collection: speakers
+// Document ID: {speakerId} (matches field `id`, e.g., "speaker_1730000000000")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal speakerId) - Unique speaker identifier
+//   - name: string (required, 1..100 chars) - Speaker display name
+//   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
 // Collection: audioChunks
@@ -239,6 +248,7 @@ service cloud.firestore {
         'id',
         'title',
         'categoryId',
+        'speaker',
         'tags',
         'description',
         'duration',
@@ -259,6 +269,7 @@ service cloud.firestore {
         validStringLength('id', 1, 128) &&
         validStringLength('title', 1, 200) &&
         validStringLength('categoryId', 1, 128) &&
+        isValidOptionalString('speaker', 0, 100) &&
         (!('tags' in data) || (isValidList(data.tags, 50) && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 100)))) &&
         validStringLength('description', 0, 5000) &&
         data.duration is number && data.duration >= 0 && data.duration <= 86400 &&
@@ -269,6 +280,30 @@ service cloud.firestore {
         isValidOptionalString('coverImageDriveId', 0, 256) &&
         isValidMediaUrl(data.coverImageUrl) &&
         isValidPlaybackDisplay(data.playbackDisplay) &&
+        isValidDateString(data.createdAt) &&
+        isValidDateString(data.updatedAt);
+    }
+
+    // Validate Speaker document schema and field bounds
+    function isValidSpeaker(data, speakerId) {
+      let requiredFields = [
+        'id',
+        'name',
+        'createdAt',
+        'updatedAt'
+      ];
+      let allowedFields = [
+        'id',
+        'name',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == speakerId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('name', 1, 100) &&
         isValidDateString(data.createdAt) &&
         isValidDateString(data.updatedAt);
     }
@@ -355,6 +390,15 @@ service cloud.firestore {
       allow create: if isValidAudioItem(request.resource.data, audioId);
       allow update: if isValidAudioItem(request.resource.data, audioId) &&
                        areImmutableFieldsUnchanged(['id']);
+      allow delete: if true;
+    }
+
+    // Speakers / Narrators (speakers/{speakerId})
+    match /speakers/{speakerId} {
+      allow read: if true;
+      allow create: if isValidSpeaker(request.resource.data, speakerId);
+      allow update: if isValidSpeaker(request.resource.data, speakerId) &&
+                       areImmutableFieldsUnchanged(['id', 'createdAt']);
       allow delete: if true;
     }
 

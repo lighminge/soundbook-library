@@ -9,7 +9,7 @@ import {
   doc,
   Firestore,
 } from 'firebase/firestore';
-import { AudioItem, Category, CloudConfig, PlaybackSlide, SavedPlaylist } from '../types';
+import { AudioItem, Category, CloudConfig, PlaybackSlide, SavedPlaylist, Speaker } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
 import {
   base64ToBlob,
@@ -22,6 +22,7 @@ const CONFIG_STORAGE_KEY = 'soundbook_cloud_config_v1';
 const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
 const LOCAL_AUDIO_ITEMS_KEY = 'soundbook_audio_items_v1';
 const LOCAL_PLAYLISTS_KEY = 'soundbook_saved_playlists_v1';
+const LOCAL_SPEAKERS_KEY = 'soundbook_speakers_v1';
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB1MHVQ_CnTOxl2LSwoaPAZQogWtjrb-Ls',
@@ -452,6 +453,108 @@ export async function deleteSavedPlaylist(playlistId: string): Promise<void> {
       await deleteDoc(doc(db, 'playlists', playlistId));
     } catch (e) {
       console.warn('Firestore 刪除播放清單失敗:', e);
+    }
+  }
+}
+
+/**
+ * 載入所有已儲存的主講人名冊（優先自 Firestore 同步，離線或未就緒時使用本機 LocalStorage）
+ */
+export async function loadSavedSpeakers(): Promise<Speaker[]> {
+  let localSpeakers: Speaker[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) localSpeakers = parsed;
+    }
+  } catch (e) {
+    console.warn('讀取本地主講人名冊失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'speakers'));
+      if (!snap.empty) {
+        const remoteSpeakers: Speaker[] = snap.docs.map((d) => d.data() as Speaker);
+        const map = new Map<string, Speaker>();
+        localSpeakers.forEach((s) => map.set(s.id, s));
+        remoteSpeakers.forEach((s) => map.set(s.id, s));
+        const merged = Array.from(map.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, 'zh-Hant')
+        );
+        try {
+          localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore
+        }
+        return merged;
+      }
+    } catch (e) {
+      console.warn('從 Firestore 讀取主講人受限或失敗，使用本地儲存:', e);
+    }
+  }
+
+  return localSpeakers.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+}
+
+/**
+ * 儲存/更新單一主講人（同時保存至本地 LocalStorage 與雲端 Firestore）
+ */
+export async function saveSavedSpeaker(speaker: Speaker): Promise<void> {
+  const sanitized: Speaker = JSON.parse(JSON.stringify(speaker));
+
+  // 1. 本地 LocalStorage 儲存
+  try {
+    const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
+    let currentList: Speaker[] = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(currentList)) currentList = [];
+    const idx = currentList.findIndex((s) => s.id === sanitized.id || s.name === sanitized.name);
+    if (idx >= 0) {
+      currentList[idx] = sanitized;
+    } else {
+      currentList.push(sanitized);
+    }
+    localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(currentList));
+  } catch (e) {
+    console.warn('本地儲存主講人失敗:', e);
+  }
+
+  // 2. 雲端 Firestore 儲存
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'speakers', sanitized.id), sanitized);
+    } catch (e) {
+      console.warn('Firestore 儲存主講人失敗，已保存在本地:', e);
+    }
+  }
+}
+
+/**
+ * 刪除單一主講人（同時於本地 LocalStorage 與雲端 Firestore 刪除）
+ */
+export async function deleteSavedSpeaker(speakerId: string): Promise<void> {
+  // 1. 本地 LocalStorage 刪除
+  try {
+    const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
+    let currentList: Speaker[] = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(currentList)) {
+      currentList = currentList.filter((s) => s.id !== speakerId);
+      localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(currentList));
+    }
+  } catch (e) {
+    console.warn('本地刪除主講人失敗:', e);
+  }
+
+  // 2. 雲端 Firestore 刪除
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await deleteDoc(doc(db, 'speakers', speakerId));
+    } catch (e) {
+      console.warn('Firestore 刪除主講人失敗:', e);
     }
   }
 }

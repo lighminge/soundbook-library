@@ -24,15 +24,24 @@ import {
   FileText,
   Loader2,
   Download,
+  User,
+  Users,
+  Edit2,
 } from 'lucide-react';
-import { AudioItem, Category } from '../types';
+import { AudioItem, Category, Speaker } from '../types';
 import {
   formatDuration,
   getCategoryIcon,
   THEME_COLOR_OPTIONS,
   ICON_OPTIONS,
 } from './DashboardView';
-import { renameFileInGoogleDrive, downloadAudioItemFile } from '../services/storageService';
+import {
+  renameFileInGoogleDrive,
+  downloadAudioItemFile,
+  loadSavedSpeakers,
+  saveSavedSpeaker,
+  deleteSavedSpeaker,
+} from '../services/storageService';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
 
 interface CatalogManagementViewProps {
@@ -137,17 +146,33 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [categoryDestForMove, setCategoryDestForMove] = useState<string>('');
 
   // ============================================================================
-  // 語音檔案館藏資料管理：四欄查詢（語音檔案名稱、館藏分類、說明內容、標籤）、分頁、編輯狀態
+  // 語音檔案館藏資料管理：五欄查詢（語音檔案名稱、館藏分類、主講人、說明內容、標籤）、分頁、編輯狀態
   // ============================================================================
   const [searchTitle, setSearchTitle] = useState<string>('');
   const [filterCategoryId, setFilterCategoryId] = useState<string>('all');
+  const [filterSpeaker, setFilterSpeaker] = useState<string>('all');
   const [searchDescription, setSearchDescription] = useState<string>('');
   const [filterTag, setFilterTag] = useState<string>('all');
   const [searchTag, setSearchTag] = useState<string>('');
 
-  // 排序狀態：條件（檔案名稱、上傳日期、館藏分類）與方向（由小到大、由大到小）
-  const [catalogSortBy, setCatalogSortBy] = useState<'title' | 'createdAt' | 'category'>('title');
-  const [catalogSortOrder, setCatalogSortOrder] = useState<'asc' | 'desc'>('asc');
+  // 主講人名冊狀態
+  const [speakers, setSpeakers] = useState<Speaker[]>([]);
+
+  // 主講人管理視窗狀態：新增、修改、刪除、總覽名冊
+  const [speakerTargetItem, setSpeakerTargetItem] = useState<AudioItem | null>(null);
+  const [isAddSpeakerOpen, setIsAddSpeakerOpen] = useState<boolean>(false);
+  const [newSpeakerName, setNewSpeakerName] = useState<string>('');
+
+  const [editingSpeakerOldName, setEditingSpeakerOldName] = useState<string | null>(null);
+  const [editingSpeakerNewName, setEditingSpeakerNewName] = useState<string>('');
+
+  const [deletingSpeakerName, setDeletingSpeakerName] = useState<string | null>(null);
+
+  const [isSpeakerManagerOpen, setIsSpeakerManagerOpen] = useState<boolean>(false);
+
+  // 排序狀態：預設依上傳日期由大到小（條件：依上傳日期、依檔案名稱、依館藏分類、依主講人；方向：由大到小、由小到大）
+  const [catalogSortBy, setCatalogSortBy] = useState<'title' | 'createdAt' | 'category' | 'speaker'>('createdAt');
+  const [catalogSortOrder, setCatalogSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // 分頁狀態（以 10 的倍數選取）
   const [pageSize, setPageSize] = useState<number>(10);
@@ -271,6 +296,236 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       untaggedCount: catUntagged,
     };
   });
+
+  // ============================================================================
+  // 主講人名冊載入、統計與維護（新增、修改、刪除、指派）
+  // ============================================================================
+  useEffect(() => {
+    let isMounted = true;
+    loadSavedSpeakers().then((saved) => {
+      if (!isMounted) return;
+      const usedSpeakers = new Set<string>();
+      audioItems.forEach((a) => {
+        if (a.speaker && a.speaker.trim()) {
+          usedSpeakers.add(a.speaker.trim());
+        }
+      });
+
+      const existingNames = new Set(saved.map((s) => s.name));
+      const newlyDiscovered: Speaker[] = [];
+      const now = new Date().toISOString();
+      usedSpeakers.forEach((name) => {
+        if (!existingNames.has(name)) {
+          newlyDiscovered.push({
+            id: `speaker_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            name,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+
+      const combined = [...saved, ...newlyDiscovered].sort((a, b) =>
+        a.name.localeCompare(b.name, 'zh-Hant')
+      );
+      setSpeakers(combined);
+      newlyDiscovered.forEach((sp) => saveSavedSpeaker(sp).catch(() => {}));
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [audioItems]);
+
+  // 統計各主講人的語音檔數量
+  const speakerStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let unassigned = 0;
+    audioItems.forEach((item) => {
+      const sp = item.speaker?.trim();
+      if (!sp) {
+        unassigned++;
+      } else {
+        counts[sp] = (counts[sp] || 0) + 1;
+      }
+    });
+
+    const list = speakers.map((s) => ({
+      name: s.name,
+      id: s.id,
+      count: counts[s.name] || 0,
+    }));
+
+    return { list, unassigned };
+  }, [audioItems, speakers]);
+
+  // 指派主講人給特定語音檔
+  const handleAssignSpeaker = async (item: AudioItem, speakerName: string) => {
+    const updatedSpeaker = speakerName.trim() || undefined;
+    if (item.speaker === updatedSpeaker) return;
+
+    const updatedItem: AudioItem = {
+      ...item,
+      speaker: updatedSpeaker,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await onSaveAudioItem(updatedItem);
+    showToast(
+      updatedSpeaker
+        ? `✅ 已將「${item.title}」之主講人指派為「${updatedSpeaker}」！`
+        : `✅ 已清除「${item.title}」之主講人！`
+    );
+  };
+
+  // 下拉選單選擇變更（支援選取主講人、新增、修改、刪除、開啟名冊）
+  const handleSpeakerDropdownChange = (item: AudioItem, value: string) => {
+    if (value === '__ACTION_ADD__') {
+      setSpeakerTargetItem(item);
+      setNewSpeakerName('');
+      setIsAddSpeakerOpen(true);
+      return;
+    }
+    if (value === '__ACTION_EDIT__') {
+      if (item.speaker) {
+        setEditingSpeakerOldName(item.speaker);
+        setEditingSpeakerNewName(item.speaker);
+      }
+      return;
+    }
+    if (value === '__ACTION_DELETE__') {
+      if (item.speaker) {
+        setDeletingSpeakerName(item.speaker);
+      }
+      return;
+    }
+    if (value === '__ACTION_MANAGE__') {
+      setIsSpeakerManagerOpen(true);
+      return;
+    }
+    handleAssignSpeaker(item, value);
+  };
+
+  // 確認新增主講人
+  const handleConfirmAddSpeaker = async () => {
+    const trimmed = newSpeakerName.trim();
+    if (!trimmed) {
+      showToast('❌ 請輸入主講人姓名！');
+      return;
+    }
+
+    const existing = speakers.find((s) => s.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) {
+      if (speakerTargetItem) {
+        await handleAssignSpeaker(speakerTargetItem, existing.name);
+      } else {
+        showToast(`ℹ️ 主講人「${existing.name}」已存在於名冊中`);
+      }
+      setIsAddSpeakerOpen(false);
+      setNewSpeakerName('');
+      setSpeakerTargetItem(null);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const newSpeaker: Speaker = {
+      id: `speaker_${Date.now()}`,
+      name: trimmed,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await saveSavedSpeaker(newSpeaker);
+    setSpeakers((prev) => [...prev, newSpeaker].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant')));
+
+    if (speakerTargetItem) {
+      await handleAssignSpeaker(speakerTargetItem, trimmed);
+    }
+    showToast(`✅ 已新增主講人「${trimmed}」！`);
+    setIsAddSpeakerOpen(false);
+    setNewSpeakerName('');
+    setSpeakerTargetItem(null);
+  };
+
+  // 確認修改主講人名稱（同步更新名冊與所有已關聯之語音檔）
+  const handleConfirmEditSpeaker = async () => {
+    if (!editingSpeakerOldName) return;
+    const oldName = editingSpeakerOldName.trim();
+    const newName = editingSpeakerNewName.trim();
+
+    if (!newName) {
+      showToast('❌ 請輸入新的主講人姓名！');
+      return;
+    }
+    if (oldName === newName) {
+      setEditingSpeakerOldName(null);
+      return;
+    }
+
+    const targetSp = speakers.find((s) => s.name === oldName);
+    const now = new Date().toISOString();
+    if (targetSp) {
+      const updatedSp: Speaker = {
+        ...targetSp,
+        name: newName,
+        updatedAt: now,
+      };
+      await saveSavedSpeaker(updatedSp);
+      setSpeakers((prev) =>
+        prev
+          .map((s) => (s.id === targetSp.id ? updatedSp : s))
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+      );
+    }
+
+    // 找出所有使用 oldName 的語音檔，批次更新
+    const affectedItems = audioItems.filter((a) => a.speaker === oldName);
+    for (const item of affectedItems) {
+      const updated: AudioItem = {
+        ...item,
+        speaker: newName,
+        updatedAt: now,
+      };
+      await onSaveAudioItem(updated);
+    }
+
+    if (filterSpeaker === oldName) {
+      setFilterSpeaker(newName);
+    }
+
+    showToast(`✅ 已將主講人「${oldName}」修改為「${newName}」（同步更新 ${affectedItems.length} 筆語音檔）！`);
+    setEditingSpeakerOldName(null);
+    setEditingSpeakerNewName('');
+  };
+
+  // 確認刪除主講人（自名冊刪除，並自動解除所有關聯語音檔之主講人設定）
+  const handleConfirmDeleteSpeaker = async () => {
+    if (!deletingSpeakerName) return;
+    const targetName = deletingSpeakerName.trim();
+    const targetSp = speakers.find((s) => s.name === targetName);
+
+    if (targetSp) {
+      await deleteSavedSpeaker(targetSp.id);
+      setSpeakers((prev) => prev.filter((s) => s.id !== targetSp.id));
+    }
+
+    const affectedItems = audioItems.filter((a) => a.speaker === targetName);
+    const now = new Date().toISOString();
+    for (const item of affectedItems) {
+      const updated: AudioItem = {
+        ...item,
+        speaker: undefined,
+        updatedAt: now,
+      };
+      await onSaveAudioItem(updated);
+    }
+
+    if (filterSpeaker === targetName) {
+      setFilterSpeaker('all');
+    }
+
+    showToast(`🗑️ 已刪除主講人「${targetName}」（已解除 ${affectedItems.length} 筆語音檔之主講人關聯）！`);
+    setDeletingSpeakerName(null);
+  };
 
   // ============================================================================
   // 新增、修改、刪除、排序館藏分類 處理函式
@@ -553,11 +808,18 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   };
 
   // ============================================================================
-  // 篩選語音檔清單（分成：語音檔案名稱、館藏分類、說明內容、以及標籤查詢）
+  // 篩選語音檔清單（分成：語音檔案名稱、館藏分類、主講人、說明內容、以及標籤查詢）
   // ============================================================================
   const filteredAudioItems = audioItems.filter((item) => {
     const matchCategory =
       filterCategoryId === 'all' || item.categoryId === filterCategoryId;
+
+    const matchSpeaker =
+      filterSpeaker === 'all'
+        ? true
+        : filterSpeaker === '__unassigned__'
+        ? !item.speaker || item.speaker.trim() === ''
+        : item.speaker === filterSpeaker;
 
     const itemTags = item.tags || [];
     const matchTagSelect =
@@ -579,6 +841,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
     return (
       matchCategory &&
+      matchSpeaker &&
       matchTagSelect &&
       matchTagInput &&
       matchTitle &&
@@ -586,7 +849,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     );
   });
 
-  // 依條件（檔案名稱、上傳日期、館藏分類）與方向（由小到大、由大到小）進行排序
+  // 依條件（上傳日期、檔案名稱、館藏分類、主講人）與方向（由大到小、由小到大）進行排序
   const sortedAudioItems = useMemo(() => {
     return [...filteredAudioItems].sort((a, b) => {
       let cmp = 0;
@@ -602,6 +865,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         const labelA = catA ? `${catA.code} ${catA.name}` : a.categoryId;
         const labelB = catB ? `${catB.code} ${catB.name}` : b.categoryId;
         cmp = labelA.localeCompare(labelB, 'zh-Hant');
+      } else if (catalogSortBy === 'speaker') {
+        const spA = a.speaker || '';
+        const spB = b.speaker || '';
+        cmp = spA.localeCompare(spB, 'zh-Hant');
       }
 
       if (cmp === 0) {
@@ -628,6 +895,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   }, [
     searchTitle,
     filterCategoryId,
+    filterSpeaker,
     searchDescription,
     filterTag,
     searchTag,
@@ -1181,12 +1449,14 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               filterCategoryId !== 'all' ||
               searchDescription ||
               filterTag !== 'all' ||
-              searchTag) && (
+              searchTag ||
+              filterSpeaker !== 'all') && (
               <button
                 type="button"
                 onClick={() => {
                   setSearchTitle('');
                   setFilterCategoryId('all');
+                  setFilterSpeaker('all');
                   setSearchDescription('');
                   setFilterTag('all');
                   setSearchTag('');
@@ -1198,7 +1468,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
             {/* 欄位 1：語音檔案名稱 */}
             <div>
               <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
@@ -1236,10 +1506,45 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               </select>
             </div>
 
-            {/* 欄位 3：說明內容 */}
+            {/* 欄位 3：主講人（下拉選單查詢） */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#5C3A1B]">
+                  3. 主講人
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsSpeakerManagerOpen(true)}
+                  className="text-[10px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-0.5 cursor-pointer font-semibold"
+                  title="開啟主講人名冊維護管理"
+                >
+                  <Users className="w-3 h-3" />
+                  <span>名冊維護</span>
+                </button>
+              </div>
+              <select
+                value={filterSpeaker}
+                onChange={(e) => setFilterSpeaker(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+              >
+                <option value="all">全部主講人 (不限) ({audioItems.length})</option>
+                {speakerStats.unassigned > 0 && (
+                  <option value="__unassigned__">
+                    尚未指定主講人 ({speakerStats.unassigned} 筆)
+                  </option>
+                )}
+                {speakerStats.list.map(({ name, count }) => (
+                  <option key={name} value={name}>
+                    {name} ({count} 筆)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 欄位 4：說明內容 */}
             <div>
               <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
-                3. 說明內容
+                4. 說明內容
               </label>
               <div className="relative">
                 <FileText className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1253,10 +1558,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               </div>
             </div>
 
-            {/* 欄位 4：標籤（支援下拉選取與關鍵字查詢） */}
+            {/* 欄位 5：標籤（支援下拉選取與關鍵字查詢） */}
             <div>
               <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
-                4. 標籤（類別標籤）
+                5. 標籤（類別標籤）
               </label>
               <div className="flex flex-col gap-1.5">
                 <select
@@ -1290,9 +1595,26 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             </div>
           </div>
 
-          {(filterTag !== 'all' || searchTag.trim() !== '') && (
+          {(filterSpeaker !== 'all' || filterTag !== 'all' || searchTag.trim() !== '') && (
             <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-              <span className="text-[#5C3A1B] font-semibold">目前篩選類別標籤：</span>
+              <span className="text-[#5C3A1B] font-semibold">目前篩選條件：</span>
+              {filterSpeaker !== 'all' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#8B5A2B] text-white font-semibold">
+                  <User className="w-3 h-3" />
+                  <span>
+                    {filterSpeaker === '__unassigned__'
+                      ? '尚未指定主講人'
+                      : `主講人: ${filterSpeaker}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFilterSpeaker('all')}
+                    className="ml-1 hover:text-amber-200 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
               {filterTag !== 'all' && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-[#2E5A44] text-white font-semibold">
                   <Tag className="w-3 h-3" />
@@ -1366,9 +1688,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   onChange={(e) => setCatalogSortBy(e.target.value as any)}
                   className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
                 >
-                  <option value="title">依檔案名稱</option>
                   <option value="createdAt">依上傳日期</option>
+                  <option value="title">依檔案名稱</option>
                   <option value="category">依館藏分類</option>
+                  <option value="speaker">依主講人</option>
                 </select>
 
                 <select
@@ -1376,8 +1699,8 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   onChange={(e) => setCatalogSortOrder(e.target.value as any)}
                   className="px-2 py-0.5 rounded border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer"
                 >
-                  <option value="asc">由小到大</option>
                   <option value="desc">由大到小</option>
+                  <option value="asc">由小到大</option>
                 </select>
               </div>
             </div>
@@ -1558,6 +1881,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                               [{currentCat.code}] {currentCat.name}
                             </span>
                           )}
+                          {item.speaker && (
+                            <span
+                              className="px-2 py-0.5 rounded bg-[#8B5A2B]/15 border border-[#8B5A2B]/30 text-[#5C3A1B] font-semibold text-[10px] flex items-center gap-1 shrink-0"
+                              title={`主講人：${item.speaker}`}
+                            >
+                              <User className="w-2.5 h-2.5 text-[#8B5A2B]" />
+                              <span>主講人: {item.speaker}</span>
+                            </span>
+                          )}
                           <span className="text-xs font-mono text-[#7A6855] flex items-center gap-1 shrink-0">
                             <Clock className="w-3 h-3" />
                             {formatDuration(item.duration)}
@@ -1602,59 +1934,60 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       </div>
                     </div>
 
-                    {/* 第二列：語音檔案名稱修改（左側寬敞空間，儲存按鈕絕不被遮擋）+ 右側所屬館藏分類切換 */}
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1 min-w-0">
-                        <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
-                          <span>語音檔案名稱：</span>
-                        </label>
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <input
-                            type="text"
-                            value={titleValue}
-                            onChange={(e) =>
-                              setEditingTitles((prev) => ({
-                                ...prev,
-                                [item.id]: e.target.value,
-                              }))
+                    {/* 第二列：語音檔案名稱修改（左側寬敞空間，儲存按鈕絕不被遮擋） */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
+                      <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
+                        <FileText className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                        <span>語音檔案名稱：</span>
+                      </label>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={titleValue}
+                          onChange={(e) =>
+                            setEditingTitles((prev) => ({
+                              ...prev,
+                              [item.id]: e.target.value,
+                            }))
+                          }
+                          onBlur={(e) => handleSaveItemTitle(item, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveItemTitle(item, titleValue);
                             }
-                            onBlur={(e) => handleSaveItemTitle(item, e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleSaveItemTitle(item, titleValue);
-                              }
+                          }}
+                          placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
+                          className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-2xs"
+                        />
+                        {editingTitles[item.id] !== undefined &&
+                        editingTitles[item.id].trim() !== '' &&
+                        editingTitles[item.id].trim() !== item.title ? (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              // 避免觸發 input onBlur 造成兩次呼叫，直接立即執行儲存
+                              e.preventDefault();
+                              handleSaveItemTitle(item, titleValue);
                             }}
-                            placeholder="輸入語音檔案名稱（修改後自動同步雲端硬碟檔名）..."
-                            className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white focus:bg-white font-bold font-serif-tc text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-2xs"
-                          />
-                          {editingTitles[item.id] !== undefined &&
-                          editingTitles[item.id].trim() !== '' &&
-                          editingTitles[item.id].trim() !== item.title ? (
-                            <button
-                              type="button"
-                              onMouseDown={(e) => {
-                                // 避免觸發 input onBlur 造成兩次呼叫，直接立即執行儲存
-                                e.preventDefault();
-                                handleSaveItemTitle(item, titleValue);
-                              }}
-                              className="px-3 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer z-10"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>儲存並同步雲端檔名</span>
-                            </button>
-                          ) : renamingItemIds[item.id] ? (
-                            <span className="px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-[#2E5A44] text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              <span>雲端檔名背景同步中</span>
-                            </span>
-                          ) : null}
-                        </div>
+                            className="px-3 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer z-10"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>儲存並同步雲端檔名</span>
+                          </button>
+                        ) : renamingItemIds[item.id] ? (
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-[#2E5A44] text-[11px] font-semibold flex items-center gap-1 shrink-0">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>雲端檔名背景同步中</span>
+                          </span>
+                        ) : null}
                       </div>
+                    </div>
 
-                      {/* 單筆直接移動 / 切換所屬館藏分類 */}
-                      <div className="flex items-center gap-2 shrink-0 self-start lg:self-center border-t lg:border-t-0 pt-2 lg:pt-0 border-[#E2D5C1]">
+                    {/* 第三列：所屬館藏分類切換 + 主講人選取與管理（含新增、修改、刪除功能） */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
+                      {/* 左側：所屬館藏分類 */}
+                      <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-[#5C3A1B] shrink-0">
                           所屬館藏分類：
                         </span>
@@ -1671,6 +2004,99 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                             </option>
                           ))}
                         </select>
+                      </div>
+
+                      {/* 右側：主講人下拉選單（包含新增、修改、刪除）與快捷操作按鈕 */}
+                      <div className="flex flex-wrap items-center gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 border-[#E2D5C1]">
+                        <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
+                          <User className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>主講人：</span>
+                        </label>
+
+                        {/* 下拉選單：包含未指定、現有名冊、新增、修改、刪除 */}
+                        <select
+                          value={item.speaker || ''}
+                          onChange={(e) => handleSpeakerDropdownChange(item, e.target.value)}
+                          className={`px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer shadow-2xs transition ${
+                            item.speaker
+                              ? 'border-[#8B5A2B] bg-[#FFF8EE] text-[#5C3A1B]'
+                              : 'border-[#C8B598] bg-white text-[#6B5A4B]'
+                          }`}
+                        >
+                          <option value="">-- 未指定主講人 --</option>
+                          {speakers.length > 0 && (
+                            <optgroup label="現有主講人名冊">
+                              {speakers.map((sp) => (
+                                <option key={sp.id} value={sp.name}>
+                                  {sp.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="── 主講人管理操作 ──">
+                            <option value="__ACTION_ADD__">➕ 新增主講人...</option>
+                            {item.speaker && (
+                              <>
+                                <option value="__ACTION_EDIT__">✏️ 修改「{item.speaker}」名稱...</option>
+                                <option value="__ACTION_DELETE__">🗑️ 刪除「{item.speaker}」...</option>
+                              </>
+                            )}
+                            <option value="__ACTION_MANAGE__">⚙️ 開啟主講人名冊維護...</option>
+                          </optgroup>
+                        </select>
+
+                        {/* 快捷操作按鈕 */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSpeakerTargetItem(item);
+                              setNewSpeakerName('');
+                              setIsAddSpeakerOpen(true);
+                            }}
+                            title="新增主講人"
+                            className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] text-[#2E5A44] hover:border-[#2E5A44] text-[11px] font-semibold flex items-center gap-0.5 cursor-pointer shadow-2xs transition"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>新增</span>
+                          </button>
+
+                          {item.speaker && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSpeakerOldName(item.speaker!);
+                                  setEditingSpeakerNewName(item.speaker!);
+                                }}
+                                title={`修改主講人「${item.speaker}」名稱`}
+                                className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] text-[#8B5A2B] hover:border-[#8B5A2B] text-[11px] font-semibold flex items-center gap-0.5 cursor-pointer shadow-2xs transition"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>修改</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setDeletingSpeakerName(item.speaker!)}
+                                title={`刪除主講人「${item.speaker}」`}
+                                className="px-2 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-rose-50 text-rose-600 hover:border-rose-400 text-[11px] font-semibold flex items-center gap-0.5 cursor-pointer shadow-2xs transition"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>刪除</span>
+                              </button>
+                            </>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setIsSpeakerManagerOpen(true)}
+                            title="開啟主講人名冊維護管理"
+                            className="p-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] text-[#5C3A1B] cursor-pointer shadow-2xs transition"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2217,6 +2643,373 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   <span>確認刪除類別標籤</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 5：新增主講人視窗
+         ======================================================================== */}
+      {isAddSpeakerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#261A13] to-[#3E2A1D] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#8B5A2B]/40 border border-[#D4A373]/30 flex items-center justify-center text-[#F3D5B5]">
+                  <User className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  新增主講人
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddSpeakerOpen(false);
+                  setNewSpeakerName('');
+                  setSpeakerTargetItem(null);
+                }}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {speakerTargetItem && (
+                <div className="p-3 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4] text-xs text-[#5C3A1B]">
+                  💡 新增後將自動指派給當前語音檔：
+                  <strong className="block text-[#2C221E] font-serif-tc text-sm mt-0.5 truncate">
+                    {speakerTargetItem.title}
+                  </strong>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-[#5C3A1B] mb-1.5">
+                  主講人姓名 / 稱謂 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={newSpeakerName}
+                  onChange={(e) => setNewSpeakerName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleConfirmAddSpeaker();
+                    }
+                  }}
+                  placeholder="例如：林教授、張老師、王作家、陳導覽員..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#C8B598] bg-white text-sm text-[#2C221E] font-medium focus:outline-none focus:border-[#8B5A2B] shadow-2xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddSpeakerOpen(false);
+                    setNewSpeakerName('');
+                    setSpeakerTargetItem(null);
+                  }}
+                  className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmAddSpeaker}
+                  className="px-5 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>確認新增主講人</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 6：修改主講人名稱視窗
+         ======================================================================== */}
+      {editingSpeakerOldName && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#261A13] to-[#3E2A1D] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#8B5A2B]/40 border border-[#D4A373]/30 flex items-center justify-center text-[#F3D5B5]">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  修改主講人名稱
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSpeakerOldName(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#7A4B1D] leading-relaxed">
+                ℹ️ 修改後，名冊與所有目前標記為「<strong>{editingSpeakerOldName}</strong>」的語音檔案（共 {audioItems.filter((a) => a.speaker === editingSpeakerOldName).length} 筆）將同步自動更新。
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#5C3A1B] mb-1.5">
+                  新的主講人姓名 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={editingSpeakerNewName}
+                  onChange={(e) => setEditingSpeakerNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleConfirmEditSpeaker();
+                    }
+                  }}
+                  placeholder="輸入新的主講人姓名..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#C8B598] bg-white text-sm text-[#2C221E] font-medium focus:outline-none focus:border-[#8B5A2B] shadow-2xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  onClick={() => setEditingSpeakerOldName(null)}
+                  className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmEditSpeaker}
+                  className="px-5 py-2 rounded-xl bg-[#8B5A2B] hover:bg-[#6F4520] text-white text-xs font-semibold shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>確認修改名稱</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 7：刪除主講人確認視窗
+         ======================================================================== */}
+      {deletingSpeakerName && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-gradient-to-r from-[#3A2218] to-[#522D20] text-[#FAF5EC] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-300/30 flex items-center justify-center text-red-200">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                  刪除主講人確認
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingSpeakerName(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-[#3A2D25] leading-relaxed">
+                確定要自主講人名冊中刪除「
+                <strong className="text-[#8B5A2B]">{deletingSpeakerName}</strong>」嗎？
+              </p>
+
+              {(() => {
+                const affectedCount = audioItems.filter((a) => a.speaker === deletingSpeakerName).length;
+                if (affectedCount > 0) {
+                  return (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#6E4720] leading-relaxed">
+                      ⚠️ 目前共有 <strong>{affectedCount}</strong> 筆語音檔指派了此主講人，刪除後將自動解除這些語音檔的主講人欄位（語音檔本身不會被刪除），並同步更新至 Firebase。
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] text-xs text-[#5C4938]">
+                    目前沒有任何語音檔指派此主講人，可直接安全刪除。
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#E5D9C5]">
+                <button
+                  type="button"
+                  onClick={() => setDeletingSpeakerName(null)}
+                  className="px-4 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] text-xs font-semibold text-[#5C3A1B] cursor-pointer"
+                >
+                  保留主講人 (取消)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteSpeaker}
+                  className="px-5 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>確認刪除主講人</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 8：主講人名冊維護管理視窗
+         ======================================================================== */}
+      {isSpeakerManagerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-2xl w-full max-h-[88vh] flex flex-col overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            {/* 視窗頂部標題列 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#261A13] to-[#3E2A1D] text-[#FAF5EC] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#8B5A2B]/40 border border-[#D4A373]/30 flex items-center justify-center text-[#F3D5B5]">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                    主講人名冊維護管理
+                  </h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    管理數位有聲圖書館之主講人名單、館藏語音數量統計與快速維護
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSpeakerManagerOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 內容區塊 */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* 統計與新增列 */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5]">
+                <div className="text-xs text-[#5C3A1B] space-y-0.5">
+                  <div>
+                    名冊現有主講人：<strong className="text-[#8B5A2B] font-mono text-sm">{speakers.length}</strong> 位
+                  </div>
+                  <div>
+                    尚未指定主講人之語音檔：<strong className="text-amber-800 font-mono font-bold">{speakerStats.unassigned}</strong> 筆
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerTargetItem(null);
+                    setNewSpeakerName('');
+                    setIsAddSpeakerOpen(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1.5 self-start sm:self-center shadow-xs cursor-pointer transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>新增主講人</span>
+                </button>
+              </div>
+
+              {/* 主講人名單列表 */}
+              {speakers.length === 0 ? (
+                <div className="text-center py-12 text-sm text-[#7A6855] bg-[#FAF6EE]/50 rounded-xl border border-dashed border-[#DFCEB4]">
+                  目前名冊中尚未有任何主講人，請點擊上方「新增主講人」按鈕建立第一位主講人！
+                </div>
+              ) : (
+                <div className="rounded-xl border border-[#E2D5C1] overflow-hidden bg-white shadow-2xs">
+                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#F4ECE0] text-xs font-bold text-[#5C3A1B] border-b border-[#E2D5C1]">
+                    <div className="col-span-2 sm:col-span-1 text-center font-mono">序號</div>
+                    <div className="col-span-6 sm:col-span-6">主講人姓名</div>
+                    <div className="col-span-4 sm:col-span-2 text-center">館藏語音數</div>
+                    <div className="hidden sm:block sm:col-span-3 text-right">操作</div>
+                  </div>
+
+                  <div className="divide-y divide-[#EFE6D5]">
+                    {speakerStats.list.map((sp, idx) => (
+                      <div
+                        key={sp.id}
+                        className="grid grid-cols-12 gap-2 px-4 py-3 items-center hover:bg-[#FAF6EE] text-xs transition"
+                      >
+                        <div className="col-span-2 sm:col-span-1 text-center font-mono font-semibold text-[#8B735B]">
+                          #{idx + 1}
+                        </div>
+                        <div className="col-span-6 sm:col-span-6 font-semibold text-[#2C221E] flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                          <span>{sp.name}</span>
+                        </div>
+                        <div className="col-span-4 sm:col-span-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterSpeaker(sp.name);
+                              setIsSpeakerManagerOpen(false);
+                              scrollToAudioList();
+                            }}
+                            title={`點選以篩選主講人「${sp.name}」之語音檔`}
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#8B5A2B]/15 hover:bg-[#8B5A2B] text-[#5C3A1B] hover:text-white font-mono font-bold text-xs transition cursor-pointer"
+                          >
+                            <span>{sp.count}</span>
+                            <span className="text-[10px]">筆</span>
+                          </button>
+                        </div>
+                        <div className="col-span-12 sm:col-span-3 flex items-center justify-end gap-1.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-[#F0E4D4]">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSpeakerOldName(sp.name);
+                              setEditingSpeakerNewName(sp.name);
+                            }}
+                            className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-[#FAF4E8] text-[#8B5A2B] text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>修改</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingSpeakerName(sp.name)}
+                            className="px-2.5 py-1 rounded-lg border border-[#C8B598] bg-white hover:bg-rose-50 text-rose-600 hover:border-rose-300 text-xs font-semibold flex items-center gap-1 cursor-pointer transition"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>刪除</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 視窗底部按鈕列 */}
+            <div className="px-6 py-3.5 bg-[#FAF4E8] border-t border-[#E5D9C5] flex items-center justify-between shrink-0">
+              <span className="text-xs text-[#7A6855]">
+                💡 點擊任一主講人的「館藏語音數」，即可自動套用篩選並跳轉至該主講人的語音清單。
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsSpeakerManagerOpen(false)}
+                className="px-5 py-2 rounded-xl bg-[#3A2518] hover:bg-[#261A13] text-white text-xs font-semibold shadow-xs cursor-pointer transition"
+              >
+                關閉名冊
+              </button>
             </div>
           </div>
         </div>
