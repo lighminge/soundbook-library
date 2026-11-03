@@ -1,5 +1,5 @@
 import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider, AppCheck } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, AppCheck, getToken } from 'firebase/app-check';
 import {
   getFirestore,
   collection,
@@ -224,9 +224,8 @@ export function getDbInstance(): Firestore | null {
         appId: config.firebaseAppId,
       });
     }
-    firestoreDb = getFirestore(app);
-
-    // 若有設定 reCAPTCHA Enterprise Site Key 且在瀏覽器環境，自動啟用 Firebase App Check 雲端防護
+    // 重要：Firebase 官方規範 App Check 必須在 getFirestore 之前初始化，
+    // 這樣 Firestore 建立時才會自動綁定 App Check 權杖提供者並為每一次請求附帶 x-firebase-appcheck 標頭
     if (typeof window !== 'undefined' && config.recaptchaEnterpriseSiteKey && !appCheckInstance) {
       try {
         if (
@@ -241,11 +240,25 @@ export function getDbInstance(): Firestore | null {
           isTokenAutoRefreshEnabled: true,
         });
         console.log('Firebase App Check (reCAPTCHA Enterprise) 防護已啟動');
+
+        // 主動檢驗權杖取得狀態，若失敗將印出具體原因
+        getToken(appCheckInstance)
+          .then((t) => {
+            if (t.token) {
+              console.log('✅ Firebase App Check 權杖驗證成功 (Token valid)');
+            } else {
+              console.warn('⚠️ Firebase App Check 回傳空白權杖');
+            }
+          })
+          .catch((err) => {
+            console.error('❌ Firebase App Check 取得權杖失敗 (請確認 Google Cloud 網域與金鑰設定):', err);
+          });
       } catch (appCheckErr) {
         console.warn('Firebase App Check 初始化略過或失敗:', appCheckErr);
       }
     }
 
+    firestoreDb = getFirestore(app);
     return firestoreDb;
   } catch (err) {
     console.error('Firebase 初始化失敗:', err);

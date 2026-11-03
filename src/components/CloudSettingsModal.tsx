@@ -160,9 +160,13 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    const prevKey = getCloudConfig().recaptchaEnterpriseSiteKey;
     await saveCloudConfig(config);
     onSaved();
     onClose();
+    if (prevKey !== config.recaptchaEnterpriseSiteKey) {
+      window.location.reload();
+    }
   };
 
   const handleCopyGas = () => {
