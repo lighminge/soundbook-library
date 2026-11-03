@@ -181,10 +181,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const [savedPlaylists, setSavedPlaylists] = useState<SavedPlaylist[]>([]);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState<boolean>(false);
 
-  // 當前選用/綁定的已儲存播放清單 ID (若為自訂臨時清單則為 null)
-  const [activeSavedPlaylistId, setActiveSavedPlaylistId] = useState<string | null>(() => {
-    return localStorage.getItem('soundbook_active_saved_playlist_id') || null;
-  });
+  // 當前選用/綁定的已儲存播放清單 ID (若為自訂臨時清單則為 null，進入放映室預設不選取任何已儲存清單)
+  const [activeSavedPlaylistId, setActiveSavedPlaylistId] = useState<string | null>(null);
 
   // 儲存播放清單 Modal 狀態與表單
   const [showSavePlaylistModal, setShowSavePlaylistModal] = useState<boolean>(false);
@@ -195,9 +193,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 管理已儲存清單 Modal 狀態
   const [showManagePlaylistsModal, setShowManagePlaylistsModal] = useState<boolean>(false);
   const [manageSearchQuery, setManageSearchQuery] = useState<string>('');
+  const [managePageSize, setManagePageSize] = useState<number>(5);
+  const [manageCurrentPage, setManageCurrentPage] = useState<number>(1);
   const [editingPlaylistData, setEditingPlaylistData] = useState<SavedPlaylist | null>(null);
+  const [isCreatingNewPlaylist, setIsCreatingNewPlaylist] = useState<boolean>(false);
   const [deleteConfirmPlaylist, setDeleteConfirmPlaylist] = useState<SavedPlaylist | null>(null);
   const [playlistPickerAddAudioId, setPlaylistPickerAddAudioId] = useState<string>('');
+  // 編輯播放清單時：快速檢索未加入語音之查詢狀態 (關鍵字、類別標籤)
+  const [editPickerSearchQuery, setEditPickerSearchQuery] = useState<string>('');
+  const [editPickerTagFilter, setEditPickerTagFilter] = useState<string>('');
 
   // 放映室「播放時的文字顯示與導讀講稿」單筆時間區段即時修改狀態
   const [isEditingSegment, setIsEditingSegment] = useState<boolean>(false);
@@ -392,6 +396,65 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     shelfSearchTag,
     shelfPageSize,
   ]);
+
+  // 統計全體館藏可用之類別標籤（供編輯播放清單時篩選未加入語音使用）
+  const allAudioTags = useMemo(() => {
+    const tagCountMap: Record<string, number> = {};
+    audioItems.forEach((item) => {
+      (item.tags || []).forEach((t) => {
+        const trimmed = t.trim();
+        if (trimmed) {
+          tagCountMap[trimmed] = (tagCountMap[trimmed] || 0) + 1;
+        }
+      });
+    });
+    return Object.keys(tagCountMap)
+      .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+      .map((tag) => ({ tag, count: tagCountMap[tag] }));
+  }, [audioItems]);
+
+  // 編輯播放清單時：可供追加的候選語音（排除已在此清單者，並支援關鍵字與類別標籤過濾）
+  const availableCandidateAudio = useMemo(() => {
+    if (!editingPlaylistData) return [];
+    const addedSet = new Set(editingPlaylistData.audioItemIds);
+    return audioItems.filter((a) => {
+      if (addedSet.has(a.id)) return false;
+      const q = editPickerSearchQuery.trim().toLowerCase();
+      const matchQ =
+        !q ||
+        a.title.toLowerCase().includes(q) ||
+        (a.description && a.description.toLowerCase().includes(q));
+      const t = editPickerTagFilter.trim().toLowerCase();
+      const matchTag =
+        !t || (a.tags || []).some((tag) => tag.toLowerCase().includes(t));
+      return matchQ && matchTag;
+    });
+  }, [audioItems, editingPlaylistData, editPickerSearchQuery, editPickerTagFilter]);
+
+  // 「已儲存播放清單管理」搜尋與分頁計算（以 5 的倍數做選取：5, 10, 15, 20, 25）
+  const filteredManagePlaylists = useMemo(() => {
+    const q = manageSearchQuery.trim().toLowerCase();
+    if (!q) return savedPlaylists;
+    return savedPlaylists.filter((p) => {
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.description && p.description.toLowerCase().includes(q))
+      );
+    });
+  }, [savedPlaylists, manageSearchQuery]);
+
+  const totalManageCount = filteredManagePlaylists.length;
+  const totalManagePages = Math.max(1, Math.ceil(totalManageCount / managePageSize));
+  const safeManagePage = Math.min(manageCurrentPage, totalManagePages);
+  const manageStartIndex = (safeManagePage - 1) * managePageSize;
+  const paginatedManagePlaylists = filteredManagePlaylists.slice(
+    manageStartIndex,
+    manageStartIndex + managePageSize
+  );
+
+  useEffect(() => {
+    setManageCurrentPage(1);
+  }, [manageSearchQuery, managePageSize]);
 
   const currentCategory = categories.find((c) => c.id === currentItem?.categoryId);
 
@@ -964,25 +1027,35 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     showToast(`🗑️ 已刪除播放清單：「${playlist.name}」`);
   };
 
-  // 在管理面板中建立全新空白播放清單
-  const handleCreateNewBlankPlaylist = async () => {
+  // 在管理面板中建立全新空白播放清單（不自動寫入資料庫，不自動帶入當下播放的語音，待按下確認儲存時才寫入）
+  const handleCreateNewBlankPlaylist = () => {
     const name = `新播放清單 #${savedPlaylists.length + 1}`;
     const now = new Date().toISOString();
     const newPlaylist: SavedPlaylist = {
       id: `playlist_${Date.now()}`,
       name,
       description: '',
-      audioItemIds: currentItem ? [currentItem.id] : [],
+      audioItemIds: [], // 不要自動帶入當下播放的語音檔
       createdAt: now,
       updatedAt: now,
     };
-    await saveSavedPlaylist(newPlaylist);
-    await refreshSavedPlaylists();
+    setIsCreatingNewPlaylist(true);
     setEditingPlaylistData(newPlaylist);
-    showToast(`✨ 已建立「${name}」，可直接編輯內容與加入語音`);
+    setEditPickerSearchQuery('');
+    setEditPickerTagFilter('');
+    setPlaylistPickerAddAudioId('');
   };
 
-  // 在編輯面板中儲存對特定播放清單的修改
+  // 取消編輯播放清單（直接退出，不儲存任何變更或新增草稿）
+  const handleCancelEditPlaylist = () => {
+    setEditingPlaylistData(null);
+    setIsCreatingNewPlaylist(false);
+    setEditPickerSearchQuery('');
+    setEditPickerTagFilter('');
+    setPlaylistPickerAddAudioId('');
+  };
+
+  // 在編輯面板中儲存對特定播放清單的修改（或儲存新建立的播放清單）
   const handleSaveEditedPlaylistData = async () => {
     if (!editingPlaylistData) return;
     const trimmed = editingPlaylistData.name.trim();
@@ -1001,7 +1074,53 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
     await refreshSavedPlaylists();
     setEditingPlaylistData(null);
-    showToast(`✅ 已儲存播放清單「${updated.name}」的修改！`);
+    setIsCreatingNewPlaylist(false);
+    setEditPickerSearchQuery('');
+    setEditPickerTagFilter('');
+    setPlaylistPickerAddAudioId('');
+    showToast(
+      isCreatingNewPlaylist
+        ? `🎉 已成功建立並保存新播放清單：「${updated.name}」！`
+        : `✅ 已儲存播放清單「${updated.name}」的修改！`
+    );
+  };
+
+  // 「館藏選片書架」專屬隨機播放：將目前選片書架中符合篩選條件的語音隨機打亂並立即開始放映
+  const handleShufflePlayShelfAudio = () => {
+    if (shelfFilteredItems.length === 0) {
+      showToast('⚠️ 目前選片書架沒有符合條件的語音檔可供隨機播放');
+      return;
+    }
+    const shuffled = [...shelfFilteredItems].sort(() => Math.random() - 0.5);
+    const shuffledIds = shuffled.map((i) => i.id);
+
+    setPlaylistItemIds(shuffledIds);
+    setActiveSavedPlaylistId(null);
+    localStorage.removeItem('soundbook_active_saved_playlist_id');
+
+    pendingAutoPlayRef.current = true;
+    onSelectAudio(shuffled[0]);
+
+    if (shuffled[0].id === currentItem?.id && audioRef.current && playableScreeningUrl) {
+      audioRef.current.currentTime = 0;
+      audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch((err) => console.warn('自動開始播放失敗:', err));
+    }
+
+    if (window.innerWidth < 1024) {
+      if (playerStageRef.current) {
+        playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (screeningTopRef.current) {
+        screeningTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    showToast(`🔀 已啟動書架隨機放映！正在播放：${shuffled[0].title}（共 ${shuffled.length} 部）`);
   };
 
   // 監聽原生 Fullscreen 變化，確保 Esc 鍵或手勢退出時狀態同步
@@ -2362,27 +2481,41 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </div>
                 </div>
 
-                {/* 批次加入播放清單快捷操作列 */}
+                {/* 批次加入播放清單與隨機播放快捷操作列 */}
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMultiSelectMode((v) => !v);
-                      if (isMultiSelectMode) setSelectedShelfIds([]);
-                    }}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
-                      isMultiSelectMode
-                        ? 'bg-[#8B5A2B] text-white border-[#8B5A2B] shadow-xs'
-                        : 'bg-white text-[#5C3A1B] border-[#D5C5AE] hover:bg-[#FAF4E8]'
-                    }`}
-                  >
-                    {isMultiSelectMode ? (
-                      <CheckSquare className="w-3.5 h-3.5" />
-                    ) : (
-                      <Square className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isMultiSelectMode ? '結束多選模式' : '多選加入清單'}</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMultiSelectMode((v) => !v);
+                        if (isMultiSelectMode) setSelectedShelfIds([]);
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+                        isMultiSelectMode
+                          ? 'bg-[#8B5A2B] text-white border-[#8B5A2B] shadow-xs'
+                          : 'bg-white text-[#5C3A1B] border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                      }`}
+                    >
+                      {isMultiSelectMode ? (
+                        <CheckSquare className="w-3.5 h-3.5" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isMultiSelectMode ? '結束多選模式' : '多選加入清單'}</span>
+                    </button>
+
+                    {/* 書架隨機播放功能：自動隨機播放選片書架內的語音檔 */}
+                    <button
+                      type="button"
+                      onClick={handleShufflePlayShelfAudio}
+                      disabled={shelfFilteredItems.length === 0}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 disabled:opacity-40 disabled:cursor-not-allowed text-white shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                      title="將目前選片書架內符合條件的語音檔隨機排列並立即放映"
+                    >
+                      <Shuffle className="w-3.5 h-3.5" />
+                      <span>隨機播放 ({shelfFilteredItems.length})</span>
+                    </button>
+                  </div>
 
                   <button
                     type="button"
@@ -2766,7 +2899,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   <div className="space-y-2 pt-2 border-t border-[#E5D9C5]/80">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
-                        <FolderOpen className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                        <ListMusic className="w-3.5 h-3.5 text-[#8B5A2B]" />
                         <span>已儲存播放清單：</span>
                       </span>
 
@@ -2803,14 +2936,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       >
                         <option value="">
                           {activeSavedPlaylistId
-                            ? '切換為未儲存/自訂清單'
-                            : `自訂/當前播放佇列 (${playlistItems.length} 部)`}
+                            ? '-- 切換為自訂播放佇列 --'
+                            : '-- 請選擇已儲存清單（或自訂播放佇列）--'}
                         </option>
                         {savedPlaylists.length > 0 && (
                           <optgroup label="已儲存的播放清單">
                             {savedPlaylists.map((p) => (
                               <option key={p.id} value={p.id}>
-                                📁 {p.name} ({p.audioItemIds.length} 部)
+                                ♪ {p.name} ({p.audioItemIds.length} 部)
                               </option>
                             ))}
                           </optgroup>
@@ -3376,15 +3509,21 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
-                  <FolderOpen className="w-4 h-4" />
+                  <ListMusic className="w-4 h-4" />
                 </div>
                 <div>
                   <h3 className="font-bold font-serif-tc text-base">
-                    {editingPlaylistData ? `編輯播放清單：${editingPlaylistData.name}` : '已儲存的播放清單管理'}
+                    {editingPlaylistData
+                      ? isCreatingNewPlaylist
+                        ? '新建立播放清單'
+                        : `編輯播放清單：${editingPlaylistData.name}`
+                      : '已儲存的播放清單管理'}
                   </h3>
                   <p className="text-[11px] text-[#C8B5A0]">
                     {editingPlaylistData
-                      ? '調整此清單名稱、說明、語音排列順序與增減項目'
+                      ? isCreatingNewPlaylist
+                        ? '輸入清單名稱、說明，並檢索館藏語音加入清單'
+                        : '調整此清單名稱、說明、語音排列順序與增減項目'
                       : '瀏覽、載入放映、編輯內容或刪除已保存的播放清單'}
                   </p>
                 </div>
@@ -3395,7 +3534,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 onClick={() => {
                   setShowManagePlaylistsModal(false);
                   setEditingPlaylistData(null);
+                  setIsCreatingNewPlaylist(false);
                   setDeleteConfirmPlaylist(null);
+                  setEditPickerSearchQuery('');
+                  setEditPickerTagFilter('');
+                  setPlaylistPickerAddAudioId('');
                 }}
                 className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
               >
@@ -3431,11 +3574,26 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </div>
                 </div>
 
+                {/* 統計數量顯示 */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#7A6855] px-1">
+                  <span>
+                    共收錄 <strong className="text-[#8B5A2B] font-bold">{savedPlaylists.length}</strong> 個播放清單
+                    {manageSearchQuery.trim() && (
+                      <>（符合搜尋條件：<strong className="text-[#8B5A2B] font-bold">{totalManageCount}</strong> 個）</>
+                    )}
+                  </span>
+                  {totalManageCount > 0 && (
+                    <span>
+                      第 <strong className="text-[#8B5A2B] font-bold">{safeManagePage}</strong> / {totalManagePages} 頁
+                    </span>
+                  )}
+                </div>
+
                 {/* 清單列表 */}
                 {savedPlaylists.length === 0 ? (
                   <div className="py-12 px-4 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] space-y-3">
                     <div className="w-12 h-12 rounded-full bg-[#EFE6D5] text-[#8B5A2B] flex items-center justify-center mx-auto">
-                      <FolderOpen className="w-6 h-6" />
+                      <ListMusic className="w-6 h-6" />
                     </div>
                     <div className="space-y-1">
                       <p className="text-sm font-bold text-[#3A2518]">目前尚無已儲存的播放清單</p>
@@ -3454,122 +3612,200 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {savedPlaylists
-                      .filter((p) => {
-                        const q = manageSearchQuery.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          p.name.toLowerCase().includes(q) ||
-                          (p.description && p.description.toLowerCase().includes(q))
-                        );
-                      })
-                      .map((p) => {
-                        const isCurrentlyActive = activeSavedPlaylistId === p.id;
-                        // 計算清單總時長
-                        const pDuration = p.audioItemIds.reduce((sum, id) => {
-                          const it = audioItems.find((a) => a.id === id);
-                          return sum + (it?.duration || 0);
-                        }, 0);
+                    {paginatedManagePlaylists.map((p, idx) => {
+                      const globalIndex = (safeManagePage - 1) * managePageSize + idx + 1;
+                      const isCurrentlyActive = activeSavedPlaylistId === p.id;
+                      // 計算清單總時長
+                      const pDuration = p.audioItemIds.reduce((sum, id) => {
+                        const it = audioItems.find((a) => a.id === id);
+                        return sum + (it?.duration || 0);
+                      }, 0);
 
-                        return (
-                          <div
-                            key={p.id}
-                            className={`p-4 rounded-xl border transition space-y-3 ${
-                              isCurrentlyActive
-                                ? 'bg-[#FFF9EE] border-amber-400 ring-2 ring-amber-400/40 shadow-md'
-                                : 'bg-white hover:bg-[#FAF6EE] border-[#E5D9C5]'
-                            }`}
-                          >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-1.5">
-                                    <Folder className="w-4 h-4 text-[#8B5A2B]" />
-                                    <span>{p.name}</span>
-                                  </h4>
-                                  {isCurrentlyActive && (
-                                    <span className="px-2 py-0.5 rounded-full bg-amber-400 text-[#2C221E] font-bold text-[10px] flex items-center gap-1">
-                                      <Play className="w-2.5 h-2.5 fill-current" />
-                                      放映中
-                                    </span>
-                                  )}
-                                </div>
-                                {p.description && (
-                                  <p className="text-xs text-[#6E5D4F] line-clamp-1">{p.description}</p>
-                                )}
-                              </div>
-
-                              {/* 操作按鈕群：載入、編輯、刪除 */}
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    handleSelectSavedPlaylist(p.id);
-                                    setShowManagePlaylistsModal(false);
-                                  }}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-2xs ${
-                                    isCurrentlyActive
-                                      ? 'bg-amber-400 text-[#2C221E]'
-                                      : 'bg-[#2E5A44] hover:bg-[#234735] text-white'
-                                  }`}
-                                  title="載入此清單至放映室播放"
+                      return (
+                        <div
+                          key={p.id}
+                          className={`p-4 rounded-xl border transition space-y-3 ${
+                            isCurrentlyActive
+                              ? 'bg-[#FFF9EE] border-amber-400 ring-2 ring-amber-400/40 shadow-md'
+                              : 'bg-white hover:bg-[#FAF6EE] border-[#E5D9C5]'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="font-mono text-xs font-bold text-[#8B5A2B] bg-[#F4ECE0] px-2 py-0.5 rounded-md border border-[#DFCEB4] shrink-0"
+                                  title={`清單序號 #${globalIndex}`}
                                 >
-                                  <Play className="w-3 h-3 fill-current" />
-                                  <span>{isCurrentlyActive ? '重新載入' : '載入放映'}</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingPlaylistData(p)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFE6D5] border border-[#D5C5AE] text-[#5C3A1B] text-xs font-medium flex items-center gap-1 transition cursor-pointer"
-                                  title="修改此播放清單內容與順序"
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                  <span>修改</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setDeleteConfirmPlaylist(p)}
-                                  className="p-1.5 rounded-lg hover:bg-red-50 text-[#8B735B] hover:text-red-700 transition cursor-pointer"
-                                  title="刪除此播放清單"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* 統計與曲目縮圖預覽 */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E5D9C5]/60 text-xs">
-                              <span className="text-[#7A6855] text-[11px] font-mono">
-                                收錄 {p.audioItemIds.length} 部語音 · 總時長約 {formatDuration(pDuration)}
-                              </span>
-
-                              {/* 前 4 張縮圖 */}
-                              <div className="flex items-center gap-1 overflow-x-auto">
-                                {p.audioItemIds.slice(0, 4).map((id) => {
-                                  const it = audioItems.find((a) => a.id === id);
-                                  if (!it) return null;
-                                  return (
-                                    <img
-                                      key={id}
-                                      src={it.coverImageUrl}
-                                      alt={it.title}
-                                      title={it.title}
-                                      className="w-6 h-6 rounded object-cover border border-[#D5C5AE]"
-                                    />
-                                  );
-                                })}
-                                {p.audioItemIds.length > 4 && (
-                                  <span className="text-[10px] text-[#7A6855] font-mono">
-                                    +{p.audioItemIds.length - 4}
+                                  #{globalIndex}
+                                </span>
+                                <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-1.5">
+                                  <ListMusic className="w-4 h-4 text-[#8B5A2B]" />
+                                  <span>{p.name}</span>
+                                </h4>
+                                {isCurrentlyActive && (
+                                  <span className="px-2 py-0.5 rounded-full bg-amber-400 text-[#2C221E] font-bold text-[10px] flex items-center gap-1">
+                                    <Play className="w-2.5 h-2.5 fill-current" />
+                                    放映中
                                   </span>
                                 )}
                               </div>
+                              {p.description && (
+                                <p className="text-xs text-[#6E5D4F] line-clamp-1">{p.description}</p>
+                              )}
+                            </div>
+
+                            {/* 操作按鈕群：載入、編輯、刪除 */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleSelectSavedPlaylist(p.id);
+                                  setShowManagePlaylistsModal(false);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-2xs ${
+                                  isCurrentlyActive
+                                    ? 'bg-amber-400 text-[#2C221E]'
+                                    : 'bg-[#2E5A44] hover:bg-[#234735] text-white'
+                                }`}
+                                title="載入此清單至放映室播放"
+                              >
+                                <Play className="w-3 h-3 fill-current" />
+                                <span>{isCurrentlyActive ? '重新載入' : '載入放映'}</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsCreatingNewPlaylist(false);
+                                  setEditingPlaylistData(p);
+                                  setEditPickerSearchQuery('');
+                                  setEditPickerTagFilter('');
+                                  setPlaylistPickerAddAudioId('');
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-[#EFE6D5] border border-[#D5C5AE] text-[#5C3A1B] text-xs font-medium flex items-center gap-1 transition cursor-pointer"
+                                title="修改此播放清單內容與順序"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>修改</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setDeleteConfirmPlaylist(p)}
+                                className="p-1.5 rounded-lg hover:bg-red-50 text-[#8B735B] hover:text-red-700 transition cursor-pointer"
+                                title="刪除此播放清單"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
-                        );
-                      })}
+
+                          {/* 統計與曲目縮圖預覽 */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E5D9C5]/60 text-xs">
+                            <span className="text-[#7A6855] text-[11px] font-mono">
+                              收錄 {p.audioItemIds.length} 部語音 · 總時長約 {formatDuration(pDuration)}
+                            </span>
+
+                            {/* 前 4 張縮圖 */}
+                            <div className="flex items-center gap-1 overflow-x-auto">
+                              {p.audioItemIds.slice(0, 4).map((id) => {
+                                const it = audioItems.find((a) => a.id === id);
+                                if (!it) return null;
+                                return (
+                                  <img
+                                    key={id}
+                                    src={it.coverImageUrl}
+                                    alt={it.title}
+                                    title={it.title}
+                                    className="w-6 h-6 rounded object-cover border border-[#D5C5AE]"
+                                  />
+                                );
+                              })}
+                              {p.audioItemIds.length > 4 && (
+                                <span className="text-[10px] text-[#7A6855] font-mono">
+                                  +{p.audioItemIds.length - 4}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* 清單分頁控制列（以 5 的倍數做選取：5, 10, 15, 20, 25） */}
+                {totalManageCount > 0 && (
+                  <div className="pt-3 border-t border-[#E5D9C5] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 text-[#7A6855]">
+                      <span>每頁顯示</span>
+                      <select
+                        value={managePageSize}
+                        onChange={(e) => {
+                          setManagePageSize(Number(e.target.value));
+                          setManageCurrentPage(1);
+                        }}
+                        className="px-2 py-1 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer font-medium"
+                      >
+                        <option value={5}>5 筆</option>
+                        <option value={10}>10 筆</option>
+                        <option value={15}>15 筆</option>
+                        <option value={20}>20 筆</option>
+                        <option value={25}>25 筆</option>
+                      </select>
+                      <span className="hidden sm:inline">
+                        （顯示第 {manageStartIndex + 1} - {Math.min(manageStartIndex + managePageSize, totalManageCount)} 筆，共 {totalManageCount} 筆）
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeManagePage <= 1}
+                        onClick={() => setManageCurrentPage((p) => Math.max(1, p - 1))}
+                        className="p-1.5 rounded-lg border border-[#D5C5AE] bg-white text-[#5C3A1B] hover:bg-[#FAF4E8] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                        title="上一頁"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+
+                      {Array.from({ length: totalManagePages }, (_, i) => i + 1)
+                        .filter(
+                          (page) =>
+                            page === 1 ||
+                            page === totalManagePages ||
+                            Math.abs(page - safeManagePage) <= 1
+                        )
+                        .map((page, idx, arr) => (
+                          <React.Fragment key={page}>
+                            {idx > 0 && arr[idx - 1] !== page - 1 && (
+                              <span className="px-1 text-[#7A6855]">...</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setManageCurrentPage(page)}
+                              className={`w-7 h-7 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                                safeManagePage === page
+                                  ? 'bg-[#8B5A2B] text-white shadow-xs'
+                                  : 'bg-white border border-[#D5C5AE] text-[#5C3A1B] hover:bg-[#FAF4E8]'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          </React.Fragment>
+                        ))}
+
+                      <button
+                        type="button"
+                        disabled={safeManagePage >= totalManagePages}
+                        onClick={() => setManageCurrentPage((p) => Math.min(totalManagePages, p + 1))}
+                        className="p-1.5 rounded-lg border border-[#D5C5AE] bg-white text-[#5C3A1B] hover:bg-[#FAF4E8] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                        title="下一頁"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3579,7 +3815,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 <div className="flex items-center justify-between">
                   <button
                     type="button"
-                    onClick={() => setEditingPlaylistData(null)}
+                    onClick={handleCancelEditPlaylist}
                     className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-semibold cursor-pointer"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -3621,26 +3857,79 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </div>
                 </div>
 
-                {/* 從館藏追加語音快捷選單 */}
-                <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#E5D9C5] space-y-2 text-xs">
-                  <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
-                    <Plus className="w-3.5 h-3.5 text-[#8B5A2B]" />
-                    <span>追加館藏語音至此清單：</span>
-                  </span>
-                  <div className="flex items-center gap-2">
+                {/* 從館藏追加語音快捷選單 (支援關鍵字查詢與類別標籤下拉選取) */}
+                <div className="p-3.5 bg-[#FAF6EE] rounded-xl border border-[#E5D9C5] space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[#5C3A1B] flex items-center gap-1">
+                      <Plus className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                      <span>追加館藏語音至此清單：</span>
+                    </span>
+                    {(editPickerSearchQuery || editPickerTagFilter) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPickerSearchQuery('');
+                          setEditPickerTagFilter('');
+                        }}
+                        className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-0.5 cursor-pointer font-medium"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>重設搜尋</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 關鍵字查詢與類別標籤下拉選取 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="搜尋未加入語音名稱/說明..."
+                        value={editPickerSearchQuery}
+                        onChange={(e) => setEditPickerSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <Tag className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <select
+                        value={editPickerTagFilter}
+                        onChange={(e) => setEditPickerTagFilter(e.target.value)}
+                        className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                      >
+                        <option value="">全部類別標籤 {allAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}</option>
+                        {allAudioTags.map(({ tag, count }) => (
+                          <option key={tag} value={tag}>
+                            #{tag} ({count} 部)
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* 候選語音下拉選單與加入按鈕 */}
+                  <div className="flex flex-wrap items-center gap-2">
                     <select
                       value={playlistPickerAddAudioId}
                       onChange={(e) => setPlaylistPickerAddAudioId(e.target.value)}
-                      className="flex-1 min-w-0 pl-2.5 pr-8 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer truncate"
+                      className="flex-1 min-w-[200px] pl-2.5 pr-8 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer truncate"
                     >
-                      <option value="">選擇要加入的語音檔案...</option>
-                      {audioItems
-                        .filter((a) => !editingPlaylistData.audioItemIds.includes(a.id))
-                        .map((a) => (
+                      <option value="">
+                        {availableCandidateAudio.length === 0
+                          ? '無符合條件的未加入語音'
+                          : `選擇要加入的語音（符合條件：${availableCandidateAudio.length} 部）...`}
+                      </option>
+                      {availableCandidateAudio.map((a) => {
+                        const callNo = audioCallNumberMap.get(a.id);
+                        return (
                           <option key={a.id} value={a.id}>
-                            {a.title} ({formatDuration(a.duration)})
+                            {callNo ? `[${callNo}] ` : ''}{a.title} ({formatDuration(a.duration)})
                           </option>
-                        ))}
+                        );
+                      })}
                     </select>
 
                     <button
@@ -3655,110 +3944,137 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         setPlaylistPickerAddAudioId('');
                         showToast('➕ 已加入該語音至清單！');
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-[#8B5A2B] hover:bg-[#6E4420] disabled:opacity-40 text-white font-semibold text-xs cursor-pointer flex items-center gap-1"
+                      className="px-3 py-1.5 rounded-lg bg-[#8B5A2B] hover:bg-[#6E4420] disabled:opacity-40 text-white font-semibold text-xs cursor-pointer flex items-center gap-1 shrink-0"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>加入</span>
                     </button>
+
+                    {availableCandidateAudio.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newIds = availableCandidateAudio.map((a) => a.id);
+                          setEditingPlaylistData({
+                            ...editingPlaylistData,
+                            audioItemIds: [...editingPlaylistData.audioItemIds, ...newIds],
+                          });
+                          setPlaylistPickerAddAudioId('');
+                          showToast(`🎉 已將符合條件的 ${newIds.length} 部語音全數加入清單！`);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                        title="將目前搜尋出的所有語音檔案一次加入清單"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>全部加入 ({availableCandidateAudio.length})</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {/* 清單曲目排列與刪減區 */}
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {editingPlaylistData.audioItemIds.map((id, index) => {
-                    const it = audioItems.find((a) => a.id === id);
-                    if (!it) return null;
+                  {editingPlaylistData.audioItemIds.length === 0 ? (
+                    <div className="py-8 px-4 text-center rounded-xl bg-white border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
+                      <p className="font-bold text-[#3A2518]">此清單目前尚無語音檔</p>
+                      <p>請使用上方「追加館藏語音至此清單」搜尋並加入語音！</p>
+                    </div>
+                  ) : (
+                    editingPlaylistData.audioItemIds.map((id, index) => {
+                      const it = audioItems.find((a) => a.id === id);
+                      if (!it) return null;
 
-                    return (
-                      <div
-                        key={`edit_track_${id}_${index}`}
-                        className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-[#E5D9C5] text-xs"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="font-mono text-xs font-bold text-[#8B5A2B] w-5 text-center shrink-0">
-                            #{index + 1}
-                          </span>
-                          <img
-                            src={it.coverImageUrl}
-                            alt=""
-                            className="w-8 h-8 rounded object-cover border border-[#D5C5AE] shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <p className="font-bold text-[#2C221E] truncate">{it.title}</p>
-                            <span className="text-[10px] text-[#7A6855] font-mono">
-                              {formatDuration(it.duration)}
+                      return (
+                        <div
+                          key={`edit_track_${id}_${index}`}
+                          className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-[#E5D9C5] text-xs"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="font-mono text-xs font-bold text-[#8B5A2B] w-5 text-center shrink-0">
+                              #{index + 1}
                             </span>
+                            <img
+                              src={it.coverImageUrl}
+                              alt=""
+                              className="w-8 h-8 rounded object-cover border border-[#D5C5AE] shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <p className="font-bold text-[#2C221E] truncate">{it.title}</p>
+                              <span className="text-[10px] text-[#7A6855] font-mono">
+                                {formatDuration(it.duration)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 順序調整控制 */}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            {/* 移至頂部 */}
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => {
+                                const nextIds = [...editingPlaylistData.audioItemIds];
+                                const [moved] = nextIds.splice(index, 1);
+                                nextIds.unshift(moved);
+                                setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                              }}
+                              className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                              title="移至第 1 順位"
+                            >
+                              <ArrowUpToLine className="w-3 h-3" />
+                            </button>
+
+                            {/* 上移 */}
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={() => {
+                                const nextIds = [...editingPlaylistData.audioItemIds];
+                                const tmp = nextIds[index - 1];
+                                nextIds[index - 1] = nextIds[index];
+                                nextIds[index] = tmp;
+                                setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                              }}
+                              className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                              title="上移"
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                            </button>
+
+                            {/* 下移 */}
+                            <button
+                              type="button"
+                              disabled={index === editingPlaylistData.audioItemIds.length - 1}
+                              onClick={() => {
+                                const nextIds = [...editingPlaylistData.audioItemIds];
+                                const tmp = nextIds[index + 1];
+                                nextIds[index + 1] = nextIds[index];
+                                nextIds[index] = tmp;
+                                setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                              }}
+                              className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
+                              title="下移"
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                            </button>
+
+                            {/* 移出 */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextIds = editingPlaylistData.audioItemIds.filter((_, idx) => idx !== index);
+                                setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
+                              }}
+                              className="p-1 rounded hover:bg-red-50 text-red-600 cursor-pointer ml-1"
+                              title="從此清單移除"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
-
-                        {/* 順序調整控制 */}
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          {/* 移至頂部 */}
-                          <button
-                            type="button"
-                            disabled={index === 0}
-                            onClick={() => {
-                              const nextIds = [...editingPlaylistData.audioItemIds];
-                              const [moved] = nextIds.splice(index, 1);
-                              nextIds.unshift(moved);
-                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
-                            }}
-                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
-                            title="移至第 1 順位"
-                          >
-                            <ArrowUpToLine className="w-3 h-3" />
-                          </button>
-
-                          {/* 上移 */}
-                          <button
-                            type="button"
-                            disabled={index === 0}
-                            onClick={() => {
-                              const nextIds = [...editingPlaylistData.audioItemIds];
-                              const tmp = nextIds[index - 1];
-                              nextIds[index - 1] = nextIds[index];
-                              nextIds[index] = tmp;
-                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
-                            }}
-                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
-                            title="上移"
-                          >
-                            <ArrowUp className="w-3 h-3" />
-                          </button>
-
-                          {/* 下移 */}
-                          <button
-                            type="button"
-                            disabled={index === editingPlaylistData.audioItemIds.length - 1}
-                            onClick={() => {
-                              const nextIds = [...editingPlaylistData.audioItemIds];
-                              const tmp = nextIds[index + 1];
-                              nextIds[index + 1] = nextIds[index];
-                              nextIds[index] = tmp;
-                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
-                            }}
-                            className="p-1 rounded hover:bg-black/10 disabled:opacity-20 cursor-pointer text-[#7A6855]"
-                            title="下移"
-                          >
-                            <ArrowDown className="w-3 h-3" />
-                          </button>
-
-                          {/* 移出 */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const nextIds = editingPlaylistData.audioItemIds.filter((_, idx) => idx !== index);
-                              setEditingPlaylistData({ ...editingPlaylistData, audioItemIds: nextIds });
-                            }}
-                            className="p-1 rounded hover:bg-red-50 text-red-600 cursor-pointer ml-1"
-                            title="從此清單移除"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
@@ -3774,8 +4090,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   <>
                     <button
                       type="button"
-                      onClick={() => setEditingPlaylistData(null)}
-                      className="px-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-xs font-medium text-[#5C3A1B] cursor-pointer"
+                      onClick={handleCancelEditPlaylist}
+                      className="px-3 py-1.5 rounded-xl border border-[#D5C5AE] bg-white text-xs font-medium text-[#5C3A1B] cursor-pointer hover:bg-[#FAF6EE]"
                     >
                       取消編輯
                     </button>
@@ -3785,13 +4101,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                       className="px-4 py-1.5 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>確認儲存清單修改</span>
+                      <span>{isCreatingNewPlaylist ? '確認建立播放清單' : '確認儲存清單修改'}</span>
                     </button>
                   </>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setShowManagePlaylistsModal(false)}
+                    onClick={() => {
+                      setShowManagePlaylistsModal(false);
+                      setEditingPlaylistData(null);
+                      setIsCreatingNewPlaylist(false);
+                    }}
                     className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition"
                   >
                     關閉
