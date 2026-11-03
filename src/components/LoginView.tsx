@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { BookOpen, ShieldCheck, Lock, User, Eye, EyeOff, ArrowRight, Compass, Sparkles, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { BookOpen, ShieldCheck, Lock, User, Eye, EyeOff, ArrowRight, Compass, AlertCircle } from 'lucide-react';
 import { authenticate, loginAsGuest } from '../services/authService';
 import { CurrentUser } from '../types';
 
@@ -14,6 +14,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // 畫面載入時清空輸入框，防止瀏覽器記憶自動帶入帳號密碼
+  useEffect(() => {
+    setUsername('');
+    setPassword('');
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,12 +48,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
   const handleGuestEntry = () => {
     loginAsGuest();
     onGuestLogin();
-  };
-
-  const fillAdminCredentials = () => {
-    setUsername('admin');
-    setPassword('Avon5210');
-    setErrorMessage(null);
   };
 
   return (
@@ -81,7 +81,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
         )}
 
         {/* Login Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
           <div>
             <label className="block text-xs font-semibold text-stone-300 mb-1.5 font-mono">
               使用者帳號 / USERNAME
@@ -92,11 +92,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
               </div>
               <input
                 type="text"
+                name="soundbook_user_id"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="請輸入帳號 (例如: admin)"
+                placeholder="請輸入帳號"
                 className="w-full pl-10 pr-4 py-2.5 bg-stone-900/90 border border-stone-700 rounded-xl text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm transition"
-                autoComplete="username"
+                autoComplete="off"
                 required
               />
             </div>
@@ -112,11 +113,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
               </div>
               <input
                 type={showPassword ? 'text' : 'password'}
+                name="soundbook_user_credential"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="請輸入密碼"
                 className="w-full pl-10 pr-10 py-2.5 bg-stone-900/90 border border-stone-700 rounded-xl text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm transition"
-                autoComplete="current-password"
+                autoComplete="new-password"
                 required
               />
               <button
@@ -134,7 +136,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-600 hover:from-amber-500 to-amber-700 hover:to-amber-600 text-stone-950 font-bold rounded-xl shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2 transition duration-150 disabled:opacity-50 text-sm mt-2"
+            className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-600 hover:from-amber-500 to-amber-700 hover:to-amber-600 text-stone-950 font-bold rounded-xl shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2 transition duration-150 disabled:opacity-50 text-sm mt-2 cursor-pointer"
           >
             {loading ? (
               <span className="inline-flex items-center gap-2">
@@ -166,7 +168,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
           <button
             type="button"
             onClick={handleGuestEntry}
-            className="w-full py-2.5 px-4 bg-stone-800/90 hover:bg-stone-750 text-amber-200 border border-amber-600/40 hover:border-amber-500/70 rounded-xl transition flex items-center justify-center gap-2 text-sm group shadow-md"
+            className="w-full py-2.5 px-4 bg-stone-800/90 hover:bg-stone-750 text-amber-200 border border-amber-600/40 hover:border-amber-500/70 rounded-xl transition flex items-center justify-center gap-2 text-sm group shadow-md cursor-pointer"
           >
             <Compass className="w-4 h-4 text-amber-400 group-hover:rotate-45 transition duration-300" />
             <span className="font-semibold">以訪客身份直接進入</span>
@@ -177,22 +179,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
           <p className="text-[11px] text-stone-400 text-center mt-2 px-2 leading-relaxed">
             訪客模式可自由瀏覽「館藏總覽」與「放映室」語音播放，受保護的編輯與管理功能將自動停用。
           </p>
-        </div>
-
-        {/* Quick Hint & Test Helper */}
-        <div className="mt-6 pt-4 border-t border-stone-800/80 flex items-center justify-between text-xs text-stone-400">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>預設管理者：<code className="text-amber-300 font-mono">admin</code></span>
-          </div>
-          <button
-            type="button"
-            onClick={fillAdminCredentials}
-            className="text-amber-400/90 hover:text-amber-300 underline underline-offset-2 hover:bg-amber-950/30 px-1.5 py-0.5 rounded transition"
-            title="點擊自動帶入 admin 與預設密碼"
-          >
-            帶入管理者帳密
-          </button>
         </div>
       </div>
 
