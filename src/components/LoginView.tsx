@@ -51,43 +51,43 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
   };
 
   return (
-    <div className="min-h-screen bg-stone-900 flex flex-col justify-center items-center p-4 relative overflow-hidden select-none">
-      {/* Background Decorative Texture */}
-      <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#d97706_1px,transparent_1px)] [background-size:24px_24px]" />
-      <div className="absolute top-1/4 -left-32 w-96 h-96 bg-amber-600/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen bg-[#F6F1E7] flex flex-col justify-center items-center p-4 relative overflow-hidden select-none">
+      {/* 典藏雅緻背景紋理 */}
+      <div className="absolute inset-0 opacity-25 pointer-events-none bg-[radial-gradient(#8B5A2B_1px,transparent_1px)] [background-size:24px_24px]" />
+      <div className="absolute top-1/4 -left-32 w-96 h-96 bg-[#D4A373]/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-[#8B5A2B]/15 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Main Card */}
-      <div className="relative w-full max-w-md bg-stone-850 border border-stone-700/80 rounded-2xl shadow-2xl p-6 sm:p-8 backdrop-blur-md z-10">
-        {/* Header Icon & Title */}
+      {/* 主登入羊皮紙卡片 */}
+      <div className="relative w-full max-w-md bg-[#FFFDF9] border border-[#D8C8B0] rounded-3xl shadow-2xl p-6 sm:p-8 backdrop-blur-md z-10 ring-1 ring-[#8B5A2B]/10">
+        {/* 卡片頂部圖標與標題 */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-600 to-amber-800 text-amber-100 shadow-lg shadow-amber-900/40 mb-4 ring-4 ring-amber-500/20">
-            <BookOpen className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8B5A2B] to-[#5C3A1B] text-[#FAF5EC] shadow-lg shadow-[#5C3A1B]/30 mb-4 ring-4 ring-[#D4A373]/30">
+            <BookOpen className="w-8 h-8 stroke-[2.2]" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-serif font-bold text-amber-100 tracking-wide">
+          <h1 className="text-2xl sm:text-3xl font-serif-tc font-bold text-[#2C221E] tracking-wide">
             有聲書樓放映閣
           </h1>
-          <p className="text-xs sm:text-sm text-stone-400 mt-1 font-mono tracking-wider">
+          <p className="text-xs sm:text-sm text-[#8B5A2B] mt-1.5 font-mono tracking-wider font-semibold">
             SOUNDBOOK PAVILION • 安全存取驗證
           </p>
         </div>
 
-        {/* Error Alert */}
+        {/* 錯誤警示訊息 */}
         {errorMessage && (
-          <div className="mb-5 p-3.5 bg-red-950/60 border border-red-800/80 rounded-xl text-red-200 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1">{errorMessage}</div>
+          <div className="mb-5 p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-rose-900 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="flex-1 font-medium">{errorMessage}</div>
           </div>
         )}
 
-        {/* Login Form */}
+        {/* 登入表單 */}
         <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
           <div>
-            <label className="block text-xs font-semibold text-stone-300 mb-1.5 font-mono">
+            <label className="block text-xs font-bold text-[#5C3A1B] mb-1.5 font-mono">
               使用者帳號 / USERNAME
             </label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-400">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#8B5A2B]">
                 <User className="w-4 h-4" />
               </div>
               <input
@@ -96,7 +96,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="請輸入帳號"
-                className="w-full pl-10 pr-4 py-2.5 bg-stone-900/90 border border-stone-700 rounded-xl text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm transition"
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-[#D5C5AE] rounded-xl text-[#2C221E] placeholder-[#A89885] focus:outline-none focus:border-[#8B5A2B] focus:ring-2 focus:ring-[#8B5A2B]/20 text-sm transition shadow-2xs font-medium"
                 autoComplete="off"
                 required
               />
@@ -104,11 +104,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-stone-300 mb-1.5 font-mono">
+            <label className="block text-xs font-bold text-[#5C3A1B] mb-1.5 font-mono">
               登入密碼 / PASSWORD
             </label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-400">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#8B5A2B]">
                 <Lock className="w-4 h-4" />
               </div>
               <input
@@ -117,14 +117,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="請輸入密碼"
-                className="w-full pl-10 pr-10 py-2.5 bg-stone-900/90 border border-stone-700 rounded-xl text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm transition"
+                className="w-full pl-10 pr-10 py-2.5 bg-white border border-[#D5C5AE] rounded-xl text-[#2C221E] placeholder-[#A89885] focus:outline-none focus:border-[#8B5A2B] focus:ring-2 focus:ring-[#8B5A2B]/20 text-sm transition shadow-2xs font-medium"
                 autoComplete="new-password"
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-stone-400 hover:text-stone-200 transition"
+                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[#8B5A2B] hover:text-[#5C3A1B] transition cursor-pointer"
                 tabIndex={-1}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -132,15 +132,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
             </div>
           </div>
 
-          {/* Submit Button */}
+          {/* 登入按鈕 */}
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-600 hover:from-amber-500 to-amber-700 hover:to-amber-600 text-stone-950 font-bold rounded-xl shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2 transition duration-150 disabled:opacity-50 text-sm mt-2 cursor-pointer"
+            className="w-full py-2.5 px-4 bg-gradient-to-r from-[#8B5A2B] hover:from-[#734720] to-[#5C3A1B] text-[#FAF5EC] font-bold rounded-xl shadow-md shadow-[#8B5A2B]/25 flex items-center justify-center gap-2 transition duration-150 disabled:opacity-50 text-sm mt-2 cursor-pointer"
           >
             {loading ? (
               <span className="inline-flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-stone-950 border-t-transparent rounded-full animate-spin" />
+                <span className="w-4 h-4 border-2 border-[#FAF5EC] border-t-transparent rounded-full animate-spin" />
                 正在驗證登入...
               </span>
             ) : (
@@ -153,37 +153,37 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
           </button>
         </form>
 
-        {/* Divider */}
+        {/* 分隔線 */}
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-stone-700/80"></div>
+            <div className="w-full border-t border-[#E5D9C5]"></div>
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-stone-850 px-3 text-stone-400 font-mono">或免密碼進入</span>
+            <span className="bg-[#FFFDF9] px-3 text-[#8B5A2B] font-mono font-medium">或免密碼進入</span>
           </div>
         </div>
 
-        {/* Guest Entry Button */}
+        {/* 訪客直接進入按鈕 */}
         <div>
           <button
             type="button"
             onClick={handleGuestEntry}
-            className="w-full py-2.5 px-4 bg-stone-800/90 hover:bg-stone-750 text-amber-200 border border-amber-600/40 hover:border-amber-500/70 rounded-xl transition flex items-center justify-center gap-2 text-sm group shadow-md cursor-pointer"
+            className="w-full py-2.5 px-4 bg-[#F5ECE0] hover:bg-[#EBDDC8] text-[#5C3A1B] border border-[#D8C8B0] rounded-xl transition flex items-center justify-center gap-2 text-sm group shadow-xs cursor-pointer font-semibold"
           >
-            <Compass className="w-4 h-4 text-amber-400 group-hover:rotate-45 transition duration-300" />
-            <span className="font-semibold">以訪客身份直接進入</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-normal">
+            <Compass className="w-4 h-4 text-[#8B5A2B] group-hover:rotate-45 transition duration-300" />
+            <span>以訪客身份直接進入</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5A2B]/15 text-[#5C3A1B] font-semibold">
               免帳密
             </span>
           </button>
-          <p className="text-[11px] text-stone-400 text-center mt-2 px-2 leading-relaxed">
+          <p className="text-[11px] text-[#7A6855] text-center mt-2.5 px-2 leading-relaxed">
             訪客模式可自由瀏覽「館藏總覽」與「放映室」語音播放，受保護的編輯與管理功能將自動停用。
           </p>
         </div>
       </div>
 
-      {/* Footer Info */}
-      <div className="mt-6 text-center text-xs text-stone-500 font-mono">
+      {/* 底部版權宣告 */}
+      <div className="mt-6 text-center text-xs text-[#8B5A2B]/75 font-mono">
         &copy; {new Date().getFullYear()} 有聲書樓放映閣 • SoundBook Pavilion
       </div>
     </div>
