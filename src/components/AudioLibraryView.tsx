@@ -28,7 +28,7 @@ import {
   Tags,
   Scale,
 } from 'lucide-react';
-import { AudioItem, Category, PlaybackSlide } from '../types';
+import { AudioItem, Category, PlaybackSlide, Speaker } from '../types';
 import {
   getAudioFileDuration,
   uploadFileToGoogleDrive,
@@ -38,6 +38,8 @@ import {
   extractDriveFileIdFromCover,
   extractDriveFileIdFromUrl,
   renameFileInGoogleDrive,
+  loadSavedSpeakers,
+  saveSavedSpeaker,
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
 import {
@@ -128,6 +130,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [itemFileSize, setItemFileSize] = useState<number | undefined>(undefined);
   const [itemMimeType, setItemMimeType] = useState<string | undefined>(undefined);
   const [itemTags, setItemTags] = useState<string[]>([]);
+  const [speaker, setSpeaker] = useState<string>('');
+
+  // 主講人名冊狀態與行內新增主講人狀態
+  const [speakers, setSpeakers] = useState<Speaker[]>([]);
+  const [isAddingNewSpeaker, setIsAddingNewSpeaker] = useState<boolean>(false);
+  const [inlineNewSpeakerName, setInlineNewSpeakerName] = useState<string>('');
 
   // ============================================================================
   // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段)
@@ -241,6 +249,43 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     }
   }, [defaultUploadCategoryId]);
 
+  // 主講人名冊載入與自動統計既有語音檔中的主講人
+  useEffect(() => {
+    let isMounted = true;
+    loadSavedSpeakers().then((saved) => {
+      if (!isMounted) return;
+      const usedSpeakers = new Set<string>();
+      audioItems.forEach((a) => {
+        if (a.speaker && a.speaker.trim()) {
+          usedSpeakers.add(a.speaker.trim());
+        }
+      });
+
+      const existingNames = new Set(saved.map((s) => s.name));
+      const newlyDiscovered: Speaker[] = [];
+      const now = new Date().toISOString();
+      usedSpeakers.forEach((name) => {
+        if (!existingNames.has(name)) {
+          newlyDiscovered.push({
+            id: `speaker_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            name,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+
+      const combined = [...saved, ...newlyDiscovered].sort((a, b) =>
+        a.name.localeCompare(b.name, 'zh-Hant')
+      );
+      setSpeakers(combined);
+      newlyDiscovered.forEach((sp) => saveSavedSpeaker(sp).catch(() => {}));
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [audioItems]);
+
   /**
    * 取得目前已設定的播放圖片所佔用的所有 SRT 時間區段序號集合
    */
@@ -302,6 +347,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setItemFileSize(item.fileSize);
     setItemMimeType(item.mimeType);
     setItemTags(item.tags || []);
+    setSpeaker(item.speaker || '');
+    setIsAddingNewSpeaker(false);
+    setInlineNewSpeakerName('');
     setAutoSaveStatus('saved');
 
     const parsedSegments = parseSrtContent(
@@ -346,6 +394,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       title?: string;
       categoryId?: string;
       description?: string;
+      speaker?: string;
     }
   ) => {
     if (!formId) return;
@@ -358,12 +407,17 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     const finalTitle = (overrideMeta?.title ?? title).trim() || '未命名語音館藏';
     const finalCategoryId = overrideMeta?.categoryId ?? categoryId;
     const finalDescription = (overrideMeta?.description ?? description).trim();
+    const finalSpeaker =
+      overrideMeta?.speaker !== undefined
+        ? overrideMeta.speaker
+        : speaker;
 
     const itemToSave: AudioItem = {
       id: formId,
       title: finalTitle,
       categoryId: finalCategoryId,
       description: finalDescription,
+      ...(finalSpeaker?.trim() ? { speaker: finalSpeaker.trim() } : {}),
       ...(itemTags.length > 0 ? { tags: itemTags } : {}),
       duration: overrideDuration ?? (Number(duration) || 20),
       ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
@@ -388,6 +442,103 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
     await onSaveAudioItem(itemToSave);
     setAutoSaveStatus('saved');
+  };
+
+  /**
+   * 在「編輯語音檔」更換主講人（立即自動儲存至 Firebase）
+   */
+  const handleSpeakerChange = async (newVal: string) => {
+    if (newVal === '__ACTION_ADD__') {
+      setIsAddingNewSpeaker(true);
+      setInlineNewSpeakerName('');
+      return;
+    }
+    const targetSpeaker = newVal.trim();
+    setSpeaker(targetSpeaker);
+    setIsAddingNewSpeaker(false);
+    await autoPersistToFirebase(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { speaker: targetSpeaker }
+    );
+    showToast(
+      targetSpeaker
+        ? `✅ 已指定主講人為「${targetSpeaker}」！`
+        : '✅ 已清除此語音檔的主講人指定！'
+    );
+  };
+
+  /**
+   * 在「編輯語音檔」快速建立新主講人並直接指定給當前語音檔
+   */
+  const handleAddNewSpeakerInline = async () => {
+    const trimmed = inlineNewSpeakerName.trim();
+    if (!trimmed) {
+      showToast('⚠️ 請輸入主講人姓名');
+      return;
+    }
+
+    // 檢查名冊中是否已有相同姓名
+    const existing = speakers.find(
+      (s) => s.name.toLowerCase() === trimmed.toLowerCase()
+    );
+
+    if (existing) {
+      setSpeaker(existing.name);
+      setIsAddingNewSpeaker(false);
+      setInlineNewSpeakerName('');
+      await autoPersistToFirebase(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { speaker: existing.name }
+      );
+      showToast(`✅ 已選取現有主講人「${existing.name}」！`);
+      return;
+    }
+
+    // 建立新主講人
+    const now = new Date().toISOString();
+    const newSp: Speaker = {
+      id: `speaker_${Date.now()}`,
+      name: trimmed,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await saveSavedSpeaker(newSp);
+      const updatedSpeakers = [...speakers, newSp].sort((a, b) =>
+        a.name.localeCompare(b.name, 'zh-Hant')
+      );
+      setSpeakers(updatedSpeakers);
+      setSpeaker(trimmed);
+      setIsAddingNewSpeaker(false);
+      setInlineNewSpeakerName('');
+      await autoPersistToFirebase(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { speaker: trimmed }
+      );
+      showToast(`✅ 已建立新主講人並指派「${trimmed}」！`);
+    } catch (e) {
+      console.error('儲存新主講人失敗:', e);
+      showToast('❌ 儲存主講人失敗，請稍候重試');
+    }
   };
 
   /**
@@ -1746,6 +1897,15 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           <span className="text-[11px] px-2 py-0.5 rounded bg-[#F3ECE0] text-[#6E5641] shrink-0">
                             播放圖片 {item.playbackDisplay.slides.length} 張
                           </span>
+                          {item.speaker && (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FFF8EE] text-[#8B5A2B] border border-[#E5D2BA] text-[11px] font-semibold shrink-0"
+                              title={`主講人：${item.speaker}`}
+                            >
+                              <Mic className="w-3 h-3 text-[#8B5A2B]" />
+                              <span>{item.speaker}</span>
+                            </span>
+                          )}
                         </div>
 
                         {/* 上移的操作按鈕：預覽播放、編輯檔名與播放圖文、刪除 */}
@@ -2197,6 +2357,128 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* 封面圖下方的「選取主講人」下拉功能區塊 */}
+                <div className="p-4 rounded-xl bg-white border border-[#E2D5C1] space-y-3 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-bold font-serif-tc text-[#3A2518] flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                      <span>選取主講人 (Speaker)</span>
+                    </label>
+                    {speaker ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FFF8EE] text-[#8B5A2B] border border-[#E5D2BA] text-[11px] font-semibold">
+                        🎙️ {speaker}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-[#A08C75] italic">尚未指定主講人</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={speaker || ''}
+                      onChange={(e) => handleSpeakerChange(e.target.value)}
+                      className={`flex-1 px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition focus:outline-none ${
+                        speaker
+                          ? 'border-[#8B5A2B] bg-[#FFFBF5] text-[#4A2F13] focus:border-[#70461F]'
+                          : 'border-[#D5C5AE] bg-white text-[#6B5A4B] focus:border-[#8B5A2B]'
+                      }`}
+                    >
+                      <option value="">-- 未指定主講人 (點此選取) --</option>
+                      {speaker && !speakers.some((s) => s.name === speaker) && (
+                        <optgroup label="目前設定之主講人">
+                          <option value={speaker}>🎙️ {speaker}</option>
+                        </optgroup>
+                      )}
+                      {speakers.length > 0 && (
+                        <optgroup label="現有主講人名冊">
+                          {speakers.map((sp) => (
+                            <option key={sp.id} value={sp.name}>
+                              🎙️ {sp.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <optgroup label="── 主講人管理 ──">
+                        <option value="__ACTION_ADD__">➕ 新增其他主講人...</option>
+                      </optgroup>
+                    </select>
+
+                    {/* 快捷新增按鈕 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingNewSpeaker((prev) => !prev);
+                        setInlineNewSpeakerName('');
+                      }}
+                      className="px-2.5 py-2 rounded-xl border border-[#D5C5AE] hover:border-[#8B5A2B] bg-[#FAF5ED] hover:bg-[#F3EAD9] text-[#5C3A1B] text-xs font-semibold flex items-center gap-1 shrink-0 transition cursor-pointer"
+                      title="快速新增主講人"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                      <span>新增</span>
+                    </button>
+
+                    {/* 若已有主講人，提供快速清除按鈕 */}
+                    {speaker && (
+                      <button
+                        type="button"
+                        onClick={() => handleSpeakerChange('')}
+                        className="p-2 rounded-xl border border-[#D5C5AE] hover:border-red-300 bg-white hover:bg-red-50 text-[#7A6855] hover:text-red-700 transition cursor-pointer"
+                        title="清除此語音檔的主講人"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 快速新增主講人輸入框 (展開時顯示) */}
+                  {isAddingNewSpeaker && (
+                    <div className="p-2.5 rounded-lg bg-[#FAF5ED] border border-[#E5D2BA] space-y-2 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-[#5C3A1B]">
+                          ➕ 新增主講人姓名
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddingNewSpeaker(false);
+                            setInlineNewSpeakerName('');
+                          }}
+                          className="text-[#9C8267] hover:text-[#5C3A1B] cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={inlineNewSpeakerName}
+                          onChange={(e) => setInlineNewSpeakerName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddNewSpeakerInline();
+                            }
+                          }}
+                          placeholder="請輸入主講人姓名 (例如：林良)"
+                          className="flex-1 px-2.5 py-1.5 rounded-md border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddNewSpeakerInline}
+                          className="px-3 py-1.5 rounded-md bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold shrink-0 cursor-pointer transition shadow-2xs"
+                        >
+                          確定新增
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[11px] text-[#8C7A67] leading-relaxed">
+                    💡 說明：選取主講人後會自動即時儲存至雲端，並於館藏卡片、放映室與檢索系統中同步顯示與提供篩選。
+                  </p>
                 </div>
               </div>
             </div>
