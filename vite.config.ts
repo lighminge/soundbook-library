@@ -27,6 +27,7 @@ export default defineConfig({
             'index-BckKmULU.js',
             'index-DQGjOprp.js',
             'index-C9LPrmTT.js',
+            'index-DTSgAKiT.js',
           ]
           for (const alias of legacyJsAliases) {
             if (alias !== mainJs) {
@@ -43,6 +44,7 @@ export default defineConfig({
             'index-C1I_OvpS.css',
             'index-CQ5dvoCQ.css',
             'index-9hB4a8ra.css',
+            'index-DeQM3_jl.css',
           ]
           for (const alias of legacyCssAliases) {
             if (alias !== mainCss) {

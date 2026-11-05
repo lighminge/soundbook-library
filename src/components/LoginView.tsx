@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, ShieldCheck, Lock, User, Eye, EyeOff, ArrowRight, Compass, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Lock, User, Eye, EyeOff, ArrowRight, Compass, AlertCircle } from 'lucide-react';
 import { authenticate, loginAsGuest } from '../services/authService';
-import { CurrentUser } from '../types';
+import { getLocalLoginScreenConfig, loadLoginScreenConfig } from '../services/storageService';
+import { CurrentUser, LoginScreenConfig } from '../types';
+import { getCategoryIcon } from './DashboardView';
 
 interface LoginViewProps {
   onLoginSuccess: (user: CurrentUser) => void;
@@ -14,11 +16,23 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loginConfig, setLoginConfig] = useState<LoginScreenConfig>(() =>
+    getLocalLoginScreenConfig()
+  );
 
-  // 畫面載入時清空輸入框，防止瀏覽器記憶自動帶入帳號密碼
+  // 畫面載入時清空輸入框（防止瀏覽器記憶自動帶入帳號密碼），並同步載入雲端登入畫面設定
   useEffect(() => {
     setUsername('');
     setPassword('');
+    let isMounted = true;
+    loadLoginScreenConfig().then((cfg) => {
+      if (isMounted) {
+        setLoginConfig(cfg);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -62,10 +76,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
         {/* 卡片頂部圖標與標題 */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8B5A2B] to-[#5C3A1B] text-[#FAF5EC] shadow-lg shadow-[#5C3A1B]/30 mb-4 ring-4 ring-[#D4A373]/30">
-            <BookOpen className="w-8 h-8 stroke-[2.2]" />
+            {getCategoryIcon(loginConfig.icon, 'w-8 h-8 stroke-[2.2]')}
           </div>
           <h1 className="text-2xl sm:text-3xl font-serif-tc font-bold text-[#2C221E] tracking-wide">
-            有聲書樓放映閣
+            {loginConfig.title || '有聲書樓放映閣'}
           </h1>
           <p className="text-xs sm:text-sm text-[#8B5A2B] mt-1.5 font-mono tracking-wider font-semibold">
             SOUNDBOOK PAVILION • 安全存取驗證
@@ -184,7 +198,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
 
       {/* 底部版權宣告 */}
       <div className="mt-6 text-center text-xs text-[#8B5A2B]/75 font-mono">
-        &copy; {new Date().getFullYear()} 有聲書樓放映閣 • SoundBook Pavilion
+        &copy; {new Date().getFullYear()} {loginConfig.title || '有聲書樓放映閣'} • SoundBook Pavilion
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ import {
   doc,
   Firestore,
 } from 'firebase/firestore';
-import { AudioItem, Category, CloudConfig, PlaybackSlide, SavedPlaylist, Speaker } from '../types';
+import { AudioItem, Category, CloudConfig, LoginScreenConfig, PlaybackSlide, SavedPlaylist, Speaker } from '../types';
 import { INITIAL_AUDIO_ITEMS, INITIAL_CATEGORIES } from '../data/initialData';
 import {
   base64ToBlob,
@@ -24,6 +24,12 @@ const LOCAL_CATEGORIES_KEY = 'soundbook_categories_v1';
 const LOCAL_AUDIO_ITEMS_KEY = 'soundbook_audio_items_v1';
 const LOCAL_PLAYLISTS_KEY = 'soundbook_saved_playlists_v1';
 const LOCAL_SPEAKERS_KEY = 'soundbook_speakers_v1';
+const LOCAL_LOGIN_CONFIG_KEY = 'soundbook_login_screen_config_v1';
+
+export const DEFAULT_LOGIN_SCREEN_CONFIG: LoginScreenConfig = {
+  icon: 'BookOpen',
+  title: '有聲書樓放映閣',
+};
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   firebaseApiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyB1MHVQ_CnTOxl2LSwoaPAZQogWtjrb-Ls',
@@ -106,9 +112,144 @@ export async function saveCloudConfig(config: CloudConfig): Promise<void> {
  */
 const SYSTEM_CONFIG_DOC_ID = 'sys_cloud_config';
 const LEGACY_SYSTEM_CONFIG_DOC_ID = '__system_cloud_config__';
+const SYSTEM_LOGIN_CONFIG_DOC_ID = 'sys_login_config';
 
 function isSystemConfigCategoryId(id?: string): boolean {
-  return id === SYSTEM_CONFIG_DOC_ID || id === LEGACY_SYSTEM_CONFIG_DOC_ID;
+  return (
+    id === SYSTEM_CONFIG_DOC_ID ||
+    id === LEGACY_SYSTEM_CONFIG_DOC_ID ||
+    id === SYSTEM_LOGIN_CONFIG_DOC_ID
+  );
+}
+
+/**
+ * 同步讀取本機快取的「系統登入畫面設定」
+ */
+export function getLocalLoginScreenConfig(): LoginScreenConfig {
+  try {
+    const raw = localStorage.getItem(LOCAL_LOGIN_CONFIG_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.icon === 'string' && typeof parsed.title === 'string') {
+        return {
+          icon: parsed.icon.trim() || DEFAULT_LOGIN_SCREEN_CONFIG.icon,
+          title: parsed.title.trim() || DEFAULT_LOGIN_SCREEN_CONFIG.title,
+          updatedAt: parsed.updatedAt,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('讀取本機登入畫面設定失敗:', e);
+  }
+  return { ...DEFAULT_LOGIN_SCREEN_CONFIG };
+}
+
+/**
+ * 將 Firestore 讀出的系統登入畫面設定套用至本機快取
+ */
+function applyRemoteLoginScreenConfig(catDoc: Partial<Category>): LoginScreenConfig | null {
+  try {
+    let icon = '';
+    let title = '';
+    let updatedAt: string | undefined;
+
+    if (catDoc.description) {
+      try {
+        const parsed = JSON.parse(catDoc.description);
+        if (parsed && typeof parsed === 'object') {
+          icon = String(parsed.icon || '').trim();
+          title = String(parsed.title || '').trim();
+          updatedAt = parsed.updatedAt;
+        }
+      } catch {
+        // fallback to category fields
+      }
+    }
+
+    if (!icon && catDoc.icon) icon = String(catDoc.icon).trim();
+    if (!title && catDoc.name) title = String(catDoc.name).trim();
+
+    if (!icon && !title) return null;
+
+    const merged: LoginScreenConfig = {
+      icon: icon || DEFAULT_LOGIN_SCREEN_CONFIG.icon,
+      title: title || DEFAULT_LOGIN_SCREEN_CONFIG.title,
+      updatedAt: updatedAt || catDoc.createdAt,
+    };
+
+    localStorage.setItem(LOCAL_LOGIN_CONFIG_KEY, JSON.stringify(merged));
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 從 Firebase Firestore 載入最新的「系統登入畫面設定」（若無則回傳本機/預設值）
+ */
+export async function loadLoginScreenConfig(): Promise<LoginScreenConfig> {
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'categories', SYSTEM_LOGIN_CONFIG_DOC_ID));
+      if (snap.exists()) {
+        const applied = applyRemoteLoginScreenConfig(snap.data() as Category);
+        if (applied) return applied;
+      }
+    } catch (e) {
+      console.warn('從 Firestore 讀取登入畫面設定略過:', e);
+    }
+  }
+  return getLocalLoginScreenConfig();
+}
+
+/**
+ * 儲存「系統登入畫面設定」（同步寫入本機與 Firebase Firestore）
+ */
+export async function saveLoginScreenConfig(config: LoginScreenConfig): Promise<LoginScreenConfig> {
+  const now = new Date().toISOString();
+  const cleaned: LoginScreenConfig = {
+    icon: (config.icon || DEFAULT_LOGIN_SCREEN_CONFIG.icon).trim().slice(0, 50),
+    title: (config.title || DEFAULT_LOGIN_SCREEN_CONFIG.title).trim().slice(0, 100),
+    updatedAt: now,
+  };
+
+  try {
+    localStorage.setItem(LOCAL_LOGIN_CONFIG_KEY, JSON.stringify(cleaned));
+  } catch (e) {
+    console.warn('儲存本機登入畫面設定失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const ref = doc(db, 'categories', SYSTEM_LOGIN_CONFIG_DOC_ID);
+      let createdAt = now;
+      try {
+        const existing = await getDoc(ref);
+        if (existing.exists() && existing.data().createdAt) {
+          createdAt = String(existing.data().createdAt);
+        }
+      } catch {
+        // ignore
+      }
+
+      await setDoc(ref, {
+        id: SYSTEM_LOGIN_CONFIG_DOC_ID,
+        name: cleaned.title || DEFAULT_LOGIN_SCREEN_CONFIG.title,
+        code: 'SYS-LOGIN',
+        description: JSON.stringify(cleaned),
+        themeColor: '#8B5A2B',
+        icon: cleaned.icon || DEFAULT_LOGIN_SCREEN_CONFIG.icon,
+        order: 9998,
+        createdAt,
+      });
+    } catch (e) {
+      console.warn('同步登入畫面設定至 Firestore 失敗:', e);
+    }
+  }
+
+  return cleaned;
 }
 
 /**
@@ -286,7 +427,9 @@ export async function loadLibraryData(): Promise<{
       let remoteDriveConfigFound = false;
       catSnap.forEach((d) => {
         const data = d.data() as Category;
-        if (isSystemConfigCategoryId(data.id) || isSystemConfigCategoryId(d.id)) {
+        if (data.id === SYSTEM_LOGIN_CONFIG_DOC_ID || d.id === SYSTEM_LOGIN_CONFIG_DOC_ID) {
+          applyRemoteLoginScreenConfig(data);
+        } else if (isSystemConfigCategoryId(data.id) || isSystemConfigCategoryId(d.id)) {
           // 自動從 Firestore 同步 Google 雲端硬碟連線設定至當前裝置（以雲端設定為準，避免手機殘留舊設定）
           if (applyRemoteDriveConfig(data.description)) remoteDriveConfigFound = true;
         } else {

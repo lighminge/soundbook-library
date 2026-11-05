@@ -81,6 +81,12 @@ export interface CurrentUser {
   isGuest?: boolean;
 }
 
+export interface LoginScreenConfig {
+  icon: string; // e.g., 'BookOpen' (對應 50 個圖示選項)
+  title: string; // 登入畫面圖示下方的標題文字（預設：有聲書樓放映閣）
+  updatedAt?: string; // ISO 8601
+}
+
 export interface CloudConfig {
   // Firebase 設定
   firebaseApiKey: string;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, UserPlus, Edit2, Trash2, Shield, User, Lock, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { X, UserPlus, Edit2, Trash2, Shield, User, Lock, AlertCircle, CheckCircle2, ShieldAlert, LayoutTemplate } from 'lucide-react';
 import { AppUser } from '../types';
 import { loadSystemUsers, saveSystemUser, deleteSystemUser } from '../services/authService';
 
@@ -7,12 +7,14 @@ interface UserManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserId: string;
+  onOpenLoginSettings?: () => void;
 }
 
 export const UserManagerModal: React.FC<UserManagerModalProps> = ({
   isOpen,
   onClose,
   currentUserId,
+  onOpenLoginSettings,
 }) => {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -215,14 +217,26 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({
                 <span className="text-xs text-[#7A6855]">
                   系統預設管理員（<code className="text-[#8B5A2B] font-bold font-mono">admin</code>）具備最高權限且受不可刪除保護。
                 </span>
-                <button
-                  type="button"
-                  onClick={handleOpenAdd}
-                  className="px-3.5 py-2 bg-[#8B5A2B] hover:bg-[#70461F] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  新增使用者帳號
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {onOpenLoginSettings && (
+                    <button
+                      type="button"
+                      onClick={onOpenLoginSettings}
+                      className="px-3.5 py-2 bg-[#F5ECE0] hover:bg-[#EBDDC8] text-[#5C3A1B] border border-[#D8C8B0] font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-2xs cursor-pointer shrink-0"
+                    >
+                      <LayoutTemplate className="w-4 h-4 text-[#8B5A2B]" />
+                      系統登入畫面維護
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleOpenAdd}
+                    className="px-3.5 py-2 bg-[#8B5A2B] hover:bg-[#70461F] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    新增使用者帳號
+                  </button>
+                </div>
               </div>
 
               {/* Users Table / List */}

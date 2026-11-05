@@ -14,6 +14,7 @@ import {
   Shield,
   User as UserIcon,
   Compass,
+  LayoutTemplate,
 } from 'lucide-react';
 import { AudioItem, Category, CurrentUser } from './types';
 import {
@@ -27,6 +28,7 @@ import {
 import { getCurrentSessionUser, logout, GUEST_USER } from './services/authService';
 import { LoginView } from './components/LoginView';
 import { UserManagerModal } from './components/UserManagerModal';
+import { LoginScreenSettingsModal } from './components/LoginScreenSettingsModal';
 import { DashboardView } from './components/DashboardView';
 import { ScreeningRoomView } from './components/ScreeningRoomView';
 import { AudioLibraryView } from './components/AudioLibraryView';
@@ -38,6 +40,7 @@ type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog';
 export function App() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
   const [isUserManagerOpen, setIsUserManagerOpen] = useState(false);
+  const [isLoginSettingsOpen, setIsLoginSettingsOpen] = useState(false);
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [categories, setCategories] = useState<Category[]>([]);
@@ -373,16 +376,27 @@ export function App() {
               )}
             </div>
 
-            {/* 系統使用者管理按鈕（限管理員） */}
+            {/* 系統登入畫面維護 & 系統使用者管理按鈕（限管理員） */}
             {isAdmin && (
-              <button
-                onClick={() => setIsUserManagerOpen(true)}
-                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
-                title="系統使用者帳號管理（新增、修改、刪除）"
-              >
-                <Users className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className="hidden sm:inline">帳號管理</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setIsLoginSettingsOpen(true)}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
+                  title="系統登入畫面維護（維護登入畫面最上方圖示與標題文字）"
+                >
+                  <LayoutTemplate className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="hidden sm:inline">系統登入畫面維護</span>
+                </button>
+
+                <button
+                  onClick={() => setIsUserManagerOpen(true)}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
+                  title="系統使用者帳號管理（新增、修改、刪除）"
+                >
+                  <Users className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="hidden sm:inline">帳號管理</span>
+                </button>
+              </>
             )}
 
             {/* 雲端設定按鈕（限管理者與編輯員，訪客不顯示） */}
@@ -590,13 +604,23 @@ export function App() {
         onSaved={reloadAllData}
       />
 
-      {/* 系統使用者帳號管理 Modal（管理員專屬） */}
+      {/* 系統使用者帳號管理 Modal & 系統登入畫面維護 Modal（管理員專屬） */}
       {isAdmin && (
-        <UserManagerModal
-          isOpen={isUserManagerOpen}
-          onClose={() => setIsUserManagerOpen(false)}
-          currentUserId={currentUser.id}
-        />
+        <>
+          <UserManagerModal
+            isOpen={isUserManagerOpen}
+            onClose={() => setIsUserManagerOpen(false)}
+            currentUserId={currentUser.id}
+            onOpenLoginSettings={() => {
+              setIsUserManagerOpen(false);
+              setIsLoginSettingsOpen(true);
+            }}
+          />
+          <LoginScreenSettingsModal
+            isOpen={isLoginSettingsOpen}
+            onClose={() => setIsLoginSettingsOpen(false)}
+          />
+        </>
       )}
     </div>
   );
