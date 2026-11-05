@@ -4,6 +4,9 @@ import { getDbInstance } from './storageService';
 
 const LOCAL_USERS_KEY = 'soundbook_system_users_v1';
 const SESSION_USER_KEY = 'soundbook_current_session_v1';
+const LOGIN_ATTEMPTS_KEY = 'soundbook_login_attempts_v1';
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 60 * 1000; // 連續失敗 5 次鎖定 60 秒
 
 export const DEFAULT_ADMIN_USER: AppUser = {
   id: 'user_admin',
@@ -178,13 +181,52 @@ export async function deleteSystemUser(userId: string): Promise<void> {
   }
 }
 
+interface LoginAttemptRecord {
+  count: number;
+  lockedUntil: number;
+}
+
+function getLoginAttemptRecord(): LoginAttemptRecord {
+  try {
+    const raw = localStorage.getItem(LOGIN_ATTEMPTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.count === 'number' && typeof parsed?.lockedUntil === 'number') {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { count: 0, lockedUntil: 0 };
+}
+
+function saveLoginAttemptRecord(record: LoginAttemptRecord): void {
+  try {
+    localStorage.setItem(LOGIN_ATTEMPTS_KEY, JSON.stringify(record));
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * 登入驗證 (帳號密碼登入)
+ * 登入驗證 (帳號密碼登入，含防暴力破解鎖定保護)
  */
 export async function authenticate(
   usernameInput: string,
   passwordInput: string
 ): Promise<{ success: boolean; user?: CurrentUser; error?: string }> {
+  const now = Date.now();
+  const attemptRecord = getLoginAttemptRecord();
+
+  if (attemptRecord.lockedUntil > now) {
+    const remainSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
+    return {
+      success: false,
+      error: `連續登入失敗次數過多，系統已暫時鎖定保護，請於 ${remainSec} 秒後再試！`,
+    };
+  }
+
   const uTrim = usernameInput.trim();
   const pTrim = passwordInput.trim();
 
@@ -198,8 +240,23 @@ export async function authenticate(
   );
 
   if (!matched) {
-    return { success: false, error: '帳號或密碼輸入錯誤，請重新確認！' };
+    const nextCount = (attemptRecord.lockedUntil > 0 && attemptRecord.lockedUntil <= now ? 0 : attemptRecord.count) + 1;
+    if (nextCount >= MAX_LOGIN_ATTEMPTS) {
+      saveLoginAttemptRecord({ count: 0, lockedUntil: now + LOCKOUT_DURATION_MS });
+      return {
+        success: false,
+        error: `帳號或密碼連續錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，為保護帳號安全，已暫時鎖定 60 秒！`,
+      };
+    }
+    saveLoginAttemptRecord({ count: nextCount, lockedUntil: 0 });
+    return {
+      success: false,
+      error: `帳號或密碼輸入錯誤，請重新確認！（剩餘嘗試次數：${MAX_LOGIN_ATTEMPTS - nextCount} 次）`,
+    };
   }
+
+  // 登入成功，重置錯誤計數
+  saveLoginAttemptRecord({ count: 0, lockedUntil: 0 });
 
   const currentUser: CurrentUser = {
     id: matched.id,
@@ -222,14 +279,22 @@ export function loginAsGuest(): CurrentUser {
 }
 
 /**
- * 取得目前已登入之使用者資訊（若未登入則回傳 null）
+ * 取得目前已登入之使用者資訊（若未登入則回傳 null，含結構完整性校驗）
  */
 export function getCurrentSessionUser(): CurrentUser | null {
   try {
     const raw = localStorage.getItem(SESSION_USER_KEY);
     if (raw) {
       const parsed: CurrentUser = JSON.parse(raw);
-      if (parsed && parsed.role) {
+      const validRoles = ['admin', 'user', 'guest'];
+      if (
+        parsed &&
+        typeof parsed.id === 'string' &&
+        parsed.id.length > 0 &&
+        typeof parsed.username === 'string' &&
+        parsed.username.length > 0 &&
+        validRoles.includes(parsed.role)
+      ) {
         return parsed;
       }
     }

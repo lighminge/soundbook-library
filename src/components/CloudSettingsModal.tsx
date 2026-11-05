@@ -217,7 +217,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               <a
                 href="https://script.google.com/"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="text-xs text-[#2B4C7E] hover:underline flex items-center gap-1 font-semibold"
               >
                 <span>前往 Google Apps Script</span>
@@ -322,11 +322,11 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   )}
                   <div className="space-y-1">
                     <p className="font-medium leading-relaxed">{testResult.message}</p>
-                    {testResult.viewUrl && (
+                    {testResult.viewUrl && /^https?:\/\//i.test(testResult.viewUrl) && (
                       <a
                         href={testResult.viewUrl}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-emerald-700 font-bold underline"
                       >
                         <span>點此直接打開雲端硬碟查看剛建立的測試檔案</span>
@@ -349,7 +349,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               <a
                 href="https://console.firebase.google.com/project/soundbook-library-db/overview"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="text-xs text-[#8B5A2B] hover:underline flex items-center gap-1"
               >
                 <span>開啟 Firebase Console</span>
@@ -408,7 +408,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
               <a
                 href="https://console.firebase.google.com/project/soundbook-library-db/appcheck"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="text-xs text-[#2E7D32] hover:underline flex items-center gap-1 font-semibold"
               >
                 <span>開啟 App Check 控制台</span>
@@ -423,7 +423,7 @@ export const CloudSettingsModal: React.FC<CloudSettingsModalProps> = ({
                   前往 Firebase 控制台 ➔ <strong>App Check</strong> ➔ 在 Web 應用程式 (<code>soundbook-library-db</code>) 點擊 <strong>「註冊 (Register)」</strong>。
                 </li>
                 <li>
-                  提供者請選擇 <strong>reCAPTCHA Enterprise</strong>，依提示建立或綁定 Google Cloud 金鑰（授權網域請包含 <code>soundbook-library-db.web.app</code> 與 <code>localhost</code>）。
+                  提供者請選擇 <strong>reCAPTCHA Enterprise</strong>，依提示建立或綁定 Google Cloud 金鑰（授權網域請包含 <code>lighminge.github.io</code>、<code>soundbook-library-db.web.app</code> 與 <code>localhost</code>）。
                 </li>
                 <li>
                   將產生的 <strong>網站金鑰 (Site Key)</strong> 貼在下方欄位後點擊儲存，聲書閣將自動為每次 Firestore 讀寫附加安全權杖，徹底阻絕惡意爬蟲與未授權寫入。
