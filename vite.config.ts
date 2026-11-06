@@ -44,6 +44,7 @@ export default defineConfig({
             'index-DTSgAKiT.js',
             'index-BF0GLhH0.js',
             'index-DJQ5NQwg.js',
+            'index-HZDSf_Ms.js',
           ]
           for (const alias of legacyJsAliases) {
             if (alias !== mainJs) {
@@ -71,14 +72,26 @@ export default defineConfig({
           }
         }
 
-        // Add cache-busting query string to index.html references so fresh HTML always loads latest assets
+        // Inline CSS and JS directly into dist/index.html so index.html is 100% self-contained
+        // and never suffers from GitHub Pages CDN HTML/asset cache mismatch or extra TCP connection resets
         const indexHtmlPath = path.join(distDir, 'index.html')
-        if (fs.existsSync(indexHtmlPath)) {
-          const versionTag = Date.now().toString(36)
+        if (fs.existsSync(indexHtmlPath) && mainJs && mainCss) {
+          const jsContent = fs
+            .readFileSync(path.join(assetsDir, mainJs), 'utf-8')
+            .replace(/<\/script/gi, '<\\/script')
+          const cssContent = fs
+            .readFileSync(path.join(assetsDir, mainCss), 'utf-8')
+            .replace(/<\/style/gi, '<\\/style')
+
           let html = fs.readFileSync(indexHtmlPath, 'utf-8')
-          html = html
-            .replace(/src="\.\/assets\/index\.js"/g, `src="./assets/index.js?v=${versionTag}"`)
-            .replace(/href="\.\/assets\/index\.css"/g, `href="./assets/index.css?v=${versionTag}"`)
+          html = html.replace(
+            /<link\s+rel="stylesheet"[^>]*href="\.\/assets\/[^"]+\.css"[^>]*>/i,
+            () => `<style>${cssContent}</style>`
+          )
+          html = html.replace(
+            /<script\s+type="module"[^>]*src="\.\/assets\/[^"]+\.js"[^>]*><\/script>/i,
+            () => `<script type="module">${jsContent}</script>`
+          )
           fs.writeFileSync(indexHtmlPath, html, 'utf-8')
         }
       },

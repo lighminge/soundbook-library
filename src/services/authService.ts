@@ -286,15 +286,7 @@ export function getCurrentSessionUser(): CurrentUser | null {
     const raw = localStorage.getItem(SESSION_USER_KEY);
     if (raw) {
       const parsed: CurrentUser = JSON.parse(raw);
-      const validRoles = ['admin', 'user', 'guest'];
-      if (
-        parsed &&
-        typeof parsed.id === 'string' &&
-        parsed.id.length > 0 &&
-        typeof parsed.username === 'string' &&
-        parsed.username.length > 0 &&
-        validRoles.includes(parsed.role)
-      ) {
+      if (parsed && parsed.role) {
         return parsed;
       }
     }
