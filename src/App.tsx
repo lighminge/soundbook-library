@@ -271,54 +271,44 @@ export function App() {
   return (
     <div className="min-h-screen flex flex-col bg-[#F6F1E7] text-[#2C221E]">
       {/* 頂部圖書館導覽列 */}
-      <header className="sticky top-0 z-40 bg-[#261A13] text-[#FAF5EC] border-b border-[#4A3427] shadow-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 lg:h-18 flex items-center justify-between gap-2 sm:gap-4">
+      <header className="sticky top-0 z-40 w-full bg-[#261A13] text-[#FAF5EC] border-b border-[#4A3427] shadow-md">
+        <div className="w-full px-3 sm:px-5 lg:px-6 min-h-16 py-2 flex flex-wrap items-center justify-start gap-2 sm:gap-3">
           {/* 左側品牌標誌 */}
           <div
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-2.5 cursor-pointer shrink-0"
+            className="flex items-center gap-2 cursor-pointer shrink-0 mr-1"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center text-[#261A13] shadow-inner shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center text-[#261A13] shadow-inner shrink-0">
               <Library className="w-5 h-5 stroke-[2.2]" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold font-serif-tc text-base sm:text-lg tracking-wider text-[#FAF5EC]">
-                  聲書閣
-                </span>
-                <span className="hidden 2xl:inline-block text-xs px-2 py-0.5 rounded bg-[#8B5A2B]/40 text-[#F3D5B5] border border-[#D4A373]/30 font-mono">
-                  soundbook-library
-                </span>
-              </div>
-              <p className="text-[11px] text-[#C8B5A0] hidden 2xl:block">
-                數位有聲圖書館 · Firebase & Google Drive 典藏系統
-              </p>
-            </div>
+            <span className="font-bold font-serif-tc text-base sm:text-lg tracking-wider text-[#FAF5EC] whitespace-nowrap">
+              聲書閣
+            </span>
           </div>
 
-          {/* 中間主功能切換頁籤 (桌面版，字體加大至與「聲書閣」相同大小 text-base xl:text-lg) */}
-          <nav className="hidden lg:flex items-center gap-1.5 bg-[#1B120D] p-1.5 rounded-xl border border-[#3E2C22] shrink-0">
+          {/* 主功能切換頁籤 (桌面版，靠左對齊) */}
+          <nav className="hidden lg:flex flex-wrap items-center gap-1 bg-[#1B120D] p-1 rounded-xl border border-[#3E2C22]">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+              className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'dashboard'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <LayoutDashboard className="w-5 h-5 shrink-0 stroke-[2.2]" />
+              <LayoutDashboard className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
               <span>館藏總覽</span>
             </button>
 
             <button
               onClick={() => setActiveTab('screening')}
-              className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+              className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'screening'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <Radio className="w-5 h-5 shrink-0 stroke-[2.2]" />
+              <Radio className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
               <span>放映室</span>
             </button>
 
@@ -329,35 +319,35 @@ export function App() {
                     setEditingAudioItem(null);
                     setActiveTab('library');
                   }}
-                  className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'library'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <FolderKanban className="w-5 h-5 shrink-0 stroke-[2.2]" />
+                  <FolderKanban className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
                   <span>語音檔案庫</span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('catalog')}
-                  className={`px-3.5 xl:px-4 py-2 rounded-lg font-bold font-serif-tc text-base xl:text-lg tracking-wider flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'catalog'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <Tags className="w-5 h-5 shrink-0 stroke-[2.2]" />
+                  <Tags className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
                   <span>館藏資料管理</span>
                 </button>
               </>
             )}
           </nav>
 
-          {/* 右側使用者資訊、管理與設定按鈕 */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* 使用者資訊、管理與設定按鈕（靠左對齊並自動收合於標題列底圖內） */}
+          <div className="flex flex-wrap items-center justify-start gap-1.5 sm:gap-2">
             {/* 使用者身分徽章 */}
-            <div className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 border border-[#4A3427] text-xs sm:text-sm shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/40 border border-[#4A3427] text-xs sm:text-sm whitespace-nowrap">
               {isAdmin ? (
                 <>
                   <Shield className="w-4 h-4 text-amber-400 shrink-0" />
@@ -381,20 +371,20 @@ export function App() {
               <>
                 <button
                   onClick={() => setIsLoginSettingsOpen(true)}
-                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap"
                   title="系統登入畫面維護（維護登入畫面最上方圖示與標題文字）"
                 >
                   <LayoutTemplate className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span className="hidden sm:inline">系統登入畫面維護</span>
+                  <span>系統登入畫面維護</span>
                 </button>
 
                 <button
                   onClick={() => setIsUserManagerOpen(true)}
-                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap"
                   title="系統使用者帳號管理（新增、修改、刪除）"
                 >
                   <Users className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span className="hidden sm:inline">帳號管理</span>
+                  <span>帳號管理</span>
                 </button>
               </>
             )}
@@ -403,11 +393,11 @@ export function App() {
             {!isGuest && (
               <button
                 onClick={() => setIsCloudModalOpen(true)}
-                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs sm:text-sm font-semibold text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs sm:text-sm font-semibold text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
                 title="設定 Firebase (soundbook-library-db) 與 Google 雲端硬碟"
               >
                 <Settings className="w-4 h-4 text-[#D4A373] shrink-0" />
-                <span className="hidden xl:inline">雲端連線</span>
+                <span>雲端連線</span>
               </button>
             )}
 
@@ -417,11 +407,11 @@ export function App() {
                 logout();
                 setCurrentUser(null);
               }}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-xs sm:text-sm font-semibold text-red-200 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+              className="px-2.5 py-1.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-xs sm:text-sm font-semibold text-red-200 flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
               title="登出系統"
             >
               <LogOut className="w-4 h-4 text-red-400 shrink-0" />
-              <span className="hidden sm:inline">登出</span>
+              <span>登出</span>
             </button>
           </div>
         </div>
