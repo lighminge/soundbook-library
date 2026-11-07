@@ -7,6 +7,8 @@ export interface Category {
   icon: string;
   order: number;
   createdAt: string;
+  /** 是否開啟訪客瀏覽（當管理者勾選開啟後，訪客登入才能瀏覽與使用此館藏分類） */
+  allowGuest?: boolean;
 }
 
 export interface PlaybackSlide {

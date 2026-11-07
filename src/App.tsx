@@ -16,31 +16,33 @@ import {
   Compass,
   LayoutTemplate,
 } from 'lucide-react';
-import { AudioItem, Category, CurrentUser } from './types';
+import { AudioItem, Category, CurrentUser, LoginScreenConfig } from './types';
 import {
   deleteCategoryItem,
+  getLocalLoginScreenConfig,
   isGoogleDriveConfigured,
   loadLibraryData,
+  loadLoginScreenConfig,
   removeAudioItem,
   saveAudioItem,
   saveCategoryItem,
 } from './services/storageService';
 import { getCurrentSessionUser, logout, GUEST_USER } from './services/authService';
 import { LoginView } from './components/LoginView';
-import { UserManagerModal } from './components/UserManagerModal';
-import { LoginScreenSettingsModal } from './components/LoginScreenSettingsModal';
+import { SystemManagementView } from './components/SystemManagementView';
 import { DashboardView } from './components/DashboardView';
 import { ScreeningRoomView } from './components/ScreeningRoomView';
 import { AudioLibraryView } from './components/AudioLibraryView';
 import { CatalogManagementView } from './components/CatalogManagementView';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 
-type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog';
+type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog' | 'system';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
-  const [isUserManagerOpen, setIsUserManagerOpen] = useState(false);
-  const [isLoginSettingsOpen, setIsLoginSettingsOpen] = useState(false);
+  const [loginScreenConfig, setLoginScreenConfig] = useState<LoginScreenConfig>(() =>
+    getLocalLoginScreenConfig()
+  );
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [categories, setCategories] = useState<Category[]>([]);
@@ -83,6 +85,9 @@ export function App() {
     setAudioItems(res.audioItems);
     setDataSource(res.source);
     setDriveConnected(isGoogleDriveConfigured());
+    loadLoginScreenConfig()
+      .then((cfg) => setLoginScreenConfig(cfg))
+      .catch(() => {});
 
     // 支援跨裝置投放 / 連結分享時直接定位至指定語音作品
     const urlParams = new URLSearchParams(window.location.search);
@@ -106,19 +111,46 @@ export function App() {
     if (
       tabFromUrl === 'screening' ||
       tabFromUrl === 'dashboard' ||
-      (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog'))
+      (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog')) ||
+      (isAdmin && tabFromUrl === 'system')
     ) {
       setActiveTab(tabFromUrl as any);
     }
     reloadAllData();
   }, []);
 
-  // 訪客模式保護：若處於訪客模式且目前頁籤為上傳或管理，自動導回總覽
+  // 訪客與權限模式保護：若處於訪客模式且目前頁籤為上傳或管理，或非管理員進入系統管理，自動導回總覽
   useEffect(() => {
-    if (isGuest && (activeTab === 'library' || activeTab === 'catalog')) {
+    if (isGuest && (activeTab === 'library' || activeTab === 'catalog' || activeTab === 'system')) {
+      setActiveTab('dashboard');
+    } else if (!isAdmin && activeTab === 'system') {
       setActiveTab('dashboard');
     }
-  }, [isGuest, activeTab]);
+  }, [isGuest, isAdmin, activeTab]);
+
+  // 依「是否開啟訪客瀏覽 (allowGuest)」過濾訪客可見的館藏分類與語音檔
+  const visibleCategoriesForUser = React.useMemo(
+    () => (isGuest ? categories.filter((c) => Boolean(c.allowGuest)) : categories),
+    [isGuest, categories]
+  );
+
+  const visibleAudioItemsForUser = React.useMemo(() => {
+    if (!isGuest) return audioItems;
+    const allowedCatIds = new Set(visibleCategoriesForUser.map((c) => c.id));
+    return audioItems.filter((a) => allowedCatIds.has(a.categoryId));
+  }, [isGuest, audioItems, visibleCategoriesForUser]);
+
+  useEffect(() => {
+    if (!isGuest) return;
+    if (
+      activeAudioForPlayback &&
+      !visibleAudioItemsForUser.some((a) => a.id === activeAudioForPlayback.id)
+    ) {
+      setActiveAudioForPlayback(visibleAudioItemsForUser[0] || null);
+    } else if (!activeAudioForPlayback && visibleAudioItemsForUser.length > 0) {
+      setActiveAudioForPlayback(visibleAudioItemsForUser[0]);
+    }
+  }, [isGuest, visibleAudioItemsForUser, activeAudioForPlayback]);
 
   // 新增分類
   const handleAddCategory = async (
@@ -366,27 +398,24 @@ export function App() {
               )}
             </div>
 
-            {/* 系統登入畫面維護 & 系統使用者管理按鈕（限管理員） */}
+            {/* 系統管理按鈕（整合「帳號管理」與「系統登入畫面維護」，限管理員） */}
             {isAdmin && (
-              <>
-                <button
-                  onClick={() => setIsLoginSettingsOpen(true)}
-                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap"
-                  title="系統登入畫面維護（維護登入畫面最上方圖示與標題文字）"
-                >
-                  <LayoutTemplate className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>系統登入畫面維護</span>
-                </button>
-
-                <button
-                  onClick={() => setIsUserManagerOpen(true)}
-                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap"
-                  title="系統使用者帳號管理（新增、修改、刪除）"
-                >
-                  <Users className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>帳號管理</span>
-                </button>
-              </>
+              <button
+                onClick={() => setActiveTab('system')}
+                className={`px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap ${
+                  activeTab === 'system'
+                    ? 'bg-[#D4A373] text-[#261A13] border-[#E6C594] shadow-sm font-bold'
+                    : 'bg-amber-600/30 hover:bg-amber-600/40 border-amber-500/40 text-amber-200'
+                }`}
+                title="系統管理（帳號管理、系統登入畫面維護）"
+              >
+                <Shield
+                  className={`w-4 h-4 shrink-0 ${
+                    activeTab === 'system' ? 'text-[#261A13]' : 'text-amber-400'
+                  }`}
+                />
+                <span>系統管理</span>
+              </button>
             )}
 
             {/* 雲端設定按鈕（限管理者與編輯員，訪客不顯示） */}
@@ -460,6 +489,17 @@ export function App() {
               <Tags className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
               <span>館藏管理</span>
             </button>
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('system')}
+                className={`flex-1 py-2 px-1 rounded-lg text-sm sm:text-base font-bold font-serif-tc tracking-wider flex items-center justify-center gap-1.5 transition ${
+                  activeTab === 'system' ? 'bg-[#D4A373] text-[#261A13]' : 'text-[#E6D7C3]'
+                }`}
+              >
+                <Shield className="w-4.5 h-4.5 shrink-0 stroke-[2.2]" />
+                <span>系統管理</span>
+              </button>
+            )}
           </>
         )}
       </div>
@@ -468,8 +508,8 @@ export function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         {activeTab === 'dashboard' && (
           <DashboardView
-            categories={categories}
-            audioItems={audioItems}
+            categories={visibleCategoriesForUser}
+            audioItems={visibleAudioItemsForUser}
             dataSource={dataSource}
             driveConnected={driveConnected}
             isGuest={isGuest}
@@ -489,7 +529,7 @@ export function App() {
             }}
             onNavigateToScreeningCategory={(catId) => {
               setScreeningCategoryFilter(catId);
-              const firstInCat = audioItems.find((a) => a.categoryId === catId);
+              const firstInCat = visibleAudioItemsForUser.find((a) => a.categoryId === catId);
               if (firstInCat) setActiveAudioForPlayback(firstInCat);
               setActiveTab('screening');
             }}
@@ -501,8 +541,8 @@ export function App() {
 
         {activeTab === 'screening' && (
           <ScreeningRoomView
-            categories={categories}
-            audioItems={audioItems}
+            categories={visibleCategoriesForUser}
+            audioItems={visibleAudioItemsForUser}
             activeAudio={activeAudioForPlayback}
             initialCategoryFilter={screeningCategoryFilter}
             initialPlaylistIds={screeningInitialPlaylistIds}
@@ -558,6 +598,14 @@ export function App() {
             }}
           />
         )}
+
+        {activeTab === 'system' && isAdmin && (
+          <SystemManagementView
+            currentUserId={currentUser.id}
+            loginConfig={loginScreenConfig}
+            onUpdateLoginConfig={setLoginScreenConfig}
+          />
+        )}
       </main>
 
       {/* 頁尾資訊 */}
@@ -593,25 +641,6 @@ export function App() {
         onClose={() => setIsCloudModalOpen(false)}
         onSaved={reloadAllData}
       />
-
-      {/* 系統使用者帳號管理 Modal & 系統登入畫面維護 Modal（管理員專屬） */}
-      {isAdmin && (
-        <>
-          <UserManagerModal
-            isOpen={isUserManagerOpen}
-            onClose={() => setIsUserManagerOpen(false)}
-            currentUserId={currentUser.id}
-            onOpenLoginSettings={() => {
-              setIsUserManagerOpen(false);
-              setIsLoginSettingsOpen(true);
-            }}
-          />
-          <LoginScreenSettingsModal
-            isOpen={isLoginSettingsOpen}
-            onClose={() => setIsLoginSettingsOpen(false)}
-          />
-        </>
-      )}
     </div>
   );
 }

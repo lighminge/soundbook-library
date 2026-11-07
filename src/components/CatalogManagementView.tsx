@@ -129,6 +129,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [newCatDesc, setNewCatDesc] = useState('');
   const [newCatColor, setNewCatColor] = useState(THEME_COLOR_OPTIONS[0].value);
   const [newCatIcon, setNewCatIcon] = useState(ICON_OPTIONS[0].value);
+  const [newCatAllowGuest, setNewCatAllowGuest] = useState(false);
 
   // 修改館藏分類狀態
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -137,6 +138,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [editCatDesc, setEditCatDesc] = useState('');
   const [editCatColor, setEditCatColor] = useState('');
   const [editCatIcon, setEditCatIcon] = useState('');
+  const [editCatAllowGuest, setEditCatAllowGuest] = useState(false);
 
   // 刪除館藏分類確認視窗狀態
   const [categoryPendingDelete, setCategoryPendingDelete] = useState<Category | null>(null);
@@ -543,11 +545,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       description: newCatDesc.trim() || `${newCatName.trim()}有聲館藏專區`,
       themeColor: newCatColor,
       icon: newCatIcon,
+      allowGuest: newCatAllowGuest,
     });
 
     setNewCatName('');
     setNewCatCode('');
     setNewCatDesc('');
+    setNewCatAllowGuest(false);
     setShowAddCategoryModal(false);
     showToast(`✅ 已新增館藏分類「${newCatName.trim()}」並同步儲存至 Firebase！`);
   };
@@ -559,6 +563,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     setEditCatDesc(cat.description);
     setEditCatColor(cat.themeColor);
     setEditCatIcon(cat.icon);
+    setEditCatAllowGuest(Boolean(cat.allowGuest));
   };
 
   const handleConfirmUpdateCategory = async (e: React.FormEvent) => {
@@ -572,11 +577,26 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       description: editCatDesc.trim(),
       themeColor: editCatColor,
       icon: editCatIcon,
+      allowGuest: editCatAllowGuest,
     };
 
     await onUpdateCategory(updated);
     setEditingCategory(null);
     showToast(`✅ 已修改館藏分類「${updated.name}」並即時儲存至 Firebase！`);
+  };
+
+  const handleToggleCategoryGuestAccess = async (cat: Category) => {
+    const nextAllowGuest = !cat.allowGuest;
+    const updated: Category = {
+      ...cat,
+      allowGuest: nextAllowGuest,
+    };
+    await onUpdateCategory(updated);
+    showToast(
+      nextAllowGuest
+        ? `✅ 已為「${cat.name}」開啟訪客瀏覽權限（訪客登入可瀏覽使用）！`
+        : `🔒 已關閉「${cat.name}」的訪客瀏覽權限！`
+    );
   };
 
   const handleMoveCategoryOrder = async (index: number, direction: 'up' | 'down') => {
@@ -1298,6 +1318,23 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       </div>
                     </div>
 
+                    <div className="p-2.5 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4]">
+                      <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={editCatAllowGuest}
+                          onChange={(e) => setEditCatAllowGuest(e.target.checked)}
+                          className="w-4 h-4 rounded accent-[#2E5A44] cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-[#2C221E]">
+                          是否開啟訪客瀏覽
+                        </span>
+                        <span className="text-[11px] text-[#6E5D4F]">
+                          （勾選後，訪客登入才能瀏覽與使用此館藏分類）
+                        </span>
+                      </label>
+                    </div>
+
                     <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#EFE6D5]">
                       <button
                         type="button"
@@ -1339,6 +1376,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                             <span className="px-2 py-0.5 rounded bg-[#F4ECE0] text-[#3A2518] text-[11px] font-semibold">
                               館藏 {count} 筆
                             </span>
+                            {cat.allowGuest ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
+                                ✓ 開放訪客瀏覽
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-300 text-[10px] font-medium">
+                                未開放訪客
+                              </span>
+                            )}
                           </div>
                           <h4 className="font-bold font-serif-tc text-base text-[#2C221E] mt-1">
                             {cat.name}
@@ -1348,6 +1394,43 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           </p>
                         </div>
                       </div>
+                    </div>
+
+                    {/* 是否開啟訪客瀏覽 勾選設定列 */}
+                    <div
+                      className={`px-3 py-2 rounded-xl border transition-colors ${
+                        cat.allowGuest
+                          ? 'bg-emerald-50/80 border-emerald-300'
+                          : 'bg-[#FAF6EE] border-[#E5D9C5]'
+                      }`}
+                    >
+                      <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(cat.allowGuest)}
+                            onChange={() => handleToggleCategoryGuestAccess(cat)}
+                            className="w-4 h-4 rounded accent-[#2E5A44] cursor-pointer shrink-0"
+                          />
+                          <span className="text-xs font-bold text-[#2C221E]">
+                            是否開啟訪客瀏覽
+                          </span>
+                          <span className="text-[11px] text-[#6E5D4F] truncate">
+                            {cat.allowGuest
+                              ? '（已開啟：訪客登入可使用此館藏分類）'
+                              : '（勾選後，訪客登入才能使用）'}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded shrink-0 ${
+                            cat.allowGuest
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-[#E5D9C5] text-[#5C3A1B]'
+                          }`}
+                        >
+                          {cat.allowGuest ? '已開啟' : '未開啟'}
+                        </span>
+                      </label>
                     </div>
 
                     {/* 分類操作按鈕列：上移 / 下移 / 整館移動 / 修改 / 刪除 */}
@@ -2412,6 +2495,23 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#FAF4E8] border border-[#DFCEB4]">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newCatAllowGuest}
+                    onChange={(e) => setNewCatAllowGuest(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#2E5A44] cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-[#2C221E]">
+                    是否開啟訪客瀏覽
+                  </span>
+                  <span className="text-[11px] text-[#6E5D4F]">
+                    （勾選後，訪客登入才能瀏覽與使用此館藏分類）
+                  </span>
+                </label>
               </div>
 
               <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#E5D9C5]">

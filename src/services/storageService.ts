@@ -499,6 +499,8 @@ export async function loadLibraryData(): Promise<{
 }
 
 export async function saveCategoryItem(category: Category, allCategories: Category[]): Promise<void> {
+  const sanitizedCategory: Category = JSON.parse(JSON.stringify(category));
+
   try {
     localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(allCategories));
   } catch (e) {
@@ -507,7 +509,7 @@ export async function saveCategoryItem(category: Category, allCategories: Catego
 
   const db = getDbInstance();
   if (db) {
-    await setDoc(doc(db, 'categories', category.id), category);
+    await setDoc(doc(db, 'categories', sanitizedCategory.id), sanitizedCategory);
   }
 }
 

@@ -17,6 +17,7 @@ rules_version = '2';
 //   - themeColor: string (required, 1..30 chars) - Hex or CSS theme color (e.g., "#8B5A2B")
 //   - icon: string (required, 1..50 chars) - Icon identifier (e.g., "BookOpen", "Landmark")
 //   - order: number (required, 0..10000) - Display sort order
+//   - allowGuest: bool (optional) - Whether guest users can access this category
 //   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //
 // Collection: audioItems
@@ -226,7 +227,7 @@ service cloud.firestore {
     // Validate Category document schema and field bounds
     function isValidCategory(data, categoryId) {
       let requiredFields = ['id', 'name', 'code', 'description', 'themeColor', 'icon', 'order', 'createdAt'];
-      let allowedFields = ['id', 'name', 'code', 'description', 'themeColor', 'icon', 'order', 'createdAt'];
+      let allowedFields = ['id', 'name', 'code', 'description', 'themeColor', 'icon', 'order', 'allowGuest', 'createdAt'];
 
       return hasRequiredFields(requiredFields) &&
         hasOnlyAllowedFields(allowedFields) &&
@@ -238,6 +239,7 @@ service cloud.firestore {
         validStringLength('themeColor', 1, 30) &&
         validStringLength('icon', 1, 50) &&
         data.order is number && data.order >= 0 && data.order <= 10000 &&
+        (!('allowGuest' in data) || data.allowGuest is bool) &&
         isValidDateString(data.createdAt);
     }
 

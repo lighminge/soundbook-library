@@ -325,6 +325,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [newCatDesc, setNewCatDesc] = useState('');
   const [newCatColor, setNewCatColor] = useState('#8B5A2B');
   const [newCatIcon, setNewCatIcon] = useState('BookOpen');
+  const [newCatAllowGuest, setNewCatAllowGuest] = useState(false);
 
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
@@ -481,10 +482,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       description: newCatDesc.trim() || '自訂有聲書典藏分區',
       themeColor: newCatColor,
       icon: newCatIcon,
+      allowGuest: newCatAllowGuest,
     });
     setNewCatName('');
     setNewCatCode('');
     setNewCatDesc('');
+    setNewCatAllowGuest(false);
     setShowNewCatModal(false);
   };
 
@@ -904,6 +907,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 各分類圖書館木質書架展示區 */}
       <div className="space-y-10">
+        {visibleCategories.length === 0 ? (
+          <div className="py-14 px-6 text-center rounded-2xl border-2 border-dashed border-[#D5C5AE] bg-[#FFFDF9] shadow-xs space-y-2">
+            <Lock className="w-8 h-8 text-[#8B5A2B] mx-auto mb-2 opacity-80" />
+            <h3 className="text-base sm:text-lg font-bold font-serif-tc text-[#2C221E]">
+              {isGuest ? '目前尚無開放訪客瀏覽的館藏分類' : '目前尚無館藏分類'}
+            </h3>
+            <p className="text-xs sm:text-sm text-[#6E5D4F] max-w-lg mx-auto">
+              {isGuest
+                ? '請使用正式帳號登入，或由管理者於「館藏資料管理 ➔ 館藏分類管理」中勾選「是否開啟訪客瀏覽」後，訪客即可瀏覽使用。'
+                : '請點擊上方「新增分類廳」建立第一個館藏分類。'}
+            </p>
+          </div>
+        ) : null}
         {visibleCategories.map((category) => {
           const itemsInCat = audioItems
             .filter((item) => item.categoryId === category.id)
@@ -1429,6 +1445,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onChange={(e) => setNewCatDesc(e.target.value)}
                   className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-sm focus:outline-none focus:border-[#8B5A2B]"
                 />
+              </div>
+
+              <div className="p-3 rounded-lg bg-[#FAF4E8] border border-[#D5C5AE]">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newCatAllowGuest}
+                    onChange={(e) => setNewCatAllowGuest(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#8B5A2B] cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-[#2C221E]">
+                    是否開啟訪客瀏覽
+                  </span>
+                  <span className="text-[11px] text-[#6E5D4F]">
+                    （勾選後，訪客登入才能使用）
+                  </span>
+                </label>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
