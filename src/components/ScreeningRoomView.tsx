@@ -254,6 +254,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 舞台全螢幕容器 Ref 與狀態
   const theaterStageRef = useRef<HTMLDivElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  // 全螢幕播放時：滑鼠未移動約 5 秒後自動隱藏下方播放功能區，滑鼠移動時自動顯示
+  const [showFullscreenControls, setShowFullscreenControls] = useState<boolean>(true);
+  const fullscreenControlsTimerRef = useRef<number | null>(null);
 
   // 投放到其他裝置 Modal 狀態與複製成功標記
   const [showCastModal, setShowCastModal] = useState<boolean>(false);
@@ -1271,6 +1274,61 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     };
   }, []);
 
+  // 全螢幕播放時：滑鼠移動即顯示下方播放功能區，若播放中且滑鼠靜止滿 5 秒則自動隱藏
+  const handleFullscreenUserActivity = () => {
+    setShowFullscreenControls(true);
+    if (fullscreenControlsTimerRef.current) {
+      window.clearTimeout(fullscreenControlsTimerRef.current);
+      fullscreenControlsTimerRef.current = null;
+    }
+    if (isFullscreen && isPlaying && !showFullscreenPlaylist) {
+      fullscreenControlsTimerRef.current = window.setTimeout(() => {
+        setShowFullscreenControls(false);
+      }, 5000);
+    }
+  };
+
+  useEffect(() => {
+    if (!isFullscreen || !isPlaying || showFullscreenPlaylist) {
+      setShowFullscreenControls(true);
+      if (fullscreenControlsTimerRef.current) {
+        window.clearTimeout(fullscreenControlsTimerRef.current);
+        fullscreenControlsTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 進入全螢幕且正在播放時，啟動 5 秒無滑鼠移動自動隱藏計時器
+    setShowFullscreenControls(true);
+    fullscreenControlsTimerRef.current = window.setTimeout(() => {
+      setShowFullscreenControls(false);
+    }, 5000);
+
+    const onActivity = () => {
+      setShowFullscreenControls(true);
+      if (fullscreenControlsTimerRef.current) {
+        window.clearTimeout(fullscreenControlsTimerRef.current);
+      }
+      fullscreenControlsTimerRef.current = window.setTimeout(() => {
+        setShowFullscreenControls(false);
+      }, 5000);
+    };
+
+    window.addEventListener('mousemove', onActivity, { passive: true });
+    window.addEventListener('mousedown', onActivity, { passive: true });
+    window.addEventListener('touchstart', onActivity, { passive: true });
+
+    return () => {
+      window.removeEventListener('mousemove', onActivity);
+      window.removeEventListener('mousedown', onActivity);
+      window.removeEventListener('touchstart', onActivity);
+      if (fullscreenControlsTimerRef.current) {
+        window.clearTimeout(fullscreenControlsTimerRef.current);
+        fullscreenControlsTimerRef.current = null;
+      }
+    };
+  }, [isFullscreen, isPlaying, showFullscreenPlaylist]);
+
   const enterFullscreen = async () => {
     const el = theaterStageRef.current;
     if (!el) return;
@@ -1723,6 +1781,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           {/* 舞台主卡片 (支援一鍵放大全螢幕與視窗滿版劇場模式) */}
           <div
             ref={theaterStageRef}
+            onMouseMove={handleFullscreenUserActivity}
+            onTouchStart={handleFullscreenUserActivity}
             className={`transition-all duration-300 ${
               isFullscreen
                 ? 'fixed inset-0 z-[100] w-screen h-screen bg-[#0D0907] text-[#FAF5EC] flex flex-col justify-between overflow-hidden shadow-2xl'
@@ -1866,8 +1926,12 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
               {/* 底部圖片說明字幕條 */}
               <div
-                className={`absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/95 via-black/70 to-transparent flex items-end justify-between gap-4 ${
-                  isFullscreen ? 'p-6 pt-16 pb-4' : 'p-4 pt-10'
+                className={`absolute inset-x-0 z-20 bg-gradient-to-t from-black/95 via-black/70 to-transparent flex items-end justify-between gap-4 transition-all duration-300 ease-in-out ${
+                  isFullscreen
+                    ? showFullscreenControls
+                      ? 'bottom-28 sm:bottom-32 p-6 pt-16 pb-4'
+                      : 'bottom-0 p-6 pt-16 pb-6'
+                    : 'bottom-0 p-4 pt-10'
                 }`}
               >
                 <div
@@ -1976,11 +2040,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               </div>
             </div>
 
-            {/* 專業語音播放控制面板 */}
+            {/* 專業語音播放控制面板（全螢幕播放時滑鼠靜止 5 秒後自動隱藏，滑鼠移動時自動顯示） */}
             <div
-              className={`space-y-3 transition-colors ${
+              className={`space-y-3 transition-all duration-300 ease-in-out ${
                 isFullscreen
-                  ? 'p-4 sm:p-5 bg-[#1B120D]/95 backdrop-blur-md border-t border-white/10 shrink-0 z-30'
+                  ? `absolute bottom-0 inset-x-0 p-4 sm:p-5 bg-[#1B120D]/95 backdrop-blur-md border-t border-white/10 z-30 ${
+                      showFullscreenControls
+                        ? 'translate-y-0 opacity-100 pointer-events-auto'
+                        : 'translate-y-full opacity-0 pointer-events-none'
+                    }`
                   : 'p-5 bg-[#271C16] space-y-4'
               }`}
             >
