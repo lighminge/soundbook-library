@@ -147,10 +147,16 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     return initialPlaylistIds && initialPlaylistIds.length > 0 ? initialPlaylistIds : [];
   });
 
-  // 當由外部（如「館藏總覽」隨機播放按鈕）傳入 initialPlaylistIds 時同步套用
+  // 右側書架分頁標籤：'shelf' (館藏選片書架) | 'playlist' (播放清單)
+  const [shelfTab, setShelfTab] = useState<'shelf' | 'playlist'>(() =>
+    initialPlaylistIds && initialPlaylistIds.length > 0 ? 'playlist' : 'shelf'
+  );
+
+  // 當由外部（如「館藏總覽」隨機播放或選取多筆語音播放按鈕）傳入 initialPlaylistIds 時同步套用
   useEffect(() => {
     if (initialPlaylistIds && initialPlaylistIds.length > 0) {
       setPlaylistItemIds(initialPlaylistIds);
+      setShelfTab('playlist');
       if (initialAutoPlay) {
         pendingAutoPlayRef.current = true;
       }
@@ -178,9 +184,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   const totalPlaylistDuration = useMemo(() => {
     return playlistItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   }, [playlistItems]);
-
-  // 右側書架分頁標籤：'shelf' (館藏選片書架) | 'playlist' (播放清單)
-  const [shelfTab, setShelfTab] = useState<'shelf' | 'playlist'>('shelf');
 
   // 書架多選加入清單模式開關與已選取的語音 ID 清單
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);

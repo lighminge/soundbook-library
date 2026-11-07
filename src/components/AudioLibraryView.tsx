@@ -2389,6 +2389,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       <span className="px-2 py-0.5 rounded-full bg-[#2E5A44]/10 text-[#2E5A44] text-[11px] font-semibold">
                         一次顯示單一時間區段 · 隨語音播放與操作即時同步
                       </span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#2E5A44] text-white font-mono text-xs font-bold shadow-2xs">
+                        <Clock className="w-3 h-3 text-amber-300" />
+                        <span>
+                          目前秒數：{formatDuration(editorCurrentTime)} ({editorCurrentTime.toFixed(1)}s)
+                        </span>
+                      </span>
                     </div>
 
                     {srtSegments.length > 0 && activePlayingSrtSegment && (
@@ -2514,6 +2520,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                               </button>
                               <span className="text-[11px] text-[#7A6855] font-mono">
                                 ({currentSeg.startSec}s ~ {currentSeg.endSec}s)
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#3A2518] text-amber-200 font-mono text-[11px] font-bold">
+                                <Clock className="w-3 h-3 text-amber-300" />
+                                <span>
+                                  目前秒數：{formatDuration(editorCurrentTime)} ({editorCurrentTime.toFixed(1)}s)
+                                </span>
                               </span>
                             </div>
 

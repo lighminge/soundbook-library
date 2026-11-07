@@ -71,6 +71,16 @@ export function App() {
     setActiveTab('screening');
   };
 
+  // 手動選取多筆語音檔後，依選取順序當作播放清單一併到放映室播放
+  const handleStartPlaylistPlayback = (items: AudioItem[], categoryId?: string) => {
+    if (!items || items.length === 0) return;
+    setActiveAudioForPlayback(items[0]);
+    setScreeningInitialPlaylistIds(items.map((i) => i.id));
+    setScreeningInitialAutoPlay(true);
+    setScreeningCategoryFilter(categoryId || 'all');
+    setActiveTab('screening');
+  };
+
   // 語音檔案庫目前選取編輯的語音檔與預設上傳分類
   const [editingAudioItem, setEditingAudioItem] = useState<AudioItem | null>(null);
   const [defaultUploadCategoryId, setDefaultUploadCategoryId] = useState<string | undefined>(
@@ -528,6 +538,7 @@ export function App() {
               setActiveTab('screening');
             }}
             onStartShufflePlayback={handleStartShufflePlayback}
+            onStartPlaylistPlayback={handleStartPlaylistPlayback}
             onAddCategory={handleAddCategory}
             onOpenCloudSettings={() => {
               if (isAdmin) {

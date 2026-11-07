@@ -125,6 +125,10 @@ import {
   Layers,
   Shuffle,
   User,
+  CheckSquare,
+  Square,
+  ListMusic,
+  Check,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
@@ -345,6 +349,7 @@ interface DashboardViewProps {
   onNavigateToUpload: (defaultCategoryId?: string) => void;
   onNavigateToScreeningCategory: (categoryId: string) => void;
   onStartShufflePlayback: (items: AudioItem[], categoryId?: string) => void;
+  onStartPlaylistPlayback: (items: AudioItem[], categoryId?: string) => void;
   onAddCategory: (newCat: Omit<Category, 'id' | 'createdAt' | 'order'>) => void;
   onOpenCloudSettings: () => void;
   isGuest?: boolean;
@@ -572,6 +577,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateToUpload,
   onNavigateToScreeningCategory,
   onStartShufflePlayback,
+  onStartPlaylistPlayback,
   onAddCategory,
   onOpenCloudSettings,
   isGuest = false,
@@ -584,6 +590,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [newCatColor, setNewCatColor] = useState('#8B5A2B');
   const [newCatIcon, setNewCatIcon] = useState('BookOpen');
   const [newCatAllowGuest, setNewCatAllowGuest] = useState(false);
+
+  // 手動點選語音檔卡片選取多筆語音檔（依選取先後順序組成播放清單到放映室播放）
+  const [selectedAudioIds, setSelectedAudioIds] = useState<string[]>([]);
+
+  const selectedAudioItems = useMemo(() => {
+    const itemMap: Record<string, AudioItem> = {};
+    audioItems.forEach((i) => {
+      itemMap[i.id] = i;
+    });
+    return selectedAudioIds.map((id) => itemMap[id]).filter(Boolean) as AudioItem[];
+  }, [selectedAudioIds, audioItems]);
+
+  const selectedTotalDurationSec = useMemo(
+    () => selectedAudioItems.reduce((acc, item) => acc + (item.duration || 0), 0),
+    [selectedAudioItems]
+  );
+
+  const toggleSelectAudioItem = (itemId: string) => {
+    setSelectedAudioIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
+  };
+
+  const handleToggleSelectBatch = (items: AudioItem[]) => {
+    if (items.length === 0) return;
+    const allSelected = items.every((item) => selectedAudioIds.includes(item.id));
+    if (allSelected) {
+      const removeSet = new Set(items.map((i) => i.id));
+      setSelectedAudioIds((prev) => prev.filter((id) => !removeSet.has(id)));
+    } else {
+      setSelectedAudioIds((prev) => {
+        const next = [...prev];
+        items.forEach((item) => {
+          if (!next.includes(item.id)) next.push(item.id);
+        });
+        return next;
+      });
+    }
+  };
+
+  const handlePlaySelectedInScreeningRoom = (categoryId?: string) => {
+    if (selectedAudioItems.length === 0) return;
+    onStartPlaylistPlayback(selectedAudioItems, categoryId);
+  };
 
   const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
   const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
@@ -801,21 +851,74 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <Search className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold font-serif-tc text-[#2C221E] flex items-center gap-2">
+              <h2 className="text-base font-bold font-serif-tc text-[#2C221E] flex flex-wrap items-center gap-2">
                 <span>館藏語音快速檢索</span>
                 {(quickSearchKeyword.trim() || quickSearchTag || quickSearchSpeaker) && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {matchedAudioItems.length} 筆
                   </span>
                 )}
+                {selectedAudioItems.length > 0 && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#2E5A44] text-white font-bold">
+                    已選取 {selectedAudioItems.length} 部語音檔
+                  </span>
+                )}
               </h2>
               <p className="text-xs text-[#7A6855]">
-                輸入關鍵字或選取主講人、類別標籤，即時比對語音檔案名稱、主講人、分類名稱、類別標籤與說明內容
+                輸入關鍵字或選取主講人、類別標籤檢索；直接點選下方語音檔卡片即可選取多筆語音檔，一併到放映室當作播放清單放映
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+            {/* 檢索結果全選 / 取消全選 */}
+            {matchedAudioItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleToggleSelectBatch(matchedAudioItems)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-[#C8B598] hover:border-[#2E5A44] text-[#2E5A44] text-xs font-bold flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                title="全選或取消全選目前檢索結果中的所有語音檔"
+              >
+                {matchedAudioItems.every((item) => selectedAudioIds.includes(item.id)) ? (
+                  <>
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>取消全選檢索 ({matchedAudioItems.length})</span>
+                  </>
+                ) : (
+                  <>
+                    <Square className="w-3.5 h-3.5" />
+                    <span>全選檢索結果 ({matchedAudioItems.length})</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* 將已選取的多筆語音檔一併到放映室當作播放清單播放 */}
+            <button
+              type="button"
+              disabled={selectedAudioItems.length === 0}
+              onClick={() => handlePlaySelectedInScreeningRoom('all')}
+              className="px-3.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              title="將點選的語音檔依選取順序當作播放清單，一併到放映室播放"
+            >
+              <ListMusic className="w-3.5 h-3.5" />
+              <span>
+                到放映室播放已選 {selectedAudioItems.length > 0 ? `(${selectedAudioItems.length} 部)` : ''}
+              </span>
+            </button>
+
+            {selectedAudioItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedAudioIds([])}
+                className="px-2.5 py-1.5 rounded-lg bg-[#EFE6D5] hover:bg-[#E2D5C1] text-[#5C3A1B] text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                title="清空目前已選取的所有語音檔"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>清空已選</span>
+              </button>
+            )}
+
             {/* 快速檢索結果「隨機播放」功能 */}
             <button
               type="button"
@@ -931,11 +1034,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
               {matchedAudioItems.map((item, idx) => {
                 const cat = categories.find((c) => c.id === item.categoryId);
+                const selectedOrder = selectedAudioIds.indexOf(item.id) + 1;
+                const isSelected = selectedOrder > 0;
                 return (
                   <div
                     key={item.id}
-                    onClick={() => onSelectForPlayback(item)}
-                    className="group flex items-start gap-3 p-3 rounded-xl bg-white border border-[#E5D9C5] hover:border-[#8B5A2B] hover:shadow-md transition cursor-pointer"
+                    onClick={() => toggleSelectAudioItem(item.id)}
+                    className={`group flex items-start gap-3 p-3 rounded-xl transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#F1F8F4] border-2 border-[#2E5A44] ring-2 ring-[#2E5A44]/20 shadow-md'
+                        : 'bg-white border border-[#E5D9C5] hover:border-[#2E5A44] hover:shadow-md'
+                    }`}
+                    title="點選卡片以選取或取消選取此語音檔（可選取多筆後一併到放映室播放）"
                   >
                     <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
                       <img
@@ -943,33 +1053,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         alt={item.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                       />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 group-hover:opacity-100 transition">
-                        <Play className="w-5 h-5 text-white fill-current" />
+                      <div
+                        className={`absolute inset-0 flex items-center justify-center transition ${
+                          isSelected
+                            ? 'bg-[#2E5A44]/65 opacity-100'
+                            : 'bg-black/35 opacity-0 group-hover:opacity-100'
+                        }`}
+                      >
+                        {isSelected ? (
+                          <Check className="w-6 h-6 text-white stroke-[3]" />
+                        ) : (
+                          <CheckSquare className="w-5 h-5 text-white" />
+                        )}
                       </div>
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                        {/* 檢索清單序號（從 1 開始） */}
-                        <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
-                          #{idx + 1}
-                        </span>
-                        {/* 獨立語音檔編號 */}
-                        <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] shadow-xs">
-                          {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
-                        </span>
-                        {cat && (
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {/* 選取狀態標記 */}
                           <span
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-white"
-                            style={{ backgroundColor: cat.themeColor }}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
+                              isSelected
+                                ? 'bg-[#2E5A44] text-white shadow-2xs'
+                                : 'bg-[#EFE6D5] text-[#5C3A1B]'
+                            }`}
                           >
-                            [{cat.code}] {cat.name}
+                            {isSelected ? (
+                              <>
+                                <CheckSquare className="w-3 h-3" />
+                                <span>已選 #{selectedOrder}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Square className="w-3 h-3" />
+                                <span>點選選取</span>
+                              </>
+                            )}
                           </span>
-                        )}
-                        <span className="text-[11px] font-mono text-[#7A6855] flex items-center gap-0.5">
-                          <Clock className="w-3 h-3" />
-                          {formatDuration(item.duration)}
-                        </span>
+                          {/* 檢索清單序號（從 1 開始） */}
+                          <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
+                            #{idx + 1}
+                          </span>
+                          {/* 獨立語音檔編號 */}
+                          <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] shadow-xs">
+                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
+                          </span>
+                          {cat && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-white"
+                              style={{ backgroundColor: cat.themeColor }}
+                            >
+                              [{cat.code}] {cat.name}
+                            </span>
+                          )}
+                          <span className="text-[11px] font-mono text-[#7A6855] flex items-center gap-0.5">
+                            <Clock className="w-3 h-3" />
+                            {formatDuration(item.duration)}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectForPlayback(item);
+                          }}
+                          className="px-2 py-0.5 rounded bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC] text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition"
+                          title="直接單獨播放此語音檔"
+                        >
+                          <Play className="w-2.5 h-2.5 fill-current" />
+                          <span>單曲播放</span>
+                        </button>
                       </div>
 
                       <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] break-words break-all leading-snug line-clamp-2">
@@ -1107,17 +1262,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 圖書館分區導覽索引 (Category Hall Selector) */}
       <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold font-serif-tc text-[#2C221E] flex items-center gap-2">
+            <h2 className="text-xl font-bold font-serif-tc text-[#2C221E] flex flex-wrap items-center gap-2">
               <span>館藏主題分區導覽</span>
               <span className="text-xs font-normal px-2.5 py-0.5 rounded-full bg-[#E5D9C5] text-[#5C3A1B]">
                 依圖書館索書號排列
               </span>
+              {selectedAudioItems.length > 0 && (
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#2E5A44] text-white font-bold">
+                  已選取 {selectedAudioItems.length} 部語音檔
+                </span>
+              )}
             </h2>
             <p className="text-xs text-[#7A6855]">
-              點擊下方分類標籤可快速篩選特定展廳，或直接點選書架上的有聲書進入「放映室」播放。
+              點選書架上的語音檔卡片即可選取（支援選取多筆語音檔），選取後點擊「到放映室播放已選」即可一併當作播放清單放映。
             </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={selectedAudioItems.length === 0}
+              onClick={() => handlePlaySelectedInScreeningRoom(selectedAisle)}
+              className="px-4 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              title="將點選的多筆語音檔依選取順序當作播放清單，一併到放映室播放"
+            >
+              <ListMusic className="w-4 h-4" />
+              <span>
+                到放映室播放已選 {selectedAudioItems.length > 0 ? `(${selectedAudioItems.length} 部)` : ''}
+              </span>
+            </button>
+            {selectedAudioItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedAudioIds([])}
+                className="px-3 py-2 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D5C1] text-[#5C3A1B] text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>清空已選</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1383,6 +1568,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   )}
 
+                  {/* 全選 / 取消全選本廳語音 */}
+                  {filteredCategoryItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSelectBatch(filteredCategoryItems)}
+                      className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25"
+                      title={`全選或取消全選「${category.name}」主題館藏語音`}
+                    >
+                      {filteredCategoryItems.every((item) => selectedAudioIds.includes(item.id)) ? (
+                        <>
+                          <CheckSquare className="w-3.5 h-3.5 text-amber-300" />
+                          <span>取消本廳全選</span>
+                        </>
+                      ) : (
+                        <>
+                          <Square className="w-3.5 h-3.5" />
+                          <span>全選本廳 ({filteredCategoryItems.length})</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* 將已選取的多筆語音檔一併到放映室播放 */}
+                  {selectedAudioItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handlePlaySelectedInScreeningRoom(category.id)}
+                      className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer border border-emerald-300/40"
+                      title="將目前已選取的多筆語音檔當作播放清單，一併到放映室播放"
+                    >
+                      <ListMusic className="w-3.5 h-3.5" />
+                      <span>播放已選 ({selectedAudioItems.length} 部)</span>
+                    </button>
+                  )}
+
                   {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
                   <button
                     type="button"
@@ -1445,15 +1665,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {paginatedItems.map((item) => {
                         const callNumber =
                           audioCallNumberMap.get(item.id) || `${category.code}-1`;
+                        const selectedOrder = selectedAudioIds.indexOf(item.id) + 1;
+                        const isSelected = selectedOrder > 0;
                         return (
                           <div
                             key={item.id}
-                            className="group relative flex flex-col rounded-r-xl rounded-l-md bg-[#FFFDF9] book-spine-effect overflow-hidden border border-[#DFD2BE] hover:-translate-y-1.5 transition-all duration-200"
+                            onClick={() => toggleSelectAudioItem(item.id)}
+                            title="點選卡片以選取或取消選取此語音檔（可選取多筆後一併到放映室播放）"
+                            className={`group relative flex flex-col rounded-r-xl rounded-l-md book-spine-effect overflow-hidden transition-all duration-200 cursor-pointer ${
+                              isSelected
+                                ? 'bg-[#F2FAF5] border-2 border-[#2E5A44] ring-3 ring-[#2E5A44]/25 -translate-y-1.5 shadow-lg'
+                                : 'bg-[#FFFDF9] border border-[#DFD2BE] hover:border-[#2E5A44] hover:-translate-y-1.5'
+                            }`}
                           >
                             {/* 左側精裝書背裝飾條 */}
                             <div
                               className="absolute left-0 top-0 bottom-0 w-3 z-10"
-                              style={{ backgroundColor: category.themeColor }}
+                              style={{ backgroundColor: isSelected ? '#2E5A44' : category.themeColor }}
                             />
 
                             {/* 封面圖與快速播放按鈕 */}
@@ -1468,6 +1696,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               {/* 語音檔獨立編號（館藏分類編號 + 上傳順序流水號） */}
                               <span className="absolute top-2.5 left-5 px-2.5 py-0.5 rounded bg-black/75 text-[#F6E6D2] font-mono text-[11px] backdrop-blur-xs flex items-center shadow-sm">
                                 <span className="text-amber-300 font-bold tracking-wider">{callNumber}</span>
+                              </span>
+
+                              {/* 右上角選取狀態徽章 */}
+                              <span
+                                className={`absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-md transition ${
+                                  isSelected
+                                    ? 'bg-[#2E5A44] text-white ring-2 ring-white/80'
+                                    : 'bg-black/65 text-white/90 group-hover:bg-[#2E5A44] group-hover:text-white'
+                                }`}
+                              >
+                                {isSelected ? (
+                                  <>
+                                    <CheckSquare className="w-3.5 h-3.5 text-amber-300" />
+                                    <span>已選取 #{selectedOrder}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Square className="w-3.5 h-3.5" />
+                                    <span>點選選取</span>
+                                  </>
+                                )}
                               </span>
 
                               {/* 時長、主講人與插圖數量（時長與展演圖中間顯示主講人） */}
@@ -1528,17 +1777,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 </p>
                               </div>
 
-                              <div className="pt-2 border-t border-[#EFE6D5] flex items-center justify-between gap-2">
+                              <div className="pt-2 border-t border-[#EFE6D5] flex items-center justify-between gap-1.5">
                                 <button
-                                  onClick={() => onSelectForPlayback(item)}
-                                  className="flex-1 py-2 px-3 rounded-lg bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC] text-xs font-medium flex items-center justify-center gap-1.5 transition cursor-pointer"
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSelectAudioItem(item.id);
+                                  }}
+                                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-[#2E5A44] hover:bg-[#234735] text-white shadow-xs'
+                                      : 'bg-[#EFE6D5] hover:bg-[#E2D5C1] text-[#3A2518]'
+                                  }`}
+                                >
+                                  {isSelected ? (
+                                    <>
+                                      <CheckSquare className="w-3.5 h-3.5" />
+                                      <span>已選 (#{selectedOrder})</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Square className="w-3.5 h-3.5" />
+                                      <span>選取語音</span>
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelectForPlayback(item);
+                                  }}
+                                  title="直接單獨播放此語音檔"
+                                  className="py-2 px-2.5 rounded-lg bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC] text-xs font-medium flex items-center justify-center gap-1 transition cursor-pointer"
                                 >
                                   <Play className="w-3.5 h-3.5 fill-current" />
-                                  <span>放映室播放</span>
+                                  <span>單曲播放</span>
                                 </button>
                                 {!isGuest && (
                                   <button
-                                    onClick={() => onSelectForEdit(item)}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onSelectForEdit(item);
+                                    }}
                                     title="編輯語音檔、封面與播放圖文"
                                     className="p-2 rounded-lg border border-[#DCCB88] bg-[#FAF4E8] hover:bg-[#EFE2C8] text-[#5C3A1B] transition cursor-pointer"
                                   >
@@ -1611,6 +1893,73 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           );
         })}
       </div>
+
+      {/* 底部浮動「已選取多筆語音檔播放清單」工具列 */}
+      {selectedAudioItems.length > 0 && (
+        <div className="fixed bottom-4 left-4 right-4 z-40 max-w-5xl mx-auto">
+          <div className="rounded-2xl bg-[#261A13]/95 backdrop-blur-md text-[#FAF5EC] border-2 border-[#2E5A44] shadow-2xl p-3.5 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#2E5A44] text-white text-xs font-bold">
+                  <CheckSquare className="w-3.5 h-3.5 text-amber-300" />
+                  <span>已手動選取 {selectedAudioItems.length} 部語音檔</span>
+                </span>
+                <span className="text-xs text-[#E6D7C3] font-mono">
+                  總播放時長：{formatDuration(selectedTotalDurationSec)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                {selectedAudioItems.map((item, idx) => (
+                  <span
+                    key={item.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/10 border border-white/20 text-[11px] text-[#FAF5EC] shrink-0"
+                  >
+                    <span className="text-amber-300 font-mono font-bold">#{idx + 1}</span>
+                    <span className="truncate max-w-[130px]">{item.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectAudioItem(item.id)}
+                      className="text-white/70 hover:text-white ml-0.5 cursor-pointer"
+                      title="取消選取此語音檔"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedAudioIds([])}
+                className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-[#E6D7C3] text-xs font-semibold flex items-center gap-1 transition cursor-pointer border border-white/15"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>清空重選</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onStartShufflePlayback(selectedAudioItems, selectedAisle)}
+                className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                title="將已選取的語音檔隨機排列並進入放映室播放"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>隨機播放已選 ({selectedAudioItems.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePlaySelectedInScreeningRoom(selectedAisle)}
+                className="px-4 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-lg transition cursor-pointer ring-2 ring-emerald-400/40"
+                title="將已選取的多筆語音檔當作播放清單，一併到放映室播放"
+              >
+                <Play className="w-4 h-4 fill-current text-amber-300" />
+                <span>一併到放映室播放 ({selectedAudioItems.length} 部)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 新增館藏分類 Modal */}
       {showNewCatModal && (
