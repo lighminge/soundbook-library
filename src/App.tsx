@@ -519,7 +519,9 @@ export function App() {
             isGuest={isGuest}
             onSelectForPlayback={(item) => {
               setActiveAudioForPlayback(item);
-              setScreeningCategoryFilter('all');
+              setScreeningInitialPlaylistIds([]);
+              setScreeningInitialAutoPlay(true);
+              setScreeningCategoryFilter(item.categoryId || 'all');
               setActiveTab('screening');
             }}
             onSelectForEdit={(item) => {

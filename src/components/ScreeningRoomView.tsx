@@ -152,14 +152,16 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     initialPlaylistIds && initialPlaylistIds.length > 0 ? 'playlist' : 'shelf'
   );
 
-  // 當由外部（如「館藏總覽」隨機播放或選取多筆語音播放按鈕）傳入 initialPlaylistIds 時同步套用
+  // 當由外部（如「館藏總覽」單曲播放、隨機播放或選取多筆語音播放按鈕）傳入 initialPlaylistIds 或 initialAutoPlay 時同步套用
   useEffect(() => {
     if (initialPlaylistIds && initialPlaylistIds.length > 0) {
       setPlaylistItemIds(initialPlaylistIds);
       setShelfTab('playlist');
-      if (initialAutoPlay) {
-        pendingAutoPlayRef.current = true;
-      }
+    }
+    if (initialAutoPlay) {
+      pendingAutoPlayRef.current = true;
+    }
+    if ((initialPlaylistIds && initialPlaylistIds.length > 0) || initialAutoPlay) {
       onClearInitialPlaylist?.();
     }
   }, [initialPlaylistIds, initialAutoPlay, onClearInitialPlaylist]);
@@ -268,7 +270,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const pendingAutoPlayRef = useRef<boolean>(false);
+  const pendingAutoPlayRef = useRef<boolean>(Boolean(initialAutoPlay));
 
   useEffect(() => {
     if (initialCategoryFilter) {
@@ -317,7 +319,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           });
       }
     }
-  }, [playableScreeningUrl]);
+  }, [playableScreeningUrl, currentItem?.id]);
 
   // 依據分類與頂部搜尋篩選清單
   const filteredItems = audioItems.filter((item) => {
