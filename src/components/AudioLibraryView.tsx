@@ -336,10 +336,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setNewSlideEndSegIdx(smallestUnused);
   }, [srtSegments, slides]);
 
-  // 依據目前語音播放秒數，自動計算當前對應的 SRT 時間區段
+  // 依據目前語音播放秒數，自動計算當前對應的單一 SRT 時間區段（一次只顯示一個時間區段）
   const activePlayingSrtSegment = useMemo(() => {
     if (srtSegments.length === 0) return null;
-    if (!isEditorPlaying && editorCurrentTime <= 0) return null;
+    if (editingSegmentId) {
+      const editingSeg = srtSegments.find((s) => s.id === editingSegmentId);
+      if (editingSeg) return editingSeg;
+    }
     const exactMatch = srtSegments.find(
       (seg) => editorCurrentTime >= seg.startSec && editorCurrentTime < seg.endSec
     );
@@ -352,11 +355,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       .reverse()
       .find((seg) => editorCurrentTime >= seg.startSec);
     return previousSeg || srtSegments[0];
-  }, [srtSegments, editorCurrentTime, isEditorPlaying]);
+  }, [srtSegments, editorCurrentTime, editingSegmentId]);
 
-  // 當播放秒數進入新的 SRT 時間區段時，自動在「播放時的文字顯示」捲動切換至該區段
+  // 當播放秒數進入新的 SRT 時間區段時，自動在下方完整清單捲動切換至該區段
   useEffect(() => {
     if (!autoFollowSrt || !activePlayingSrtSegment || editingSegmentId) return;
+    if (!isEditorPlaying && editorCurrentTime <= 0) return;
     const container = srtListContainerRef.current;
     const targetEl = srtSegmentRefs.current[activePlayingSrtSegment.id];
     if (container && targetEl) {
@@ -372,16 +376,23 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         behavior: 'smooth',
       });
     }
-  }, [activePlayingSrtSegment?.id, autoFollowSrt, editingSegmentId]);
+  }, [activePlayingSrtSegment?.id, autoFollowSrt, editingSegmentId, isEditorPlaying, editorCurrentTime]);
 
-  // 點擊任一 SRT 區段跳轉語音播放秒數並開始播放
-  const handleSeekAndPlaySegment = (seg: SrtSegment) => {
+  // 同步定位語音播放秒數至指定 SRT 區段（可選擇是否同時開始播放）
+  const handleSeekToSegment = (seg: SrtSegment, autoPlay = false) => {
     const audioEl = editorAudioRef.current;
     setEditorCurrentTime(seg.startSec);
     if (audioEl) {
       audioEl.currentTime = seg.startSec;
-      audioEl.play().catch(() => {});
+      if (autoPlay) {
+        audioEl.play().catch(() => {});
+      }
     }
+  };
+
+  // 點擊任一 SRT 區段跳轉語音播放秒數並開始播放
+  const handleSeekAndPlaySegment = (seg: SrtSegment) => {
+    handleSeekToSegment(seg, true);
   };
 
   const loadItemIntoEditor = (item: AudioItem) => {
@@ -637,6 +648,13 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
    * 啟動某一個 SRT 時間區段的「修改」模式
    */
   const startEditSrtSegment = (seg: SrtSegment) => {
+    if (editorAudioRef.current && !editorAudioRef.current.paused) {
+      editorAudioRef.current.pause();
+    }
+    setEditorCurrentTime(seg.startSec);
+    if (editorAudioRef.current) {
+      editorAudioRef.current.currentTime = seg.startSec;
+    }
     setEditingSegmentId(seg.id);
     setEditSegStartSec(seg.startSec);
     setEditSegEndSec(seg.endSec);
@@ -646,11 +664,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 確認儲存某一個 SRT 時間區段的修改，同步修改後方受影響區段，並自動同步圖片圖說文字與時間至 Firebase
+   * 確認儲存某一個 SRT 時間區段的修改，同步修改受影響的所有時間區段，並自動同步圖片圖說文字與時間至 Firebase
    */
   const confirmEditSrtSegment = async (targetIdx: number) => {
     const oldSeg = srtSegments[targetIdx];
     if (!oldSeg) return;
+
+    const prevSegChanged =
+      targetIdx > 0 && Number(editSegStartSec) !== oldSeg.startSec;
 
     const { updatedSegments, deltaSec } = updateSegmentAndCascade(
       srtSegments,
@@ -665,14 +686,23 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setSlides(syncedSlides);
     setEditingSegmentId(null);
 
+    const updatedTarget = updatedSegments[targetIdx];
+    if (updatedTarget) {
+      setEditorCurrentTime(updatedTarget.startSec);
+      if (editorAudioRef.current && editorAudioRef.current.paused) {
+        editorAudioRef.current.currentTime = updatedTarget.startSec;
+      }
+    }
+
     await autoPersistToFirebase(updatedSegments, syncedSlides);
 
-    const affectedCount = Math.max(0, updatedSegments.length - 1 - targetIdx);
-    if (deltaSec !== 0 && affectedCount > 0) {
+    const affectedAfterCount = deltaSec !== 0 ? Math.max(0, updatedSegments.length - 1 - targetIdx) : 0;
+    const totalAffected = affectedAfterCount + (prevSegChanged ? 1 : 0);
+    if (totalAffected > 0) {
       showToast(
-        `✅ 已更新第 #${targetIdx + 1} 區段與圖說文字，並自動推移後方 ${affectedCount} 個區段時間（${
-          deltaSec > 0 ? `+${deltaSec}` : deltaSec
-        } 秒），已同步儲存至 Firebase！`
+        `✅ 已更新第 #${targetIdx + 1} 區段與圖說文字，並已同步修改受影響的 ${totalAffected} 個時間區段${
+          deltaSec !== 0 ? `（後方推移 ${deltaSec > 0 ? `+${deltaSec}` : deltaSec} 秒）` : ''
+        }，已同步儲存至 Firebase！`
       );
     } else {
       showToast(`✅ 已更新第 #${targetIdx + 1} 時間區段與對應圖說文字，並已儲存至 Firebase！`);
@@ -2314,7 +2344,9 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     controls
                     src={playableEditorAudioUrl}
                     onTimeUpdate={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
+                    onSeeking={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
                     onSeeked={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
+                    onLoadedMetadata={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
                     onPlay={() => setIsEditorPlaying(true)}
                     onPause={() => setIsEditorPlaying(false)}
                     onEnded={() => setIsEditorPlaying(false)}
@@ -2343,6 +2375,298 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                         <span>播放時自動切換並捲動至對應 SRT 時間區段</span>
                       </label>
                     </div>
+                  )}
+                </div>
+
+                {/* 目前綁定語音檔下方：播放時的文字顯示（單一時間區段自動切換 + 語音操作同步 + 修改並同步所有受影響時間區段） */}
+                <div className="p-4 rounded-xl bg-[#FAF4E8] border-2 border-[#2E5A44]/35 shadow-xs space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#E2D5C1]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-sm font-bold font-serif-tc text-[#2E5A44]">
+                        <FileText className="w-4 h-4 text-[#2E5A44]" />
+                        <span>播放時的文字顯示</span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-[#2E5A44]/10 text-[#2E5A44] text-[11px] font-semibold">
+                        一次顯示單一時間區段 · 隨語音播放與操作即時同步
+                      </span>
+                    </div>
+
+                    {srtSegments.length > 0 && activePlayingSrtSegment && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(() => {
+                          const currentIdx = srtSegments.findIndex(
+                            (s) => s.id === activePlayingSrtSegment.id
+                          );
+                          const prevSeg = currentIdx > 0 ? srtSegments[currentIdx - 1] : null;
+                          const nextSeg =
+                            currentIdx >= 0 && currentIdx < srtSegments.length - 1
+                              ? srtSegments[currentIdx + 1]
+                              : null;
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                disabled={!prevSeg}
+                                onClick={() => {
+                                  if (prevSeg) {
+                                    setEditingSegmentId(null);
+                                    handleSeekToSegment(prevSeg, isEditorPlaying);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg bg-white border border-[#C8B598] hover:border-[#2E5A44] text-[#3A2518] disabled:opacity-40 text-xs font-semibold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                                title="切換至上一個時間區段並同步語音位置"
+                              >
+                                <ChevronLeft className="w-3.5 h-3.5" />
+                                <span>上一段</span>
+                              </button>
+
+                              <select
+                                value={activePlayingSrtSegment.id}
+                                onChange={(e) => {
+                                  const target = srtSegments.find((s) => s.id === e.target.value);
+                                  if (target) {
+                                    setEditingSegmentId(null);
+                                    handleSeekToSegment(target, isEditorPlaying);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg bg-white border border-[#C8B598] text-xs font-mono font-semibold text-[#3A2518] focus:outline-none focus:border-[#2E5A44]"
+                                title="直接選擇任一時間區段並同步語音播放秒數"
+                              >
+                                {srtSegments.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    #{s.index} ({secondsToSrtTime(s.startSec)} ~{' '}
+                                    {secondsToSrtTime(s.endSec)})
+                                  </option>
+                                ))}
+                              </select>
+
+                              <button
+                                type="button"
+                                disabled={!nextSeg}
+                                onClick={() => {
+                                  if (nextSeg) {
+                                    setEditingSegmentId(null);
+                                    handleSeekToSegment(nextSeg, isEditorPlaying);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg bg-white border border-[#C8B598] hover:border-[#2E5A44] text-[#3A2518] disabled:opacity-40 text-xs font-semibold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                                title="切換至下一個時間區段並同步語音位置"
+                              >
+                                <span>下一段</span>
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+
+                  {srtSegments.length === 0 || !activePlayingSrtSegment ? (
+                    <div className="p-5 text-center rounded-xl border border-dashed border-[#D5C5AE] bg-white/70 space-y-2">
+                      <p className="text-xs text-[#7A6855]">
+                        目前尚無 SRT 時間區段。請於下方匯入 SRT 檔案或直接新增第一個時間區段：
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertSrtAt(0)}
+                        className="px-3.5 py-1.5 rounded-lg bg-[#2E5A44] text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>新增第 #1 個時間區段</span>
+                      </button>
+                    </div>
+                  ) : (
+                    (() => {
+                      const currentSeg = activePlayingSrtSegment;
+                      const currentSegIdx = srtSegments.findIndex((s) => s.id === currentSeg.id);
+                      const isEditingCurrent = editingSegmentId === currentSeg.id;
+
+                      return (
+                        <div className="rounded-xl bg-white border-2 border-[#2E5A44] p-3.5 shadow-sm space-y-3">
+                          {/* 單一時間區段頂部資訊與修改操作列 */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFE6D5]">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2.5 py-0.5 rounded-md bg-[#2E5A44] text-white font-mono text-xs font-bold">
+                                #{currentSeg.index} / 共 {srtSegments.length} 段
+                              </span>
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                                  isEditorPlaying
+                                    ? 'bg-emerald-600 text-white animate-pulse'
+                                    : 'bg-amber-100 text-[#8B5A2B] border border-amber-300'
+                                }`}
+                              >
+                                <Play className="w-2.5 h-2.5 fill-current" />
+                                <span>{isEditorPlaying ? '播放自動切換中' : '目前同步時間區段'}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleSeekAndPlaySegment(currentSeg)}
+                                title="點擊從此時間區段起點開始播放語音"
+                                className="px-2.5 py-0.5 rounded-md bg-[#2E5A44]/10 hover:bg-[#2E5A44] text-[#2E5A44] hover:text-white font-mono text-xs font-semibold border border-[#2E5A44]/25 transition cursor-pointer flex items-center gap-1"
+                              >
+                                <Play className="w-3 h-3 fill-current" />
+                                <span>
+                                  {secondsToSrtTime(currentSeg.startSec)} {'-->'}{' '}
+                                  {secondsToSrtTime(currentSeg.endSec)}
+                                </span>
+                              </button>
+                              <span className="text-[11px] text-[#7A6855] font-mono">
+                                ({currentSeg.startSec}s ~ {currentSeg.endSec}s)
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              {!isEditingCurrent && (
+                                <button
+                                  type="button"
+                                  onClick={() => startEditSrtSegment(currentSeg)}
+                                  className="px-2.5 py-1 rounded-lg bg-[#8B5A2B] hover:bg-[#6E451F] text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                  <span>修改時間區段</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleInsertSrtAt(currentSegIdx + 1)}
+                                className="px-2.5 py-1 rounded-lg bg-[#2E5A44]/15 hover:bg-[#2E5A44] text-[#2E5A44] hover:text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                                title="在此時間區段後方插入一個新區段，並自動順延後續時間"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>在此後新增</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSrtSegment(currentSegIdx)}
+                                className="p-1.5 rounded-lg text-red-700 hover:bg-red-50 transition cursor-pointer"
+                                title="刪除此時間區段"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 單一時間區段內容：檢視模式 vs 修改模式 */}
+                          {isEditingCurrent ? (
+                            <div className="pt-1 space-y-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg bg-[#F4ECE0] border border-[#E2D5C1]">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                                    起始時間 (秒數 / SRT 格式，修改後同步銜接前段)
+                                  </label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={0.5}
+                                      value={editSegStartSec}
+                                      onChange={(e) => {
+                                        const val = Math.max(0, Number(e.target.value) || 0);
+                                        const dur = Math.max(1, editSegEndSec - editSegStartSec);
+                                        setEditSegStartSec(val);
+                                        setEditSegStartSrt(secondsToSrtTime(val));
+                                        if (val >= editSegEndSec) {
+                                          setEditSegEndSec(val + dur);
+                                          setEditSegEndSrt(secondsToSrtTime(val + dur));
+                                        }
+                                      }}
+                                      className="w-20 px-2 py-1.5 rounded border border-[#C8B598] bg-white text-xs font-mono"
+                                    />
+                                    <span className="text-xs text-[#7A6855]">秒</span>
+                                    <input
+                                      type="text"
+                                      value={editSegStartSrt}
+                                      onChange={(e) => {
+                                        setEditSegStartSrt(e.target.value);
+                                        const parsed = srtTimeToSeconds(e.target.value);
+                                        setEditSegStartSec(parsed);
+                                      }}
+                                      className="flex-1 min-w-0 px-2 py-1.5 rounded border border-[#C8B598] bg-white text-xs font-mono"
+                                      placeholder="00:00:00,000"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                                    結束時間 (修改後自動同步推移所有受影響區段)
+                                  </label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="number"
+                                      min={0.5}
+                                      step={0.5}
+                                      value={editSegEndSec}
+                                      onChange={(e) => {
+                                        const val = Math.max(0.5, Number(e.target.value) || 0);
+                                        setEditSegEndSec(val);
+                                        setEditSegEndSrt(secondsToSrtTime(val));
+                                      }}
+                                      className="w-20 px-2 py-1.5 rounded border border-[#C8B598] bg-white text-xs font-mono"
+                                    />
+                                    <span className="text-xs text-[#7A6855]">秒</span>
+                                    <input
+                                      type="text"
+                                      value={editSegEndSrt}
+                                      onChange={(e) => {
+                                        setEditSegEndSrt(e.target.value);
+                                        const parsed = srtTimeToSeconds(e.target.value);
+                                        setEditSegEndSec(parsed);
+                                      }}
+                                      className="flex-1 min-w-0 px-2 py-1.5 rounded border border-[#C8B598] bg-white text-xs font-mono"
+                                      placeholder="00:00:05,000"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
+                                  本區段文字內容（同時作為對應圖片的「圖說文字」）：
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={editSegText}
+                                  onChange={(e) => setEditSegText(e.target.value)}
+                                  className="w-full p-2.5 rounded-lg border border-[#C8B598] bg-white text-sm font-serif-tc focus:outline-none focus:border-[#2E5A44]"
+                                  placeholder="請輸入此時間區段要顯示的文字與圖說內容..."
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingSegmentId(null)}
+                                  className="px-3 py-1.5 rounded-lg border border-[#D5C5AE] text-xs font-medium text-[#5C3A1B] hover:bg-[#EFE6D5] cursor-pointer"
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => confirmEditSrtSegment(currentSegIdx)}
+                                  className="px-3.5 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>確認修改並同步影響區段</span>
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-3 rounded-lg bg-[#FAF5EC] border border-[#E2D5C1]">
+                              <p className="text-sm sm:text-base text-[#2C1E14] font-serif-tc font-medium leading-relaxed whitespace-pre-wrap">
+                                {currentSeg.text || (
+                                  <span className="italic text-[#9C8974]">
+                                    （此時間區段尚未填寫文字，請點擊右上角「修改時間區段」輸入圖說內容）
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               </div>

@@ -237,6 +237,19 @@ export function updateSegmentAndCascade(
   // 計算結束時間的推移量 (deltaSec)，用來同步更新後方所有區段
   const deltaSec = Math.round((validEnd - oldEndSec) * 1000) / 1000;
 
+  // 若修改了起始時間，且影響到前一個區段的結束時間（例如前一段結束時間原本銜接此段起始時間，或重疊），同步調整前一段結束時間
+  if (targetIndex > 0 && validStart !== oldStartSec) {
+    const prev = list[targetIndex - 1];
+    if (prev.endSec === oldStartSec || prev.endSec > validStart) {
+      if (validStart > prev.startSec) {
+        list[targetIndex - 1] = {
+          ...prev,
+          endSec: validStart,
+        };
+      }
+    }
+  }
+
   list[targetIndex] = {
     ...current,
     startSec: validStart,
