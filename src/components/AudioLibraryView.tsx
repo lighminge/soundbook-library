@@ -138,7 +138,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [inlineNewSpeakerName, setInlineNewSpeakerName] = useState<string>('');
 
   // ============================================================================
-  // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段)
+  // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段 + 播放秒數即時同步)
   // ============================================================================
   const [srtSegments, setSrtSegments] = useState<SrtSegment[]>([]);
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
@@ -147,6 +147,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [editSegStartSrt, setEditSegStartSrt] = useState<string>('00:00:00,000');
   const [editSegEndSrt, setEditSegEndSrt] = useState<string>('00:00:05,000');
   const [editSegText, setEditSegText] = useState<string>('');
+
+  // 編輯器內語音播放秒數與 SRT 時間區段自動切換同步狀態
+  const editorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const srtListContainerRef = useRef<HTMLDivElement | null>(null);
+  const srtSegmentRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [editorCurrentTime, setEditorCurrentTime] = useState<number>(0);
+  const [isEditorPlaying, setIsEditorPlaying] = useState<boolean>(false);
+  const [autoFollowSrt, setAutoFollowSrt] = useState<boolean>(true);
 
   // 「批次修改時間區段」Modal 狀態
   const [showBatchTimeModal, setShowBatchTimeModal] = useState<boolean>(false);
@@ -328,6 +336,54 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setNewSlideEndSegIdx(smallestUnused);
   }, [srtSegments, slides]);
 
+  // 依據目前語音播放秒數，自動計算當前對應的 SRT 時間區段
+  const activePlayingSrtSegment = useMemo(() => {
+    if (srtSegments.length === 0) return null;
+    if (!isEditorPlaying && editorCurrentTime <= 0) return null;
+    const exactMatch = srtSegments.find(
+      (seg) => editorCurrentTime >= seg.startSec && editorCurrentTime < seg.endSec
+    );
+    if (exactMatch) return exactMatch;
+    const inclusiveMatch = srtSegments.find(
+      (seg) => editorCurrentTime >= seg.startSec && editorCurrentTime <= seg.endSec
+    );
+    if (inclusiveMatch) return inclusiveMatch;
+    const previousSeg = [...srtSegments]
+      .reverse()
+      .find((seg) => editorCurrentTime >= seg.startSec);
+    return previousSeg || srtSegments[0];
+  }, [srtSegments, editorCurrentTime, isEditorPlaying]);
+
+  // 當播放秒數進入新的 SRT 時間區段時，自動在「播放時的文字顯示」捲動切換至該區段
+  useEffect(() => {
+    if (!autoFollowSrt || !activePlayingSrtSegment || editingSegmentId) return;
+    const container = srtListContainerRef.current;
+    const targetEl = srtSegmentRefs.current[activePlayingSrtSegment.id];
+    if (container && targetEl) {
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = targetEl.getBoundingClientRect();
+      const relativeTop = targetRect.top - containerRect.top + container.scrollTop;
+      const desiredScrollTop = Math.max(
+        0,
+        relativeTop - container.clientHeight / 2 + targetRect.height / 2
+      );
+      container.scrollTo({
+        top: desiredScrollTop,
+        behavior: 'smooth',
+      });
+    }
+  }, [activePlayingSrtSegment?.id, autoFollowSrt, editingSegmentId]);
+
+  // 點擊任一 SRT 區段跳轉語音播放秒數並開始播放
+  const handleSeekAndPlaySegment = (seg: SrtSegment) => {
+    const audioEl = editorAudioRef.current;
+    setEditorCurrentTime(seg.startSec);
+    if (audioEl) {
+      audioEl.currentTime = seg.startSec;
+      audioEl.play().catch(() => {});
+    }
+  };
+
   const loadItemIntoEditor = (item: AudioItem) => {
     if (autoSaveTimerRef.current) {
       window.clearTimeout(autoSaveTimerRef.current);
@@ -360,6 +416,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       parsedSegments.length > 0 ? parsedSegments : createSampleSrtSegments(item.title);
     setSrtSegments(initialSegments);
     setEditingSegmentId(null);
+    setEditorCurrentTime(0);
+    setIsEditorPlaying(false);
 
     const syncedSlides = sortSlidesBySegmentRange(
       syncSlidesWithSrtSegments(
@@ -2251,11 +2309,41 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     </label>
                   </div>
                   <audio
+                    ref={editorAudioRef}
                     key={playableEditorAudioUrl}
                     controls
                     src={playableEditorAudioUrl}
+                    onTimeUpdate={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
+                    onSeeked={(e) => setEditorCurrentTime(e.currentTarget.currentTime)}
+                    onPlay={() => setIsEditorPlaying(true)}
+                    onPause={() => setIsEditorPlaying(false)}
+                    onEnded={() => setIsEditorPlaying(false)}
                     className="w-full h-9"
                   />
+                  {srtSegments.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-[#5C4938]">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                        <span>
+                          目前播放秒數：<strong className="font-mono">{formatDuration(editorCurrentTime)}</strong> ({editorCurrentTime.toFixed(1)}s)
+                        </span>
+                        {activePlayingSrtSegment && (
+                          <span className="px-2 py-0.5 rounded-full bg-[#2E5A44] text-white font-semibold">
+                            同步對應 SRT 區段 #{activePlayingSrtSegment.index}
+                          </span>
+                        )}
+                      </span>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none font-semibold text-[#2E5A44]">
+                        <input
+                          type="checkbox"
+                          checked={autoFollowSrt}
+                          onChange={(e) => setAutoFollowSrt(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded accent-[#2E5A44] cursor-pointer"
+                        />
+                        <span>播放時自動切換並捲動至對應 SRT 時間區段</span>
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2584,8 +2672,57 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   </button>
                 </div>
 
+                {/* 即時同步顯示目前語音播放秒數所對應的 SRT 時間區段看板 */}
+                {srtSegments.length > 0 && (
+                  <div
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      activePlayingSrtSegment
+                        ? 'bg-gradient-to-r from-[#2E5A44] to-[#1E3F2E] text-white border-[#2E5A44] shadow-md'
+                        : 'bg-[#FAF4E8] text-[#5C4938] border-[#DFCEB4]'
+                    }`}
+                  >
+                    {activePlayingSrtSegment ? (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-300 text-[#1E3F2E] font-bold text-[11px]">
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>{isEditorPlaying ? '播放同步中' : '目前定位區段'}</span>
+                            </span>
+                            <span className="font-mono font-bold text-amber-200">
+                              區段 #{activePlayingSrtSegment.index}
+                            </span>
+                            <span className="font-mono text-[11px] text-white/85">
+                              ({secondsToSrtTime(activePlayingSrtSegment.startSec)} {'-->'}{' '}
+                              {secondsToSrtTime(activePlayingSrtSegment.endSec)})
+                            </span>
+                          </div>
+                          <span className="font-mono text-xs bg-black/25 px-2.5 py-0.5 rounded-full text-amber-200">
+                            目前秒數：{formatDuration(editorCurrentTime)} ({editorCurrentTime.toFixed(1)}s)
+                          </span>
+                        </div>
+                        <p className="text-sm font-serif-tc font-bold text-[#FAF5EC] leading-relaxed">
+                          {activePlayingSrtSegment.text || '（本區段尚無文字內容）'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <Play className="w-3.5 h-3.5 text-[#2E5A44]" />
+                          <span>
+                            按下上方語音檔的「播放」按鈕（或點擊下方任一區段的「跳至此段播放」），此處將依播放秒數自動切換顯示對應的 SRT 時間區段！
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* SRT 每個時間段落的小編輯區塊清單 */}
-                <div className="space-y-3 max-h-[680px] overflow-y-auto pr-1">
+                <div
+                  ref={srtListContainerRef}
+                  className="space-y-3 max-h-[680px] overflow-y-auto pr-1 scroll-smooth"
+                >
                   {srtSegments.length === 0 ? (
                     <div className="p-8 text-center rounded-xl border-2 border-dashed border-[#D5C5AE] bg-white/60 space-y-3">
                       <p className="text-xs text-[#7A6855]">
@@ -2603,26 +2740,55 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   ) : (
                     srtSegments.map((seg, idx) => {
                       const isEditingThis = editingSegmentId === seg.id;
+                      const isPlayingThis = activePlayingSrtSegment?.id === seg.id;
 
                       return (
-                        <div key={seg.id} className="space-y-2">
+                        <div
+                          key={seg.id}
+                          ref={(el) => {
+                            srtSegmentRefs.current[seg.id] = el;
+                          }}
+                          className="space-y-2"
+                        >
                           <div
                             className={`rounded-xl border transition-all p-3.5 ${
                               isEditingThis
                                 ? 'bg-[#FFFDF7] border-2 border-[#2E5A44] shadow-md'
+                                : isPlayingThis
+                                ? 'bg-[#F1F8F4] border-2 border-[#2E5A44] shadow-md ring-2 ring-[#2E5A44]/20'
                                 : 'bg-white border-[#E2D5C1] hover:border-[#8B5A2B]'
                             }`}
                           >
                             {/* 區塊頂部：序號 + SRT 起迄時間 + 修改/刪除/在後方新增按鈕 */}
                             <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFE6D5]">
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="px-2.5 py-0.5 rounded-md bg-[#3A2518] text-[#FAF5EC] font-mono text-xs font-bold">
+                                <span
+                                  className={`px-2.5 py-0.5 rounded-md font-mono text-xs font-bold ${
+                                    isPlayingThis
+                                      ? 'bg-[#2E5A44] text-white'
+                                      : 'bg-[#3A2518] text-[#FAF5EC]'
+                                  }`}
+                                >
                                   #{seg.index}
                                 </span>
-                                <span className="px-2.5 py-0.5 rounded-md bg-[#2E5A44]/10 text-[#2E5A44] font-mono text-xs font-semibold border border-[#2E5A44]/25">
-                                  {secondsToSrtTime(seg.startSec)} {'-->'}{' '}
-                                  {secondsToSrtTime(seg.endSec)}
-                                </span>
+                                {isPlayingThis && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[11px] font-bold animate-pulse">
+                                    <Play className="w-2.5 h-2.5 fill-current" />
+                                    <span>目前播放區段</span>
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleSeekAndPlaySegment(seg)}
+                                  title="點擊直接跳至此時間區段開始播放語音"
+                                  className="px-2.5 py-0.5 rounded-md bg-[#2E5A44]/10 hover:bg-[#2E5A44] text-[#2E5A44] hover:text-white font-mono text-xs font-semibold border border-[#2E5A44]/25 transition cursor-pointer flex items-center gap-1"
+                                >
+                                  <Play className="w-3 h-3 fill-current" />
+                                  <span>
+                                    {secondsToSrtTime(seg.startSec)} {'-->'}{' '}
+                                    {secondsToSrtTime(seg.endSec)}
+                                  </span>
+                                </button>
                                 <span className="text-[11px] text-[#7A6855] font-mono">
                                   ({seg.startSec}s ~ {seg.endSec}s)
                                 </span>
