@@ -18,8 +18,14 @@ import {
   EyeOff,
   CheckCircle2,
   Settings,
+  Database,
+  HardDrive,
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+  Cloud,
 } from 'lucide-react';
-import { AppUser, LoginScreenConfig } from '../types';
+import { AppUser, CloudConfig, LoginScreenConfig } from '../types';
 import {
   loadSystemUsers,
   saveSystemUser,
@@ -27,27 +33,155 @@ import {
 } from '../services/authService';
 import {
   DEFAULT_LOGIN_SCREEN_CONFIG,
+  extractDriveFolderId,
+  getCloudConfig,
+  saveCloudConfig,
   saveLoginScreenConfig,
+  testGoogleDriveConnection,
 } from '../services/storageService';
 import { getCategoryIcon, ICON_OPTIONS } from './DashboardView';
 
 const PROTECTED_ADMIN_ID = 'user_admin';
 const PROTECTED_ADMIN_USERNAME = 'admin';
 
+const GAS_SCRIPT_CODE = `// 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟自動上傳代理腳本
+// 貼上後請先選取「testDrivePermission」按上方「執行」完成授權，再點右上角「部署 -> 新增部署作業 (網頁應用程式 / 所有人)」
+function testDrivePermission() {
+  const root = DriveApp.getRootFolder();
+  Logger.log('授權成功：' + root.getName());
+}
+
+function cleanFolderId(rawId) {
+  if (!rawId) return '';
+  const str = String(rawId).trim();
+  const match = str.match(/\\/folders\\/([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) return match[1];
+  return str.split('?')[0].split('/')[0].trim();
+}
+
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+
+    // 1. 支援跨裝置讀取雲端硬碟音訊串流
+    if (payload.action === 'getFile') {
+      const targetId = String(payload.fileId || '').trim();
+      const blob = DriveApp.getFileById(targetId).getBlob();
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'getFile',
+        fileId: targetId,
+        mimeType: blob.getContentType() || 'audio/mpeg',
+        base64Data: Utilities.base64Encode(blob.getBytes())
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 2. 支援同步刪除 Google 雲端硬碟中的語音檔與圖片
+    if (payload.action === 'delete') {
+      const rawIds = payload.fileIds || (payload.fileId ? [payload.fileId] : []);
+      const deletedIds = [];
+      const errors = [];
+      for (var i = 0; i < rawIds.length; i++) {
+        var fId = String(rawIds[i] || '').trim();
+        if (!fId || fId.indexOf('demo_') === 0 || fId.indexOf('gdrive_local_') === 0) continue;
+        try {
+          DriveApp.getFileById(fId).setTrashed(true);
+          deletedIds.push(fId);
+        } catch (delErr) {
+          errors.push({ fileId: fId, error: delErr.toString() });
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'delete',
+        deletedIds: deletedIds,
+        errors: errors
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 3. 支援同步修改 Google 雲端硬碟中的檔案名稱 (語音檔或圖片)
+    if (payload.action === 'rename') {
+      var renameId = String(payload.fileId || '').trim();
+      var newName = String(payload.newFileName || '').trim();
+      if (!renameId || !newName) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          action: 'rename',
+          error: '缺少 fileId 或 newFileName'
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+      var targetFile = DriveApp.getFileById(renameId);
+      var oldName = targetFile.getName();
+      var extMatch = oldName.match(/(\\.[a-zA-Z0-9]{2,5})$/);
+      if (extMatch && extMatch[1] && !/\\.[a-zA-Z0-9]{2,5}$/.test(newName)) {
+        newName = newName + extMatch[1];
+      }
+      targetFile.setName(newName);
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'rename',
+        fileId: renameId,
+        oldFileName: oldName,
+        fileName: newName
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const folderId = cleanFolderId(payload.folderId);
+    const fileName = payload.fileName || ('soundbook_' + new Date().getTime());
+    const mimeType = payload.mimeType || 'application/octet-stream';
+    const base64Data = payload.base64Data;
+
+    const folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+    const decoded = Utilities.base64Decode(base64Data);
+    const blob = Utilities.newBlob(decoded, mimeType, fileName);
+    const file = folder.createFile(blob);
+
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    const fileId = file.getId();
+    const isImage = mimeType.indexOf('image/') === 0;
+    const directUrl = isImage
+      ? 'https://lh3.googleusercontent.com/d/' + fileId
+      : 'https://docs.google.com/uc?export=download&id=' + fileId;
+
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      action: 'upload',
+      fileId: fileId,
+      viewUrl: file.getUrl(),
+      directUrl: directUrl
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+export type SystemSubTab = 'accounts' | 'loginScreen' | 'cloud';
+
 interface SystemManagementViewProps {
   currentUserId: string;
   loginConfig: LoginScreenConfig;
   onUpdateLoginConfig: (newConfig: LoginScreenConfig) => void;
+  onCloudSaved: () => void;
+  initialSubTab?: SystemSubTab;
 }
-
-type SystemSubTab = 'accounts' | 'loginScreen';
 
 export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   currentUserId,
   loginConfig,
   onUpdateLoginConfig,
+  onCloudSaved,
+  initialSubTab = 'accounts',
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<SystemSubTab>('accounts');
+  const [activeSubTab, setActiveSubTab] = useState<SystemSubTab>(initialSubTab);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
 
   // ==========================================
   // 第一分頁：帳號管理 狀態
@@ -273,11 +407,59 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
     setLoginScreenMsg(null);
   };
 
+  // ==========================================
+  // 第三分頁：雲端連線 狀態
+  // ==========================================
+  const [cloudConfig, setCloudConfig] = useState<CloudConfig>(() => getCloudConfig());
+  const [copiedGas, setCopiedGas] = useState(false);
+  const [isTestingDrive, setIsTestingDrive] = useState(false);
+  const [savingCloud, setSavingCloud] = useState(false);
+  const [cloudSaveMsg, setCloudSaveMsg] = useState<string | null>(null);
+  const [driveTestResult, setDriveTestResult] = useState<{
+    success: boolean;
+    message: string;
+    viewUrl?: string;
+  } | null>(null);
+
+  const handleCopyGas = () => {
+    navigator.clipboard.writeText(GAS_SCRIPT_CODE);
+    setCopiedGas(true);
+    setTimeout(() => setCopiedGas(false), 2500);
+  };
+
+  const handleTestDrive = async () => {
+    setIsTestingDrive(true);
+    setDriveTestResult(null);
+    const res = await testGoogleDriveConnection(
+      cloudConfig.googleDriveScriptUrl,
+      cloudConfig.googleDriveFolderId
+    );
+    setDriveTestResult(res);
+    setIsTestingDrive(false);
+  };
+
+  const handleSaveCloudConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingCloud(true);
+    setCloudSaveMsg(null);
+    try {
+      const prevKey = getCloudConfig().recaptchaEnterpriseSiteKey;
+      await saveCloudConfig(cloudConfig);
+      onCloudSaved();
+      setCloudSaveMsg('✅ 已成功儲存雲端連線設定並同步至所有裝置！');
+      if (prevKey !== cloudConfig.recaptchaEnterpriseSiteKey) {
+        window.location.reload();
+      }
+    } finally {
+      setSavingCloud(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       {/* 頁面頂部橫幅標題 */}
       <div className="rounded-2xl bg-gradient-to-r from-[#261A13] via-[#3A271C] to-[#4E3526] text-[#F6E6D2] p-6 shadow-lg border border-[#5C402D]">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center shadow-md border border-[#E6C594]/40 shrink-0">
               <Settings className="w-6 h-6 text-[#1E140E]" />
@@ -291,13 +473,13 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                 系統管理
               </h2>
               <p className="text-xs sm:text-sm text-[#C8B29B] mt-0.5">
-                整合「帳號管理」與「系統登入畫面維護」功能，所有變更皆即時同步至 Firebase 雲端資料庫
+                整合「帳號管理」、「系統登入畫面維護」與「雲端連線」功能，所有變更皆即時同步至雲端資料庫
               </p>
             </div>
           </div>
 
-          {/* 二個分頁 (Tab) 切換按鈕列 */}
-          <div className="flex items-center gap-2 bg-[#1A110C]/80 p-1.5 rounded-xl border border-[#4E3629] self-start md:self-center">
+          {/* 三個分頁 (Tab) 切換按鈕列 */}
+          <div className="flex flex-wrap items-center gap-2 bg-[#1A110C]/80 p-1.5 rounded-xl border border-[#4E3629] self-start lg:self-center">
             <button
               type="button"
               onClick={() => setActiveSubTab('accounts')}
@@ -331,6 +513,19 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
             >
               <LayoutTemplate className="w-4 h-4" />
               <span>系統登入畫面維護</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('cloud')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                activeSubTab === 'cloud'
+                  ? 'bg-[#8B5A2B] text-[#FFFDF9] shadow-md border border-[#D4A373]/40'
+                  : 'text-[#C8B29B] hover:text-white hover:bg-[#3A271C]'
+              }`}
+            >
+              <Cloud className="w-4 h-4" />
+              <span>雲端連線</span>
             </button>
           </div>
         </div>
@@ -674,38 +869,44 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                 系統登入畫面維護
               </h3>
               <p className="text-xs text-[#6E5D4F]">
-                自訂登入畫面最上方的館藏代表圖示（提供 50 款圖示下拉選取）與下方主標題文字
+                自訂登入畫面最上方的館藏代表圖示（提供 {ICON_OPTIONS.length} 款圖示下拉選取）與下方主標題文字
               </p>
             </div>
           </div>
 
           <form onSubmit={handleSaveLoginScreen} className="p-6 space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* 左側：即時預覽區塊 */}
-              <div className="lg:col-span-5 rounded-2xl bg-gradient-to-br from-[#1E140E] via-[#2B1D14] to-[#170F0A] p-6 text-center border border-[#5C3A1B] shadow-inner">
-                <div className="text-[11px] font-semibold tracking-wider text-[#D4A373] uppercase mb-3">
-                  登入畫面頂部即時預覽
+              {/* 左側：登入畫面即時預覽區塊（與首頁登入畫面 LoginView 完全一致的底色與羊皮紙卡片樣式） */}
+              <div className="lg:col-span-5 relative overflow-hidden rounded-2xl bg-[#F6F1E7] p-6 border border-[#D8C8B0] shadow-inner">
+                {/* 與首頁相同的典藏雅緻背景紋理 */}
+                <div className="absolute inset-0 opacity-25 pointer-events-none bg-[radial-gradient(#8B5A2B_1px,transparent_1px)] [background-size:24px_24px]" />
+                <div className="relative z-10 text-center">
+                  <div className="inline-block px-3 py-0.5 rounded-full bg-[#8B5A2B]/15 text-[#5C3A1B] text-[11px] font-bold tracking-wider mb-3">
+                    登入畫面即時預覽（與首頁底色一致）
+                  </div>
+                  <div className="bg-[#FFFDF9] border border-[#D8C8B0] rounded-3xl shadow-xl p-6 ring-1 ring-[#8B5A2B]/10">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8B5A2B] to-[#5C3A1B] text-[#FAF5EC] shadow-lg shadow-[#5C3A1B]/30 mb-4 ring-4 ring-[#D4A373]/30">
+                      {getCategoryIcon(selectedIcon, 'w-8 h-8 stroke-[2.2]')}
+                    </div>
+                    <div className="text-2xl font-serif-tc font-bold text-[#2C221E] tracking-wide break-words">
+                      {titleText.trim() || '（請輸入標題文字）'}
+                    </div>
+                    <p className="text-xs text-[#8B5A2B] mt-1.5 font-mono tracking-wider font-semibold">
+                      SOUNDBOOK PAVILION • 安全存取驗證
+                    </p>
+                  </div>
                 </div>
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center shadow-lg border border-[#E6C594]/40 mx-auto mb-3">
-                  {getCategoryIcon(selectedIcon, 'w-8 h-8 text-[#1E140E]')}
-                </div>
-                <div className="text-xl sm:text-2xl font-bold font-serif-tc text-[#FAF5EC] tracking-wider break-words">
-                  {titleText.trim() || '（請輸入標題文字）'}
-                </div>
-                <p className="text-xs text-[#C8B29B] mt-1">
-                  DIGITAL SOUNDBOOK PAVILION
-                </p>
               </div>
 
               {/* 右側：表單設定區 */}
               <div className="lg:col-span-7 space-y-5">
-                {/* a. 下拉選取登入畫面最上方的圖示（共 50 個選項） */}
+                {/* a. 下拉選取登入畫面最上方的圖示（共 100 個選項） */}
                 <div>
                   <label className="block text-xs sm:text-sm font-bold text-[#4A3322] mb-1.5">
                     1. 登入畫面最上方的圖示（下拉選單共 {ICON_OPTIONS.length} 款圖示）
                   </label>
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex items-center justify-center text-[#8B5A2B] shrink-0 shadow-2xs">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#8B5A2B] to-[#5C3A1B] text-[#FAF5EC] border border-[#D4A373]/40 flex items-center justify-center shrink-0 shadow-xs">
                       {getCategoryIcon(selectedIcon, 'w-6 h-6')}
                     </div>
                     <select
@@ -724,7 +925,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     </select>
                   </div>
                   <p className="text-[11px] text-[#7A6855] mt-1">
-                    從 50 款精選典藏圖示中選擇最符合館藏風格的標誌，選取後左側預覽會立即更新。
+                    從 {ICON_OPTIONS.length} 款精選典藏圖示中選擇最符合館藏風格的標誌，選取後左側預覽會立即更新。
                   </p>
                 </div>
 
@@ -798,6 +999,314 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                   </button>
                 </div>
               </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 第三分頁：雲端連線 */}
+      {/* ========================================================= */}
+      {activeSubTab === 'cloud' && (
+        <div className="bg-[#FFFDF9] border border-[#DECGB4] rounded-2xl shadow-md overflow-hidden">
+          {/* 分頁標頭 */}
+          <div className="px-6 py-4 bg-[#FAF4E8] border-b border-[#E5D9C5] flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[#8B5A2B]/15 text-[#8B5A2B] flex items-center justify-center border border-[#8B5A2B]/30">
+              <Cloud className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-bold font-serif-tc text-[#2C221E]">
+                雲端資料庫與 Google 雲端硬碟連線設定
+              </h3>
+              <p className="text-xs text-[#6E5D4F]">
+                預設專案名稱：GitHub <code>soundbook-library</code> · Firebase <code>soundbook-library-db</code>
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveCloudConfig} className="p-6 space-y-6">
+            {cloudSaveMsg && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs sm:text-sm font-medium flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{cloudSaveMsg}</span>
+              </div>
+            )}
+
+            {/* 1. Google 雲端硬碟設定 */}
+            <div className="p-5 rounded-xl bg-[#F4ECE0] border border-[#E2D5C1] space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 text-[#2B4C7E] font-bold text-sm">
+                  <HardDrive className="w-4 h-4" />
+                  <span>1. Google 雲端硬碟上傳儲存空間設定 (Google Drive)</span>
+                </div>
+                <a
+                  href="https://script.google.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[#2B4C7E] hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <span>前往 Google Apps Script</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="text-xs text-[#5C4938] space-y-1 bg-white/80 p-3.5 rounded-lg border border-[#E2D5C1]">
+                <p className="font-bold text-[#2C221E]">
+                  為什麼檔案沒有進到雲端硬碟？請確認以下 3 步驟已完成：
+                </p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>
+                    點擊下方「複製 GAS 腳本」貼到 Google Apps Script 後，
+                    <strong>先按上方「執行 (testDrivePermission)」完成 Google 雲端硬碟權限核准</strong>
+                    （點「進階」➔「前往專案」➔「允許」）。
+                  </li>
+                  <li>
+                    點擊右上角「部署 ➔ 新增部署作業」，類型選「網頁應用程式」，
+                    <strong>「誰可以存取」務必選「所有人 (Anyone)」</strong>。
+                  </li>
+                  <li>
+                    將部署產生的「網頁應用程式網址 (<code>https://script.google.com/macros/s/.../exec</code>)」與「雲端硬碟資料夾網址或 ID」貼在下方欄位，並點擊
+                    <strong>「測試寫入雲端硬碟」</strong>確認！
+                  </li>
+                </ol>
+              </div>
+
+              <div className="flex items-center justify-between bg-[#2C221E] text-[#F3D5B5] px-3.5 py-2.5 rounded-lg text-xs">
+                <span className="font-mono truncate">google-drive-uploader.gs (含授權檢測函式)</span>
+                <button
+                  type="button"
+                  onClick={handleCopyGas}
+                  className="px-3 py-1 rounded bg-[#8B5A2B] hover:bg-[#A46B35] text-white flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {copiedGas ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedGas ? '已複製腳本！' : '複製 GAS 腳本'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    Google Apps Script 部署網址 (Web App URL) *
+                  </label>
+                  <input
+                    type="url"
+                    value={cloudConfig.googleDriveScriptUrl}
+                    onChange={(e) =>
+                      setCloudConfig({ ...cloudConfig, googleDriveScriptUrl: e.target.value })
+                    }
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    Google 雲端硬碟資料夾 ID (可直接貼上資料夾網址)
+                  </label>
+                  <input
+                    type="text"
+                    value={cloudConfig.googleDriveFolderId}
+                    onChange={(e) =>
+                      setCloudConfig({
+                        ...cloudConfig,
+                        googleDriveFolderId: extractDriveFolderId(e.target.value),
+                      })
+                    }
+                    placeholder="貼上資料夾網址或 ID 皆可自動擷取"
+                    className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+              </div>
+
+              {/* 測試連線按鈕與結果顯示 */}
+              <div className="pt-1 space-y-2">
+                <button
+                  type="button"
+                  disabled={isTestingDrive}
+                  onClick={handleTestDrive}
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#2B4C7E] hover:bg-[#1E385F] disabled:opacity-60 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                >
+                  {isTestingDrive ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>正在測試寫入您的 Google 雲端硬碟...</span>
+                    </>
+                  ) : (
+                    <>
+                      <HardDrive className="w-4 h-4" />
+                      <span>點此測試寫入 Google 雲端硬碟（會在您的資料夾建立測試檔）</span>
+                    </>
+                  )}
+                </button>
+
+                {driveTestResult && (
+                  <div
+                    className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                      driveTestResult.success
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        : 'bg-red-50 border-red-300 text-red-900'
+                    }`}
+                  >
+                    {driveTestResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-1">
+                      <p className="font-medium leading-relaxed">{driveTestResult.message}</p>
+                      {driveTestResult.viewUrl && /^https?:\/\//i.test(driveTestResult.viewUrl) && (
+                        <a
+                          href={driveTestResult.viewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-emerald-700 font-bold underline"
+                        >
+                          <span>點此直接打開雲端硬碟查看剛建立的測試檔案</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Firebase Firestore 設定 */}
+            <div className="p-5 rounded-xl bg-[#FAF4E8] border border-[#E2D5C1] space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 text-[#8B5A2B] font-bold text-sm">
+                  <Database className="w-4 h-4" />
+                  <span>2. Firebase Firestore 資料庫設定 (已自動綁定 soundbook-library-db)</span>
+                </div>
+                <a
+                  href="https://console.firebase.google.com/project/soundbook-library-db/overview"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[#8B5A2B] hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <span>開啟 Firebase Console</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    Firebase Project ID
+                  </label>
+                  <input
+                    type="text"
+                    value={cloudConfig.firebaseProjectId}
+                    onChange={(e) =>
+                      setCloudConfig({ ...cloudConfig, firebaseProjectId: e.target.value })
+                    }
+                    placeholder="soundbook-library-db"
+                    className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
+                    Firebase API Key
+                  </label>
+                  <input
+                    type="text"
+                    value={cloudConfig.firebaseApiKey}
+                    onChange={(e) =>
+                      setCloudConfig({ ...cloudConfig, firebaseApiKey: e.target.value })
+                    }
+                    placeholder="AIzaSy..."
+                    className="w-full px-3.5 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs font-mono focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Firebase App Check (reCAPTCHA Enterprise) 防護設定 */}
+            <div className="p-5 rounded-xl bg-[#F2F7F4] border border-[#CDE3D5] space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 text-[#1B5E20] font-bold text-sm">
+                  <ShieldCheck className="w-4 h-4 text-[#2E7D32]" />
+                  <span>3. Firebase App Check (reCAPTCHA Enterprise) 雲端防護</span>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${
+                      cloudConfig.recaptchaEnterpriseSiteKey
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}
+                  >
+                    {cloudConfig.recaptchaEnterpriseSiteKey
+                      ? '🛡️ 已設定金鑰 (安全保護中)'
+                      : '尚未設定金鑰'}
+                  </span>
+                </div>
+                <a
+                  href="https://console.firebase.google.com/project/soundbook-library-db/appcheck"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[#2E7D32] hover:underline flex items-center gap-1 font-semibold"
+                >
+                  <span>開啟 App Check 控制台</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="text-xs text-[#35523A] space-y-1.5 bg-white/80 p-3.5 rounded-lg border border-[#CDE3D5]">
+                <p className="font-bold text-[#1B5E20]">
+                  🛡️ 如何啟用 reCAPTCHA Enterprise 雲端防護？
+                </p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>
+                    前往 Firebase 控制台 ➔ <strong>App Check</strong> ➔ 在 Web 應用程式 (
+                    <code>soundbook-library-db</code>) 點擊 <strong>「註冊 (Register)」</strong>。
+                  </li>
+                  <li>
+                    提供者請選擇 <strong>reCAPTCHA Enterprise</strong>，依提示建立或綁定 Google Cloud
+                    金鑰（授權網域請包含 <code>lighminge.github.io</code>、
+                    <code>soundbook-library-db.web.app</code> 與 <code>localhost</code>）。
+                  </li>
+                  <li>
+                    將產生的 <strong>網站金鑰 (Site Key)</strong>{' '}
+                    貼在下方欄位後點擊儲存，聲書閣將自動為每次 Firestore
+                    讀寫附加安全權杖，徹底阻絕惡意爬蟲與未授權寫入。
+                  </li>
+                </ol>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#1B5E20] mb-1">
+                  reCAPTCHA Enterprise 網站金鑰 (Site Key)
+                </label>
+                <input
+                  type="text"
+                  value={cloudConfig.recaptchaEnterpriseSiteKey || ''}
+                  onChange={(e) =>
+                    setCloudConfig({
+                      ...cloudConfig,
+                      recaptchaEnterpriseSiteKey: e.target.value.trim(),
+                    })
+                  }
+                  placeholder="例如：6Lxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  className="w-full px-3.5 py-2 rounded-lg border border-[#BBD9C5] bg-white text-xs font-mono focus:border-[#2E7D32] focus:ring-1 focus:ring-[#2E7D32] outline-none"
+                />
+                <p className="text-[11px] text-[#6A8270] mt-1">
+                  💡 說明：若未填寫此金鑰，系統將以原先設定的 Firestore
+                  安全性規則正常運作；填入後將立即啟用 App Check 雙層驗證防護。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#EFE6D5]">
+              <button
+                type="submit"
+                disabled={savingCloud}
+                className="px-5 py-2.5 rounded-xl bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-md cursor-pointer disabled:opacity-60"
+              >
+                {savingCloud ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                <span>儲存並同步至所有裝置</span>
+              </button>
             </div>
           </form>
         </div>

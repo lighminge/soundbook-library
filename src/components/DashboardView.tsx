@@ -50,10 +50,68 @@ import {
   Mountain,
   Flower2,
   Leaf,
+  Library,
+  BookMarked,
+  NotebookPen,
+  FileText,
+  FileAudio,
+  Disc,
+  Volume2,
+  Podcast,
+  Theater,
+  Clapperboard,
+  Brush,
+  PenTool,
+  Wand2,
+  Lightbulb,
+  Brain,
+  Atom,
+  Microscope,
+  Telescope,
+  Rocket,
+  Orbit,
+  Sunrise,
+  Sunset,
+  Rainbow,
+  Snowflake,
+  Wind,
+  Waves,
+  Droplets,
+  Sprout,
+  TreePine,
+  Bird,
+  Fish,
+  Cat,
+  Dog,
+  Rabbit,
+  Squirrel,
+  Turtle,
+  Bug,
+  Shell,
+  Castle,
+  Church,
+  Building2,
+  Home,
+  Tent,
+  Compass as CompassIcon,
+  Hourglass,
+  Watch,
+  Calendar,
+  Mail,
+  Send,
+  MessageCircle,
+  Smile,
+  ThumbsUp,
+  Handshake,
+  Users,
+  Sparkle,
+  Medal,
+  Target,
+  Puzzle,
+  Gamepad2,
   Play,
   Edit3,
   Plus,
-  Library,
   Clock,
   HardDrive,
   Database,
@@ -122,6 +180,56 @@ export const THEME_COLOR_OPTIONS = [
   { label: '48. 鉛錫典藏灰 (#4A4E69)', value: '#4A4E69' },
   { label: '49. 玄武岩深灰 (#2B2D42)', value: '#2B2D42' },
   { label: '50. 曜石黑金棕 (#261A13)', value: '#261A13' },
+  { label: '51. 紫禁城宮牆紅 (#8C1D40)', value: '#8C1D40' },
+  { label: '52. 敦煌飛天赭 (#A64B2A)', value: '#A64B2A' },
+  { label: '53. 龍泉青瓷釉 (#3B7A57)', value: '#3B7A57' },
+  { label: '54. 景泰藍寶色 (#0F4C81)', value: '#0F4C81' },
+  { label: '55. 宣紙古墨灰 (#36454F)', value: '#36454F' },
+  { label: '56. 沉香木琥珀 (#7B4B27)', value: '#7B4B27' },
+  { label: '57. 楠木金絲棕 (#8D5B4C)', value: '#8D5B4C' },
+  { label: '58. 碧玉翡翠綠 (#1B4D3E)', value: '#1B4D3E' },
+  { label: '59. 琉璃瓦琉金 (#B37D14)', value: '#B37D14' },
+  { label: '60. 藏青唐卡藍 (#192A56)', value: '#192A56' },
+  { label: '61. 胭脂海棠紅 (#9E364A)', value: '#9E364A' },
+  { label: '62. 蘇木古韻紫 (#6C3483)', value: '#6C3483' },
+  { label: '63. 竹林幽篁綠 (#2D6A4F)', value: '#2D6A4F' },
+  { label: '64. 遠山黛青色 (#34495E)', value: '#34495E' },
+  { label: '65. 秋菊流金銅 (#B7791F)', value: '#B7791F' },
+  { label: '66. 落日餘暉橘 (#C05621)', value: '#C05621' },
+  { label: '67. 紅檜原木褐 (#744210)', value: '#744210' },
+  { label: '68. 錫蘭紅茶棕 (#8C3820)', value: '#8C3820' },
+  { label: '69. 大吉嶺茶褐 (#6E2C00)', value: '#6E2C00' },
+  { label: '70. 抹茶宇治綠 (#3F6212)', value: '#3F6212' },
+  { label: '71. 焙茶溫潤棕 (#5C4033)', value: '#5C4033' },
+  { label: '72. 伯爵佛手柑 (#4A5568)', value: '#4A5568' },
+  { label: '73. 薰衣草莊園 (#553C9A)', value: '#553C9A' },
+  { label: '74. 波爾多醇酒 (#581845)', value: '#581845' },
+  { label: '75. 威尼斯暗紅 (#781D1D)', value: '#781D1D' },
+  { label: '76. 佛羅倫斯棕 (#6D3B24)', value: '#6D3B24' },
+  { label: '77. 劍橋古院綠 (#1A4731)', value: '#1A4731' },
+  { label: '78. 溫莎皇室藍 (#1E3A8A)', value: '#1E3A8A' },
+  { label: '79. 蘇格蘭格紋綠 (#14532D)', value: '#14532D' },
+  { label: '80. 愛爾蘭翡翠 (#065F46)', value: '#065F46' },
+  { label: '81. 北歐峽灣藍 (#0C4A6E)', value: '#0C4A6E' },
+  { label: '82. 阿爾卑斯松 (#115E59)', value: '#115E59' },
+  { label: '83. 多瑙河深藍 (#1E40AF)', value: '#1E40AF' },
+  { label: '84. 萊茵河古堡灰 (#374151)', value: '#374151' },
+  { label: '85. 維也納金色 (#A16207)', value: '#A16207' },
+  { label: '86. 布拉格紅瓦 (#991B1B)', value: '#991B1B' },
+  { label: '87. 雅典衛城褐 (#78350F)', value: '#78350F' },
+  { label: '88. 羅馬競技石 (#57534E)', value: '#57534E' },
+  { label: '89. 撒哈拉沙金 (#92400E)', value: '#92400E' },
+  { label: '90. 尼羅河藍綠 (#155E75)', value: '#155E75' },
+  { label: '91. 亞馬遜雨林 (#166534)', value: '#166534' },
+  { label: '92. 安地斯山岩 (#44403C)', value: '#44403C' },
+  { label: '93. 京都古剎紅 (#7F1D1D)', value: '#7F1D1D' },
+  { label: '94. 奈良古木棕 (#533A26)', value: '#533A26' },
+  { label: '95. 富士山紺青 (#1E293B)', value: '#1E293B' },
+  { label: '96. 櫻吹雪深茜 (#831843)', value: '#831843' },
+  { label: '97. 紫藤花古紫 (#4C1D95)', value: '#4C1D95' },
+  { label: '98. 銀杏秋葉金 (#854D0E)', value: '#854D0E' },
+  { label: '99. 玉山冷杉青 (#0F766E)', value: '#0F766E' },
+  { label: '100. 阿里山神木棕 (#451A03)', value: '#451A03' },
 ];
 
 export const ICON_OPTIONS = [
@@ -151,7 +259,7 @@ export const ICON_OPTIONS = [
   { label: '24. 璀璨寶石 (Gem)', value: 'Gem' },
   { label: '25. 熱情火炬 (Flame)', value: 'Flame' },
   { label: '26. 雲端漫遊 (Cloud)', value: 'Cloud' },
-  { label: '27. 雨天故事 (Umbrella)', value: 'Umbrella' },
+  { label: '27. 晴雨故事 (Umbrella)', value: 'Umbrella' },
   { label: '28. 航海船錨 (Anchor)', value: 'Anchor' },
   { label: '29. 遠洋帆船 (Ship)', value: 'Ship' },
   { label: '30. 環球飛行 (Plane)', value: 'Plane' },
@@ -175,6 +283,56 @@ export const ICON_OPTIONS = [
   { label: '48. 壯麗山岳 (Mountain)', value: 'Mountain' },
   { label: '49. 花園綻放 (Flower2)', value: 'Flower2' },
   { label: '50. 綠葉生態 (Leaf)', value: 'Leaf' },
+  { label: '51. 圖書總館 (Library)', value: 'Library' },
+  { label: '52. 珍藏書冊 (BookMarked)', value: 'BookMarked' },
+  { label: '53. 讀書筆記 (NotebookPen)', value: 'NotebookPen' },
+  { label: '54. 文獻篇章 (FileText)', value: 'FileText' },
+  { label: '55. 有聲檔案 (FileAudio)', value: 'FileAudio' },
+  { label: '56. 黑膠唱片 (Disc)', value: 'Disc' },
+  { label: '57. 聲波放送 (Volume2)', value: 'Volume2' },
+  { label: '58. 播客節目 (Podcast)', value: 'Podcast' },
+  { label: '59. 戲劇舞台 (Theater)', value: 'Theater' },
+  { label: '60. 電影場記 (Clapperboard)', value: 'Clapperboard' },
+  { label: '61. 水彩畫筆 (Brush)', value: 'Brush' },
+  { label: '62. 鋼筆創作 (PenTool)', value: 'PenTool' },
+  { label: '63. 奇幻魔法 (Wand2)', value: 'Wand2' },
+  { label: '64. 創意靈感 (Lightbulb)', value: 'Lightbulb' },
+  { label: '65. 思維哲學 (Brain)', value: 'Brain' },
+  { label: '66. 科普原子 (Atom)', value: 'Atom' },
+  { label: '67. 科學顯微 (Microscope)', value: 'Microscope' },
+  { label: '68. 天文觀測 (Telescope)', value: 'Telescope' },
+  { label: '69. 太空火箭 (Rocket)', value: 'Rocket' },
+  { label: '70. 星球軌道 (Orbit)', value: 'Orbit' },
+  { label: '71. 破曉日出 (Sunrise)', value: 'Sunrise' },
+  { label: '72. 黃昏夕陽 (Sunset)', value: 'Sunset' },
+  { label: '73. 希望彩虹 (Rainbow)', value: 'Rainbow' },
+  { label: '74. 冬日雪花 (Snowflake)', value: 'Snowflake' },
+  { label: '75. 清風徐來 (Wind)', value: 'Wind' },
+  { label: '76. 海洋潮汐 (Waves)', value: 'Waves' },
+  { label: '77. 甘露水滴 (Droplets)', value: 'Droplets' },
+  { label: '78. 春芽新生 (Sprout)', value: 'Sprout' },
+  { label: '79. 蒼翠松柏 (TreePine)', value: 'TreePine' },
+  { label: '80. 飛鳥鳴啼 (Bird)', value: 'Bird' },
+  { label: '81. 悠游魚群 (Fish)', value: 'Fish' },
+  { label: '82. 溫馴貓咪 (Cat)', value: 'Cat' },
+  { label: '83. 忠實小狗 (Dog)', value: 'Dog' },
+  { label: '84. 童話白兔 (Rabbit)', value: 'Rabbit' },
+  { label: '85. 森林松鼠 (Squirrel)', value: 'Squirrel' },
+  { label: '86. 長壽靈龜 (Turtle)', value: 'Turtle' },
+  { label: '87. 昆蟲百科 (Bug)', value: 'Bug' },
+  { label: '88. 海洋貝殼 (Shell)', value: 'Shell' },
+  { label: '89. 童話城堡 (Castle)', value: 'Castle' },
+  { label: '90. 古典禮堂 (Church)', value: 'Church' },
+  { label: '91. 現代建築 (Building2)', value: 'Building2' },
+  { label: '92. 溫馨家園 (Home)', value: 'Home' },
+  { label: '93. 露營帳篷 (Tent)', value: 'Tent' },
+  { label: '94. 榮耀勳章 (Medal)', value: 'Medal' },
+  { label: '95. 時光沙漏 (Hourglass)', value: 'Hourglass' },
+  { label: '96. 經典懷錶 (Watch)', value: 'Watch' },
+  { label: '97. 歲月日曆 (Calendar)', value: 'Calendar' },
+  { label: '98. 書信傳情 (Mail)', value: 'Mail' },
+  { label: '99. 益智拼圖 (Puzzle)', value: 'Puzzle' },
+  { label: '100. 互動樂園 (Gamepad2)', value: 'Gamepad2' },
 ];
 
 interface DashboardViewProps {
@@ -292,6 +450,106 @@ export function getCategoryIcon(iconName: string, className = 'w-5 h-5') {
       return <Flower2 className={className} />;
     case 'Leaf':
       return <Leaf className={className} />;
+    case 'Library':
+      return <Library className={className} />;
+    case 'BookMarked':
+      return <BookMarked className={className} />;
+    case 'NotebookPen':
+      return <NotebookPen className={className} />;
+    case 'FileText':
+      return <FileText className={className} />;
+    case 'FileAudio':
+      return <FileAudio className={className} />;
+    case 'Disc':
+      return <Disc className={className} />;
+    case 'Volume2':
+      return <Volume2 className={className} />;
+    case 'Podcast':
+      return <Podcast className={className} />;
+    case 'Theater':
+      return <Theater className={className} />;
+    case 'Clapperboard':
+      return <Clapperboard className={className} />;
+    case 'Brush':
+      return <Brush className={className} />;
+    case 'PenTool':
+      return <PenTool className={className} />;
+    case 'Wand2':
+      return <Wand2 className={className} />;
+    case 'Lightbulb':
+      return <Lightbulb className={className} />;
+    case 'Brain':
+      return <Brain className={className} />;
+    case 'Atom':
+      return <Atom className={className} />;
+    case 'Microscope':
+      return <Microscope className={className} />;
+    case 'Telescope':
+      return <Telescope className={className} />;
+    case 'Rocket':
+      return <Rocket className={className} />;
+    case 'Orbit':
+      return <Orbit className={className} />;
+    case 'Sunrise':
+      return <Sunrise className={className} />;
+    case 'Sunset':
+      return <Sunset className={className} />;
+    case 'Rainbow':
+      return <Rainbow className={className} />;
+    case 'Snowflake':
+      return <Snowflake className={className} />;
+    case 'Wind':
+      return <Wind className={className} />;
+    case 'Waves':
+      return <Waves className={className} />;
+    case 'Droplets':
+      return <Droplets className={className} />;
+    case 'Sprout':
+      return <Sprout className={className} />;
+    case 'TreePine':
+      return <TreePine className={className} />;
+    case 'Bird':
+      return <Bird className={className} />;
+    case 'Fish':
+      return <Fish className={className} />;
+    case 'Cat':
+      return <Cat className={className} />;
+    case 'Dog':
+      return <Dog className={className} />;
+    case 'Rabbit':
+      return <Rabbit className={className} />;
+    case 'Squirrel':
+      return <Squirrel className={className} />;
+    case 'Turtle':
+      return <Turtle className={className} />;
+    case 'Bug':
+      return <Bug className={className} />;
+    case 'Shell':
+      return <Shell className={className} />;
+    case 'Castle':
+      return <Castle className={className} />;
+    case 'Church':
+      return <Church className={className} />;
+    case 'Building2':
+      return <Building2 className={className} />;
+    case 'Home':
+      return <Home className={className} />;
+    case 'Tent':
+      return <Tent className={className} />;
+    case 'Medal':
+      return <Medal className={className} />;
+    case 'Hourglass':
+      return <Hourglass className={className} />;
+    case 'Watch':
+      return <Watch className={className} />;
+    case 'Calendar':
+      return <Calendar className={className} />;
+    case 'Mail':
+      return <Mail className={className} />;
+    case 'Puzzle':
+      return <Puzzle className={className} />;
+    case 'Gamepad2':
+      return <Gamepad2 className={className} />;
     case 'BookOpen':
     default:
       return <BookOpen className={className} />;
@@ -1401,7 +1659,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    代表色系 (共 20 色)
+                    代表色系 (共 {THEME_COLOR_OPTIONS.length} 色)
                   </label>
                   <select
                     value={newCatColor}
@@ -1418,7 +1676,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">
-                    館廳圖示 (共 20 款)
+                    館廳圖示 (共 {ICON_OPTIONS.length} 款)
                   </label>
                   <select
                     value={newCatIcon}

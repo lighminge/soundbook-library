@@ -29,7 +29,7 @@ import {
 } from './services/storageService';
 import { getCurrentSessionUser, logout, GUEST_USER } from './services/authService';
 import { LoginView } from './components/LoginView';
-import { SystemManagementView } from './components/SystemManagementView';
+import { SystemManagementView, SystemSubTab } from './components/SystemManagementView';
 import { DashboardView } from './components/DashboardView';
 import { ScreeningRoomView } from './components/ScreeningRoomView';
 import { AudioLibraryView } from './components/AudioLibraryView';
@@ -45,6 +45,7 @@ export function App() {
   );
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [systemInitialSubTab, setSystemInitialSubTab] = useState<SystemSubTab>('accounts');
   const [categories, setCategories] = useState<Category[]>([]);
   const [audioItems, setAudioItems] = useState<AudioItem[]>([]);
   const [dataSource, setDataSource] = useState<'firebase' | 'local'>('local');
@@ -304,13 +305,13 @@ export function App() {
     <div className="min-h-screen flex flex-col bg-[#F6F1E7] text-[#2C221E]">
       {/* 頂部圖書館導覽列 */}
       <header className="sticky top-0 z-40 w-full bg-[#261A13] text-[#FAF5EC] border-b border-[#4A3427] shadow-md">
-        <div className="w-full px-3 sm:px-5 lg:px-6 min-h-16 py-2 flex flex-wrap items-center justify-start gap-2 sm:gap-3">
-          {/* 左側品牌標誌 */}
+        <div className="w-full px-3 sm:px-5 lg:px-6 min-h-18 py-2.5 flex flex-wrap items-center justify-start gap-2.5 sm:gap-3.5">
+          {/* 左側品牌標誌（與所有上方功能按鈕相同文字大小） */}
           <div
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-2 cursor-pointer shrink-0 mr-1"
+            className="flex items-center gap-2.5 cursor-pointer shrink-0 mr-1"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center text-[#261A13] shadow-inner shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#D4A373] to-[#8B5A2B] flex items-center justify-center text-[#261A13] shadow-inner shrink-0">
               <Library className="w-5 h-5 stroke-[2.2]" />
             </div>
             <span className="font-bold font-serif-tc text-base sm:text-lg tracking-wider text-[#FAF5EC] whitespace-nowrap">
@@ -318,29 +319,29 @@ export function App() {
             </span>
           </div>
 
-          {/* 主功能切換頁籤 (桌面版，靠左對齊) */}
-          <nav className="hidden lg:flex flex-wrap items-center gap-1 bg-[#1B120D] p-1 rounded-xl border border-[#3E2C22]">
+          {/* 主功能切換頁籤 (桌面版，靠左對齊，加大文字尺寸) */}
+          <nav className="hidden lg:flex flex-wrap items-center gap-1.5 bg-[#1B120D] p-1.5 rounded-xl border border-[#3E2C22]">
             <button
               onClick={() => setActiveTab('dashboard')}
-              className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3.5 py-2 rounded-lg font-bold font-serif-tc text-base sm:text-lg tracking-wide flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'dashboard'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <LayoutDashboard className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
+              <LayoutDashboard className="w-5 h-5 shrink-0 stroke-[2.2]" />
               <span>館藏總覽</span>
             </button>
 
             <button
               onClick={() => setActiveTab('screening')}
-              className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3.5 py-2 rounded-lg font-bold font-serif-tc text-base sm:text-lg tracking-wide flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'screening'
                   ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                   : 'text-[#E6D7C3] hover:bg-white/10'
               }`}
             >
-              <Radio className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
+              <Radio className="w-5 h-5 shrink-0 stroke-[2.2]" />
               <span>放映室</span>
             </button>
 
@@ -351,66 +352,49 @@ export function App() {
                     setEditingAudioItem(null);
                     setActiveTab('library');
                   }}
-                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 py-2 rounded-lg font-bold font-serif-tc text-base sm:text-lg tracking-wide flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'library'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <FolderKanban className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
+                  <FolderKanban className="w-5 h-5 shrink-0 stroke-[2.2]" />
                   <span>語音檔案庫</span>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('catalog')}
-                  className={`px-2.5 xl:px-3 py-1.5 rounded-lg font-bold font-serif-tc text-sm xl:text-base tracking-wide flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 py-2 rounded-lg font-bold font-serif-tc text-base sm:text-lg tracking-wide flex items-center gap-2 transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'catalog'
                       ? 'bg-[#D4A373] text-[#261A13] shadow-sm'
                       : 'text-[#E6D7C3] hover:bg-white/10'
                   }`}
                 >
-                  <Tags className="w-4 h-4 xl:w-4.5 xl:h-4.5 shrink-0 stroke-[2.2]" />
+                  <Tags className="w-5 h-5 shrink-0 stroke-[2.2]" />
                   <span>館藏資料管理</span>
                 </button>
               </>
             )}
           </nav>
 
-          {/* 使用者資訊、管理與設定按鈕（靠左對齊並自動收合於標題列底圖內） */}
-          <div className="flex flex-wrap items-center justify-start gap-1.5 sm:gap-2">
-            {/* 使用者身分徽章 */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/40 border border-[#4A3427] text-xs sm:text-sm whitespace-nowrap">
-              {isAdmin ? (
-                <>
-                  <Shield className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span className="text-amber-200 font-semibold">管理者 ({currentUser.username})</span>
-                </>
-              ) : isGuest ? (
-                <>
-                  <Compass className="w-4 h-4 text-amber-300 shrink-0" />
-                  <span className="text-[#E6D7C3] font-semibold">訪客模式</span>
-                </>
-              ) : (
-                <>
-                  <UserIcon className="w-4 h-4 text-stone-300 shrink-0" />
-                  <span className="text-[#E6D7C3] font-semibold truncate max-w-[100px]">{currentUser.displayName || currentUser.username}</span>
-                </>
-              )}
-            </div>
-
-            {/* 系統管理按鈕（整合「帳號管理」與「系統登入畫面維護」，限管理員） */}
+          {/* 系統管理、登入人員與登出按鈕（靠左對齊，系統管理位於登入人員左方） */}
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:gap-2.5">
+            {/* 系統管理按鈕（位於登入人員的左方，限管理員） */}
             {isAdmin && (
               <button
-                onClick={() => setActiveTab('system')}
-                className={`px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs whitespace-nowrap ${
+                onClick={() => {
+                  setSystemInitialSubTab('accounts');
+                  setActiveTab('system');
+                }}
+                className={`px-3.5 py-2 rounded-xl border font-bold font-serif-tc text-base sm:text-lg flex items-center gap-2 transition cursor-pointer shadow-xs whitespace-nowrap ${
                   activeTab === 'system'
-                    ? 'bg-[#D4A373] text-[#261A13] border-[#E6C594] shadow-sm font-bold'
+                    ? 'bg-[#D4A373] text-[#261A13] border-[#E6C594] shadow-sm'
                     : 'bg-amber-600/30 hover:bg-amber-600/40 border-amber-500/40 text-amber-200'
                 }`}
-                title="系統管理（帳號管理、系統登入畫面維護）"
+                title="系統管理（帳號管理、系統登入畫面維護、雲端連線）"
               >
                 <Shield
-                  className={`w-4 h-4 shrink-0 ${
+                  className={`w-5 h-5 shrink-0 ${
                     activeTab === 'system' ? 'text-[#261A13]' : 'text-amber-400'
                   }`}
                 />
@@ -418,17 +402,27 @@ export function App() {
               </button>
             )}
 
-            {/* 雲端設定按鈕（限管理者與編輯員，訪客不顯示） */}
-            {!isGuest && (
-              <button
-                onClick={() => setIsCloudModalOpen(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs sm:text-sm font-semibold text-[#F3D5B5] flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
-                title="設定 Firebase (soundbook-library-db) 與 Google 雲端硬碟"
-              >
-                <Settings className="w-4 h-4 text-[#D4A373] shrink-0" />
-                <span>雲端連線</span>
-              </button>
-            )}
+            {/* 使用者身分徽章（登入人員） */}
+            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-black/40 border border-[#4A3427] text-base sm:text-lg font-serif-tc whitespace-nowrap">
+              {isAdmin ? (
+                <>
+                  <Shield className="w-5 h-5 text-amber-400 shrink-0" />
+                  <span className="text-amber-200 font-bold">管理者 ({currentUser.username})</span>
+                </>
+              ) : isGuest ? (
+                <>
+                  <Compass className="w-5 h-5 text-amber-300 shrink-0" />
+                  <span className="text-[#E6D7C3] font-bold">訪客模式</span>
+                </>
+              ) : (
+                <>
+                  <UserIcon className="w-5 h-5 text-stone-300 shrink-0" />
+                  <span className="text-[#E6D7C3] font-bold truncate max-w-[140px]">
+                    {currentUser.displayName || currentUser.username}
+                  </span>
+                </>
+              )}
+            </div>
 
             {/* 登出按鈕 */}
             <button
@@ -436,10 +430,10 @@ export function App() {
                 logout();
                 setCurrentUser(null);
               }}
-              className="px-2.5 py-1.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-xs sm:text-sm font-semibold text-red-200 flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+              className="px-3.5 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/40 text-base sm:text-lg font-bold font-serif-tc text-red-200 flex items-center gap-2 transition cursor-pointer whitespace-nowrap"
               title="登出系統"
             >
-              <LogOut className="w-4 h-4 text-red-400 shrink-0" />
+              <LogOut className="w-5 h-5 text-red-400 shrink-0" />
               <span>登出</span>
             </button>
           </div>
@@ -535,7 +529,14 @@ export function App() {
             }}
             onStartShufflePlayback={handleStartShufflePlayback}
             onAddCategory={handleAddCategory}
-            onOpenCloudSettings={() => setIsCloudModalOpen(true)}
+            onOpenCloudSettings={() => {
+              if (isAdmin) {
+                setSystemInitialSubTab('cloud');
+                setActiveTab('system');
+              } else {
+                setIsCloudModalOpen(true);
+              }
+            }}
           />
         )}
 
@@ -604,6 +605,8 @@ export function App() {
             currentUserId={currentUser.id}
             loginConfig={loginScreenConfig}
             onUpdateLoginConfig={setLoginScreenConfig}
+            onCloudSaved={reloadAllData}
+            initialSubTab={systemInitialSubTab}
           />
         )}
       </main>

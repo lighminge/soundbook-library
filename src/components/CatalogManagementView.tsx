@@ -1288,33 +1288,47 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
                           代表色系（共 {THEME_COLOR_OPTIONS.length} 種）
                         </label>
-                        <select
-                          value={editCatColor}
-                          onChange={(e) => setEditCatColor(e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs"
-                        >
-                          {THEME_COLOR_OPTIONS.map((c) => (
-                            <option key={c.value} value={c.value}>
-                              {c.label} ({c.value})
-                            </option>
-                          ))}
-                        </select>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-7 h-7 rounded-lg shrink-0 border border-[#C8B598] shadow-2xs"
+                            style={{ backgroundColor: editCatColor }}
+                          />
+                          <select
+                            value={editCatColor}
+                            onChange={(e) => setEditCatColor(e.target.value)}
+                            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs"
+                          >
+                            {THEME_COLOR_OPTIONS.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                       <div>
                         <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
                           館廳圖示（共 {ICON_OPTIONS.length} 種）
                         </label>
-                        <select
-                          value={editCatIcon}
-                          onChange={(e) => setEditCatIcon(e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs"
-                        >
-                          {ICON_OPTIONS.map((ic) => (
-                            <option key={ic.value} value={ic.value}>
-                              {ic.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center text-white shadow-2xs"
+                            style={{ backgroundColor: editCatColor }}
+                          >
+                            {getCategoryIcon(editCatIcon, 'w-4 h-4')}
+                          </span>
+                          <select
+                            value={editCatIcon}
+                            onChange={(e) => setEditCatIcon(e.target.value)}
+                            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs"
+                          >
+                            {ICON_OPTIONS.map((ic) => (
+                              <option key={ic.value} value={ic.value}>
+                                {ic.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
 
@@ -2474,7 +2488,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   >
                     {THEME_COLOR_OPTIONS.map((c) => (
                       <option key={c.value} value={c.value}>
-                        {c.label} ({c.value})
+                        {c.label}
                       </option>
                     ))}
                   </select>
