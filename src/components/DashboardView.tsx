@@ -635,8 +635,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     onStartPlaylistPlayback(selectedAudioItems, categoryId);
   };
 
-  const totalDurationSec = audioItems.reduce((acc, item) => acc + (item.duration || 0), 0);
-  const totalMinutes = Math.max(1, Math.round(totalDurationSec / 60));
+  // 計算所有已經上傳完成的語音檔案的時間長度總和（秒數與分鐘數）
+  const totalDurationSec = useMemo(() => {
+    return audioItems.reduce((acc, item) => {
+      if (!item.audioUrl && !item.audioDriveFileId) return acc;
+      const d = Number(item.duration);
+      return acc + (Number.isFinite(d) && d > 0 ? d : 0);
+    }, 0);
+  }, [audioItems]);
+  const totalMinutes = totalDurationSec > 0 ? Math.max(1, Math.round(totalDurationSec / 60)) : 0;
 
   // 依據「館藏分類編號 + 流水號 (號碼從 1 開始，依語音檔案上傳順序)」建立每筆語音檔之獨立編號
   const audioCallNumberMap = useMemo(
@@ -1212,7 +1219,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <Clock className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-xs font-medium text-[#7A6855] uppercase tracking-wider">典藏總播放時長</p>
+            <p className="text-xs font-medium text-[#7A6855] uppercase tracking-wider">典藏總語音檔時長</p>
             <p className="text-2xl font-bold font-serif-tc text-[#2C221E]">
               {totalMinutes} <span className="text-sm font-normal text-[#7A6855]">分鐘 ({formatDuration(totalDurationSec)})</span>
             </p>

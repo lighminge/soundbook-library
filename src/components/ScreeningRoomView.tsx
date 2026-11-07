@@ -1789,11 +1789,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 : 'rounded-2xl overflow-hidden bg-[#1E1612] text-[#FAF5EC] shadow-2xl border border-[#4A3427]'
             }`}
           >
-            {/* 舞台頂部資訊列 */}
+            {/* 舞台頂部資訊列（全螢幕播放時滑鼠靜止 5 秒後與下方播放功能區一併自動隱藏，滑鼠移動時自動顯示） */}
             <div
-              className={`flex flex-wrap items-center justify-between gap-3 transition-colors ${
+              className={`flex flex-wrap items-center justify-between gap-3 transition-all duration-300 ease-in-out ${
                 isFullscreen
-                  ? 'px-6 py-3.5 bg-black/85 backdrop-blur-md border-b border-white/10 shrink-0 z-30'
+                  ? `absolute top-0 inset-x-0 px-6 py-3.5 bg-black/85 backdrop-blur-md border-b border-white/10 z-30 ${
+                      showFullscreenControls
+                        ? 'translate-y-0 opacity-100 pointer-events-auto'
+                        : '-translate-y-full opacity-0 pointer-events-none'
+                    }`
                   : 'px-5 py-4 bg-[#2A1E18] border-b border-[#3E2C23]'
               }`}
             >
