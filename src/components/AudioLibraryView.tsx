@@ -342,9 +342,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
           byName.set(clean, { ...sp, name: clean });
         }
       });
-      const combined = Array.from(byName.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, 'zh-Hant')
-      );
+      const combined = Array.from(byName.values());
       setSpeakers(combined);
       newlyDiscovered.forEach((sp) => saveSavedSpeaker(sp).catch(() => {}));
     });
@@ -651,9 +649,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
     try {
       await saveSavedSpeaker(newSp);
-      const updatedSpeakers = [...speakers, newSp].sort((a, b) =>
-        a.name.localeCompare(b.name, 'zh-Hant')
-      );
+      const updatedSpeakers = [...speakers, newSp];
       setSpeakers(updatedSpeakers);
       setSpeaker(trimmed);
       setIsAddingNewSpeaker(false);

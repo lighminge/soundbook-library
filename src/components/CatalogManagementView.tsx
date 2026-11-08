@@ -343,9 +343,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
           byName.set(clean, { ...sp, name: clean });
         }
       });
-      const combined = Array.from(byName.values()).sort((a, b) =>
-        a.name.localeCompare(b.name, 'zh-Hant')
-      );
+      const combined = Array.from(byName.values());
       setSpeakers(combined);
       newlyDiscovered.forEach((sp) => saveSavedSpeaker(sp).catch(() => {}));
     });
@@ -453,7 +451,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     };
 
     await saveSavedSpeaker(newSpeaker);
-    setSpeakers((prev) => [...prev, newSpeaker].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant')));
+    setSpeakers((prev) => [...prev, newSpeaker]);
 
     if (speakerTargetItem) {
       await handleAssignSpeaker(speakerTargetItem, trimmed);
@@ -504,9 +502,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
             updatedAt: now,
           });
         }
-        return Array.from(byName.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, 'zh-Hant')
-        );
+        return Array.from(byName.values());
       });
 
       // 2. 一次性批次同步更新所有關聯此主講人的語音檔（避免逐筆更新造成舊閉包覆蓋與重複探索）
@@ -528,8 +524,8 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         }
       }
 
-      // 3. 同步更新本地 LocalStorage 與雲端 Firestore 主講人名冊（並自動清理舊名稱文件）
-      const nextSpeakers = await renameSavedSpeaker(oldName, newName);
+      // 3. 同步更新本地 LocalStorage 與雲端 Firestore 主講人名冊（並自動清理舊名稱文件，保留畫面當前排序）
+      const nextSpeakers = await renameSavedSpeaker(oldName, newName, speakers);
       setSpeakers(nextSpeakers);
 
       if (filterSpeaker === oldName) {

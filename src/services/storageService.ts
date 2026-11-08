@@ -658,7 +658,7 @@ export async function deleteSavedPlaylist(playlistId: string): Promise<void> {
 
 /**
  * 載入所有已儲存的主講人名冊（優先自 Firestore 同步，離線或未就緒時使用本機 LocalStorage）
- * 自動依主講人姓名（trim 後）去重，並自動清理重複 ID 的舊紀錄
+ * 自動依主講人姓名（trim 後）去重，並保留既有排列順序（新建主講人排在後方，修改名稱時不改變原排序位置）
  */
 export async function loadSavedSpeakers(): Promise<Speaker[]> {
   let localSpeakers: Speaker[] = [];
@@ -672,40 +672,60 @@ export async function loadSavedSpeakers(): Promise<Speaker[]> {
     console.warn('讀取本地主講人名冊失敗:', e);
   }
 
-  const deduplicateByName = (list: Speaker[]): { unique: Speaker[]; duplicateIds: string[] } => {
-    const byName = new Map<string, Speaker>();
-    const duplicateIds: string[] = [];
-    for (const rawSp of list) {
-      if (!rawSp || !rawSp.name || !rawSp.name.trim()) continue;
-      const cleanName = rawSp.name.trim();
-      const sp: Speaker = { ...rawSp, name: cleanName };
-      const existing = byName.get(cleanName);
-      if (!existing) {
-        byName.set(cleanName, sp);
-      } else {
-        // 保留較早建立或已存在於雲端的主講人 ID，將多餘重複的 ID 列入清理清單
-        if (sp.id !== existing.id) {
-          duplicateIds.push(sp.id);
-        }
-      }
-    }
-    const unique = Array.from(byName.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, 'zh-Hant')
-    );
-    return { unique, duplicateIds };
-  };
+  const sortByCreatedAsc = (list: Speaker[]): Speaker[] =>
+    [...list].sort((a, b) => {
+      const timeA = new Date(a?.createdAt || 0).getTime();
+      const timeB = new Date(b?.createdAt || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return (a?.id || '').localeCompare(b?.id || '');
+    });
 
   const db = getDbInstance();
   if (db) {
     try {
       const snap = await getDocs(collection(db, 'speakers'));
       if (!snap.empty) {
-        const remoteSpeakers: Speaker[] = snap.docs.map((d) => d.data() as Speaker);
-        // 以雲端資料為優先，再合併本地尚未同步的主講人，並依姓名去重
-        const { unique: merged, duplicateIds } = deduplicateByName([
-          ...remoteSpeakers,
-          ...localSpeakers,
-        ]);
+        const remoteSpeakers: Speaker[] = sortByCreatedAsc(
+          snap.docs.map((d) => d.data() as Speaker)
+        );
+        const remoteByName = new Map<string, Speaker>();
+        const duplicateIds: string[] = [];
+
+        for (const rSp of remoteSpeakers) {
+          if (!rSp || !rSp.name || !rSp.name.trim()) continue;
+          const cleanName = rSp.name.trim();
+          if (!remoteByName.has(cleanName)) {
+            remoteByName.set(cleanName, { ...rSp, name: cleanName });
+          } else {
+            const kept = remoteByName.get(cleanName)!;
+            if (rSp.id !== kept.id) duplicateIds.push(rSp.id);
+          }
+        }
+
+        // 保留本地原有的排列順序，並以雲端正規 ID / createdAt 校正；雲端新增項目則依建立時間附加在後方
+        const byName = new Map<string, Speaker>();
+        for (const lSp of localSpeakers) {
+          if (!lSp || !lSp.name || !lSp.name.trim()) continue;
+          const cleanName = lSp.name.trim();
+          if (byName.has(cleanName)) continue;
+          const matchedRemote = remoteByName.get(cleanName);
+          if (matchedRemote) {
+            byName.set(cleanName, matchedRemote);
+            if (lSp.id && lSp.id !== matchedRemote.id) {
+              duplicateIds.push(lSp.id);
+            }
+          } else {
+            byName.set(cleanName, { ...lSp, name: cleanName });
+          }
+        }
+
+        for (const [cleanName, rSp] of remoteByName.entries()) {
+          if (!byName.has(cleanName)) {
+            byName.set(cleanName, rSp);
+          }
+        }
+
+        const merged = Array.from(byName.values());
         try {
           localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(merged));
         } catch {
@@ -727,7 +747,15 @@ export async function loadSavedSpeakers(): Promise<Speaker[]> {
     }
   }
 
-  const { unique: dedupedLocal } = deduplicateByName(localSpeakers);
+  const byNameLocal = new Map<string, Speaker>();
+  for (const rawSp of localSpeakers) {
+    if (!rawSp || !rawSp.name || !rawSp.name.trim()) continue;
+    const cleanName = rawSp.name.trim();
+    if (!byNameLocal.has(cleanName)) {
+      byNameLocal.set(cleanName, { ...rawSp, name: cleanName });
+    }
+  }
+  const dedupedLocal = Array.from(byNameLocal.values());
   try {
     localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(dedupedLocal));
   } catch {
@@ -794,21 +822,25 @@ export async function saveSavedSpeaker(speaker: Speaker, previousName?: string):
  */
 export async function renameSavedSpeaker(
   oldNameInput: string,
-  newNameInput: string
+  newNameInput: string,
+  currentUiSpeakers?: Speaker[]
 ): Promise<Speaker[]> {
   const oldName = oldNameInput.trim();
   const newName = newNameInput.trim();
   const now = new Date().toISOString();
 
-  let currentList: Speaker[] = [];
-  try {
-    const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) currentList = parsed;
+  let currentList: Speaker[] =
+    currentUiSpeakers && currentUiSpeakers.length > 0 ? [...currentUiSpeakers] : [];
+  if (currentList.length === 0) {
+    try {
+      const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) currentList = parsed;
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
 
   const db = getDbInstance();
@@ -851,16 +883,21 @@ export async function renameSavedSpeaker(
         updatedAt: now,
       };
 
-  // 整理合併後的主講人清單（移除所有舊名稱與同名的多餘紀錄，只放回單一 updatedPrimary）
-  const combinedSource = [...remoteDocs, ...currentList];
+  // 整理合併後的主講人清單：以本地目前排序為基準原位替換，確保修改後主講人排序位置完全不變！
+  const orderedSource = [...currentList, ...remoteDocs];
   const byName = new Map<string, Speaker>();
   const obsoleteIds = new Set<string>();
+  let insertedUpdated = false;
 
-  for (const sp of combinedSource) {
+  for (const sp of orderedSource) {
     if (!sp || !sp.name) continue;
     const spName = sp.name.trim();
     if (!spName) continue;
     if (spName === oldName || spName === newName || sp.id === updatedPrimary.id) {
+      if (!insertedUpdated) {
+        byName.set(newName, updatedPrimary);
+        insertedUpdated = true;
+      }
       if (sp.id !== updatedPrimary.id) {
         obsoleteIds.add(sp.id);
       }
@@ -874,10 +911,10 @@ export async function renameSavedSpeaker(
     }
   }
 
-  byName.set(newName, updatedPrimary);
-  const finalSpeakers = Array.from(byName.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, 'zh-Hant')
-  );
+  if (!insertedUpdated) {
+    byName.set(newName, updatedPrimary);
+  }
+  const finalSpeakers = Array.from(byName.values());
 
   // 1. 寫入本地 LocalStorage
   try {
