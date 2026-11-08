@@ -1045,8 +1045,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     refreshSavedPlaylists();
   }, []);
 
-  // 選取已儲存的播放清單（支援傳入 autoPlay 立即自動播放第一首）
-  const handleSelectSavedPlaylist = (playlistId: string, autoPlay = false) => {
+  // 選取已儲存的播放清單（預設立即自動播放第一首有效語音檔）
+  const handleSelectSavedPlaylist = (playlistId: string, autoPlay = true) => {
     if (!playlistId) {
       setActiveSavedPlaylistId(null);
       localStorage.removeItem('soundbook_active_saved_playlist_id');
@@ -1064,9 +1064,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setShelfTab('playlist');
     }
 
-    // 切換至該清單的第一首（或若 autoPlay 為 true 則強制載入並自動播放第一首）
+    // 切換至該清單的第一首有效語音檔（若 autoPlay 為 true 則強制載入並自動播放）
     if (target.audioItemIds.length > 0) {
-      const firstItem = audioItems.find((a) => a.id === target.audioItemIds[0]);
+      const firstItem = target.audioItemIds
+        .map((id) => audioItems.find((a) => a.id === id))
+        .find((a): a is AudioItem => Boolean(a));
       if (firstItem) {
         if (autoPlay) {
           pendingAutoPlayRef.current = true;
@@ -3225,7 +3227,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     <div className="flex items-center gap-1.5">
                       <select
                         value={activeSavedPlaylistId || ''}
-                        onChange={(e) => handleSelectSavedPlaylist(e.target.value)}
+                        onChange={(e) => handleSelectSavedPlaylist(e.target.value, true)}
                         className="flex-1 min-w-0 pl-2.5 pr-8 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer truncate font-medium shadow-2xs"
                       >
                         <option value="">
