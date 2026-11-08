@@ -87,6 +87,21 @@ const DEFAULT_COVER_IMAGES = [
   'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?auto=format&fit=crop&w=800&q=80',
 ];
 
+const DEFAULT_QUICK_TAGS = [
+  '繪本',
+  '小說',
+  '經典童話',
+  '散文',
+  '科普',
+  '歷史故事',
+  '傳記',
+  '詩詞朗誦',
+  '自然音景',
+  '生活手札',
+];
+
+const QUICK_TAGS_STORAGE_KEY = 'soundbook_quick_tags_v1';
+
 export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   categories,
   audioItems,
@@ -136,6 +151,43 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [isAddingNewSpeaker, setIsAddingNewSpeaker] = useState<boolean>(false);
   const [inlineNewSpeakerName, setInlineNewSpeakerName] = useState<string>('');
+
+  // 類別標籤設定（快速標記清單與自訂輸入狀態，與館藏資料管理同步共用快速標記）
+  const [quickTags, setQuickTags] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(QUICK_TAGS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return DEFAULT_QUICK_TAGS;
+  });
+  const [customEditorTagInput, setCustomEditorTagInput] = useState<string>('');
+
+  const saveQuickTags = (nextTags: string[]) => {
+    setQuickTags(nextTags);
+    try {
+      localStorage.setItem(QUICK_TAGS_STORAGE_KEY, JSON.stringify(nextTags));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  // 合併快速標記與館藏中已使用過的所有類別標籤，方便使用者一鍵點選
+  const availableQuickTags = useMemo(() => {
+    const merged = new Set<string>(quickTags);
+    audioItems.forEach((a) => {
+      (a.tags || []).forEach((t) => {
+        if (t && t.trim()) merged.add(t.trim());
+      });
+    });
+    return Array.from(merged);
+  }, [quickTags, audioItems]);
 
   // ============================================================================
   // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段 + 播放秒數即時同步)
@@ -414,6 +466,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setItemFileSize(item.fileSize);
     setItemMimeType(item.mimeType);
     setItemTags(item.tags || []);
+    setCustomEditorTagInput('');
     setSpeaker(item.speaker || '');
     setIsAddingNewSpeaker(false);
     setInlineNewSpeakerName('');
@@ -464,6 +517,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       categoryId?: string;
       description?: string;
       speaker?: string;
+      tags?: string[];
     }
   ) => {
     if (!formId) return;
@@ -480,6 +534,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       overrideMeta?.speaker !== undefined
         ? overrideMeta.speaker
         : speaker;
+    const finalTags =
+      overrideMeta?.tags !== undefined
+        ? overrideMeta.tags
+        : itemTags;
 
     const itemToSave: AudioItem = {
       id: formId,
@@ -487,7 +545,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       categoryId: finalCategoryId,
       description: finalDescription,
       ...(finalSpeaker?.trim() ? { speaker: finalSpeaker.trim() } : {}),
-      ...(itemTags.length > 0 ? { tags: itemTags } : {}),
+      ...(finalTags.length > 0 ? { tags: finalTags } : {}),
       duration: overrideDuration ?? (Number(duration) || 20),
       ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
       ...(itemMimeType ? { mimeType: itemMimeType } : {}),
@@ -608,6 +666,71 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       console.error('儲存新主講人失敗:', e);
       showToast('❌ 儲存主講人失敗，請稍候重試');
     }
+  };
+
+  /**
+   * 在「編輯語音檔」點選或取消某個類別標籤（立即自動儲存至 Firebase）
+   */
+  const handleToggleEditorTag = async (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    const exists = itemTags.includes(trimmed);
+    const nextTags = exists
+      ? itemTags.filter((t) => t !== trimmed)
+      : [...itemTags, trimmed];
+    setItemTags(nextTags);
+    await autoPersistToFirebase(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { tags: nextTags }
+    );
+    showToast(
+      exists
+        ? `ℹ️ 已取消標記類別標籤「${trimmed}」`
+        : `✅ 已標記類別標籤「${trimmed}」！`
+    );
+  };
+
+  /**
+   * 在「編輯語音檔」新增自訂類別標籤並自動加入快速標記與當前語音檔
+   */
+  const handleAddCustomEditorTag = async () => {
+    const trimmed = customEditorTagInput.trim().replace(/^#/, '');
+    if (!trimmed) {
+      showToast('⚠️ 請先輸入要新增的類別標籤名稱');
+      return;
+    }
+    if (!quickTags.includes(trimmed)) {
+      saveQuickTags([...quickTags, trimmed]);
+    }
+    const nextTags = itemTags.includes(trimmed) ? itemTags : [...itemTags, trimmed];
+    setItemTags(nextTags);
+    setCustomEditorTagInput('');
+    await autoPersistToFirebase(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { tags: nextTags }
+    );
+    showToast(`✅ 已新增並標記類別標籤「${trimmed}」！`);
+  };
+
+  /**
+   * 從快速標記清單移除某個預設類別標籤
+   */
+  const handleRemoveQuickTagFromEditor = (tagToRemove: string) => {
+    const nextQuick = quickTags.filter((t) => t !== tagToRemove);
+    saveQuickTags(nextQuick);
+    showToast(`🗑️ 已從快速標記移除「${tagToRemove}」`);
   };
 
   /**
@@ -2903,6 +3026,142 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                   <p className="text-[11px] text-[#8C7A67] leading-relaxed">
                     💡 說明：選取主講人後會自動即時儲存至雲端，並於館藏卡片、放映室與檢索系統中同步顯示與提供篩選。
                   </p>
+                </div>
+
+                {/* 「選取主講人」下方的「類別標籤設定」功能區塊 */}
+                <div className="p-4 rounded-xl bg-white border border-[#E2D5C1] space-y-3 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-bold font-serif-tc text-[#2E5A44] flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-[#2E5A44]" />
+                      <span>
+                        類別標籤設定（目前已標記 {itemTags.length} 個類別）
+                      </span>
+                    </label>
+                    <span className="text-[11px] text-[#2E5A44] font-medium">
+                      ✓ 點選後自動即時儲存
+                    </span>
+                  </div>
+
+                  {/* 目前已標記在此語音檔上的類別標籤 */}
+                  <div className="flex flex-wrap items-center gap-1.5 min-h-[28px] p-2.5 rounded-lg bg-[#FAF6EE] border border-[#E5D9C5]">
+                    {itemTags.length === 0 ? (
+                      <span className="text-xs text-[#9C8B7A] italic">
+                        尚未標記類別標籤（請點擊下方「+ 繪本」、「+ 小說」快速選取，或自行輸入新增）
+                      </span>
+                    ) : (
+                      <>
+                        {itemTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#2E5A44] text-white text-xs font-semibold shadow-2xs"
+                          >
+                            <Tag className="w-3 h-3" />
+                            <span>{tag}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEditorTag(tag)}
+                              className="ml-0.5 p-0.5 rounded hover:bg-white/20 text-white/90 cursor-pointer"
+                              title={`從此語音檔移除「${tag}」標籤`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setItemTags([]);
+                            await autoPersistToFirebase(
+                              undefined,
+                              undefined,
+                              undefined,
+                              undefined,
+                              undefined,
+                              undefined,
+                              undefined,
+                              { tags: [] }
+                            );
+                            showToast('ℹ️ 已清空此語音檔的所有類別標籤');
+                          }}
+                          className="ml-auto px-2 py-0.5 rounded text-[11px] font-medium text-red-700 hover:bg-red-50 transition cursor-pointer"
+                          title="清空此語音檔目前已標記的所有類別標籤"
+                        >
+                          清除全部
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* 快速標記類別標籤列（支援點選標記 / 取消 + 刪除快速標記按鈕） */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[11px] text-[#6E5D4F]">
+                      <span className="font-semibold">快速標記（點選即可套用或取消）：</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {availableQuickTags.map((presetTag) => {
+                        const isTagged = itemTags.includes(presetTag);
+                        const isRemovableQuick = quickTags.includes(presetTag);
+                        return (
+                          <div
+                            key={presetTag}
+                            className={`inline-flex items-center rounded-md text-[11px] font-semibold transition overflow-hidden border ${
+                              isTagged
+                                ? 'bg-[#2E5A44]/20 text-[#2E5A44] border-[#2E5A44]'
+                                : 'bg-[#FAF6EE] text-[#5C3A1B] border-[#D5C5AE] hover:border-[#8B5A2B]'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEditorTag(presetTag)}
+                              className="px-2 py-1 cursor-pointer"
+                              title={
+                                isTagged
+                                  ? `點擊取消標記「${presetTag}」`
+                                  : `點擊為此語音檔標記「${presetTag}」`
+                              }
+                            >
+                              {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
+                            </button>
+                            {isRemovableQuick && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveQuickTagFromEditor(presetTag)}
+                                className="px-1.5 py-1 border-l border-[#D5C5AE]/70 hover:bg-red-600 hover:text-white text-[#8B735B] transition cursor-pointer"
+                                title={`從快速標記清單中移除「${presetTag}」`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 自訂類別標籤輸入框（新增後自動加入快速標記並標記於此語音檔） */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-[#E5D9C5]">
+                    <input
+                      type="text"
+                      value={customEditorTagInput}
+                      onChange={(e) => setCustomEditorTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddCustomEditorTag();
+                        }
+                      }}
+                      placeholder="輸入自訂類別（例如：繪本、奇幻小說... 新增後自動加入快速標記）"
+                      className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#2E5A44]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCustomEditorTag}
+                      className="px-3 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition shadow-2xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>新增類別</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
