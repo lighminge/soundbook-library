@@ -91,6 +91,19 @@ rules_version = '2';
 //   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Account creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
+// Collection: loginLogs
+// Document ID: {logId} (matches field `id`, e.g., "login_1730592000000_abc")
+// Fields:
+//   - id: string (required, immutable, 1..128 chars, must equal logId) - Unique login log identifier
+//   - userId: string (required, 1..128 chars) - Reference to systemUsers/{userId}, "guest", or "unknown"
+//   - username: string (required, 1..50 chars) - Login account name
+//   - displayName: string (required, 1..50 chars) - Display name or title
+//   - role: string (required, must be 'admin', 'user', or 'guest') - Account role
+//   - status: string (required, must be 'success' or 'failed') - Login attempt status
+//   - message: string (optional, 0..300 chars) - Login description / status message
+//   - deviceInfo: string (optional, 0..300 chars) - Device and browser environment info
+//   - loginAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Login timestamp string
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -417,6 +430,43 @@ service cloud.firestore {
         isValidDateString(data.updatedAt);
     }
 
+    // Validate LoginLog document schema and field bounds
+    function isValidLoginLog(data, logId) {
+      let requiredFields = [
+        'id',
+        'userId',
+        'username',
+        'displayName',
+        'role',
+        'status',
+        'loginAt'
+      ];
+      let allowedFields = [
+        'id',
+        'userId',
+        'username',
+        'displayName',
+        'role',
+        'status',
+        'message',
+        'deviceInfo',
+        'loginAt'
+      ];
+
+      return hasRequiredFields(requiredFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.id is string && data.id == logId &&
+        validStringLength('id', 1, 128) &&
+        validStringLength('userId', 1, 128) &&
+        validStringLength('username', 1, 50) &&
+        validStringLength('displayName', 1, 50) &&
+        data.role is string && data.role in ['admin', 'user', 'guest'] &&
+        data.status is string && data.status in ['success', 'failed'] &&
+        isValidOptionalString('message', 0, 300) &&
+        isValidOptionalString('deviceInfo', 0, 300) &&
+        isValidDateString(data.loginAt);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -475,6 +525,15 @@ service cloud.firestore {
                        (resource.data.username != 'admin' || request.resource.data.username == 'admin') &&
                        (resource.data.id != 'user_admin' || request.resource.data.username == 'admin');
       allow delete: if resource.data.username != 'admin' && resource.data.id != 'user_admin';
+    }
+
+    // Login Audit Logs (loginLogs/{logId})
+    match /loginLogs/{logId} {
+      allow read: if true;
+      allow create: if isValidLoginLog(request.resource.data, logId);
+      allow update: if isValidLoginLog(request.resource.data, logId) &&
+                       areImmutableFieldsUnchanged(['id', 'loginAt']);
+      allow delete: if true;
     }
 
     // Default deny for all other collections and paths

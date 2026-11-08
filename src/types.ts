@@ -83,6 +83,18 @@ export interface CurrentUser {
   isGuest?: boolean;
 }
 
+export interface LoginLogRecord {
+  id: string; // e.g. "login_1730592000000_abc"
+  userId: string; // e.g. "user_admin", "user_...", "guest", or "unknown"
+  username: string; // 登入帳號
+  displayName: string; // 顯示名稱
+  role: UserRole; // 帳號角色 ('admin' | 'user' | 'guest')
+  status: 'success' | 'failed'; // 登入狀態 ('success' | 'failed')
+  message?: string; // 登入說明（如：帳號密碼驗證登入、訪客模式進入、密碼錯誤等）
+  deviceInfo?: string; // 裝置與瀏覽器環境資訊
+  loginAt: string; // ISO 8601 登入時間
+}
+
 export interface LoginScreenConfig {
   icon: string; // e.g., 'BookOpen' (對應 50 個圖示選項)
   title: string; // 登入畫面圖示下方的標題文字（預設：有聲書樓放映閣）

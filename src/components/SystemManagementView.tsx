@@ -24,12 +24,21 @@ import {
   ExternalLink,
   ShieldCheck,
   Cloud,
+  History,
+  RefreshCw,
+  Search,
+  Compass,
+  XCircle,
+  Monitor,
 } from 'lucide-react';
-import { AppUser, CloudConfig, LoginScreenConfig } from '../types';
+import { AppUser, CloudConfig, LoginLogRecord, LoginScreenConfig } from '../types';
 import {
   loadSystemUsers,
   saveSystemUser,
   deleteSystemUser,
+  loadLoginLogs,
+  deleteLoginLog,
+  clearAllLoginLogs,
 } from '../services/authService';
 import {
   DEFAULT_LOGIN_SCREEN_CONFIG,
@@ -165,6 +174,7 @@ interface SystemManagementViewProps {
   loginConfig: LoginScreenConfig;
   onUpdateLoginConfig: (newConfig: LoginScreenConfig) => void;
   onCloudSaved: () => void;
+  onUserUpdated?: () => void;
   initialSubTab?: SystemSubTab;
 }
 
@@ -173,6 +183,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   loginConfig,
   onUpdateLoginConfig,
   onCloudSaved,
+  onUserUpdated,
   initialSubTab = 'accounts',
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SystemSubTab>(initialSubTab);
@@ -204,6 +215,47 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   // 刪除確認對話框狀態
   const [pendingDeleteUser, setPendingDeleteUser] = useState<AppUser | null>(null);
 
+  // 人員登入情況紀錄狀態
+  const [loginLogs, setLoginLogs] = useState<LoginLogRecord[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [logStatusFilter, setLogStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
+  const [confirmClearLogs, setConfirmClearLogs] = useState(false);
+
+  const fetchLoginLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      const list = await loadLoginLogs();
+      setLoginLogs(list);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  const handleDeleteLog = async (logId: string) => {
+    try {
+      await deleteLoginLog(logId);
+      setLoginLogs((prev) => prev.filter((l) => l.id !== logId));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleClearAllLogs = async () => {
+    setConfirmClearLogs(false);
+    setLoadingLogs(true);
+    try {
+      await clearAllLoginLogs();
+      setLoginLogs([]);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
   const fetchUsers = async () => {
     setLoadingUsers(true);
     setUserError('');
@@ -219,6 +271,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
 
   useEffect(() => {
     fetchUsers();
+    fetchLoginLogs();
   }, []);
 
   const isEditingProtectedAdmin =
@@ -303,6 +356,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
 
       await saveSystemUser(targetUser);
       await fetchUsers();
+      onUserUpdated?.();
       setUserSuccessMsg(
         editingUser
           ? `已成功更新「${cleanDisplayName} (${cleanUsername})」的帳號資料！`
@@ -535,7 +589,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
       {/* 第一分頁：帳號管理 */}
       {/* ========================================================= */}
       {activeSubTab === 'accounts' && (
-        <div className="bg-[#FFFDF9] border border-[#DECGB4] rounded-2xl shadow-md overflow-hidden">
+        <div className="space-y-6">
+          <div className="bg-[#FFFDF9] border border-[#DECGB4] rounded-2xl shadow-md overflow-hidden">
           {/* 分頁標頭 */}
           <div className="px-6 py-4 bg-[#FAF4E8] border-b border-[#E5D9C5] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -850,6 +905,253 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                 </table>
               </div>
             )}
+          </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* 新增區塊：人員登入情況紀錄清單 */}
+          {/* ========================================================= */}
+          <div className="bg-[#FFFDF9] border border-[#DECGB4] rounded-2xl shadow-md overflow-hidden">
+            {/* 區塊標頭 */}
+            <div className="px-6 py-4 bg-[#FAF4E8] border-b border-[#E5D9C5] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-[#8B5A2B]/15 text-[#8B5A2B] flex items-center justify-center border border-[#8B5A2B]/30">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-bold font-serif-tc text-[#2C221E]">
+                      人員登入情況紀錄
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-[#8B5A2B]/15 text-[#5C3A1B] border border-[#8B5A2B]/25">
+                      共 {loginLogs.length} 筆
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6E5D4F]">
+                    以清單方式即時記錄所有人員帳號登入（含成功、密碼錯誤失敗與訪客模式）的時間、身分與裝置資訊
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchLoginLogs}
+                  disabled={loadingLogs}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#D5C5AE] bg-white hover:bg-[#F3ECE0] text-[#5C3A1B] text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingLogs ? 'animate-spin' : ''}`} />
+                  <span>重新整理</span>
+                </button>
+                {loginLogs.length > 0 && !confirmClearLogs && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearLogs(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>清空全部紀錄</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* 清空全部紀錄確認對話框 */}
+              {confirmClearLogs && (
+                <div className="p-4 rounded-xl bg-red-50 border-2 border-red-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs sm:text-sm text-red-900 font-medium">
+                    確定要清空全部 <span className="font-bold">{loginLogs.length}</span> 筆人員登入紀錄嗎？清空後無法復原。
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearLogs(false)}
+                      className="px-3.5 py-1.5 rounded-lg border border-red-300 bg-white text-xs font-semibold text-red-700 hover:bg-red-100 cursor-pointer"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearAllLogs}
+                      className="px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      確認清空
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 搜尋與狀態篩選列 */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-[#8B5A2B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={logSearchQuery}
+                    onChange={(e) => setLogSearchQuery(e.target.value)}
+                    placeholder="搜尋顯示名稱、登入帳號、裝置或狀態說明..."
+                    className="w-full pl-9 pr-3.5 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { key: 'all', label: `全部 (${loginLogs.length})` },
+                      {
+                        key: 'success',
+                        label: `登入成功 (${loginLogs.filter((l) => l.status === 'success').length})`,
+                      },
+                      {
+                        key: 'failed',
+                        label: `登入失敗 (${loginLogs.filter((l) => l.status === 'failed').length})`,
+                      },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setLogStatusFilter(item.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                        logStatusFilter === item.key
+                          ? 'bg-[#8B5A2B] text-white border-[#8B5A2B]'
+                          : 'bg-[#FAF4E8] text-[#5C3A1B] border-[#E5D9C5] hover:bg-[#EFE2C8]'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 登入紀錄清單表格 */}
+              {loadingLogs ? (
+                <div className="py-12 flex flex-col items-center justify-center text-[#7A6855] gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#8B5A2B]" />
+                  <span className="text-xs">正在載入人員登入紀錄...</span>
+                </div>
+              ) : (() => {
+                  const q = logSearchQuery.trim().toLowerCase();
+                  const filteredLogs = loginLogs.filter((log) => {
+                    if (logStatusFilter !== 'all' && log.status !== logStatusFilter) {
+                      return false;
+                    }
+                    if (!q) return true;
+                    return (
+                      log.displayName.toLowerCase().includes(q) ||
+                      log.username.toLowerCase().includes(q) ||
+                      (log.deviceInfo || '').toLowerCase().includes(q) ||
+                      (log.message || '').toLowerCase().includes(q)
+                    );
+                  });
+
+                  if (filteredLogs.length === 0) {
+                    return (
+                      <div className="py-10 text-center border border-dashed border-[#D5C5AE] rounded-xl bg-[#FAF6EE]/60 text-[#7A6855] text-xs sm:text-sm">
+                        目前尚無符合條件的人員登入紀錄
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="border border-[#E5D9C5] rounded-xl overflow-x-auto max-h-[480px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse min-w-[760px]">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-[#F3ECE0] text-[#5C3A1B] text-xs border-b border-[#E5D9C5]">
+                            <th className="py-3 px-3.5 font-semibold w-14">#</th>
+                            <th className="py-3 px-3.5 font-semibold">登入時間</th>
+                            <th className="py-3 px-3.5 font-semibold">顯示名稱</th>
+                            <th className="py-3 px-3.5 font-semibold">登入帳號</th>
+                            <th className="py-3 px-3.5 font-semibold">角色權限</th>
+                            <th className="py-3 px-3.5 font-semibold">登入狀態</th>
+                            <th className="py-3 px-3.5 font-semibold">裝置 / 瀏覽器</th>
+                            <th className="py-3 px-3.5 font-semibold text-right">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#EFE6D5] text-sm bg-white">
+                          {filteredLogs.map((log, idx) => (
+                            <tr key={log.id} className="hover:bg-[#FAF6EE] transition-colors">
+                              <td className="py-2.5 px-3.5 text-xs font-mono text-[#8C7A6B]">
+                                {idx + 1}
+                              </td>
+                              <td className="py-2.5 px-3.5 text-xs font-mono text-[#4A3728] whitespace-nowrap">
+                                {log.loginAt
+                                  ? new Date(log.loginAt).toLocaleString('zh-TW', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      second: '2-digit',
+                                      hour12: false,
+                                    })
+                                  : '-'}
+                              </td>
+                              <td className="py-2.5 px-3.5 font-semibold text-[#2C221E]">
+                                {log.displayName}
+                              </td>
+                              <td className="py-2.5 px-3.5 font-mono text-xs text-[#4A3728] font-bold">
+                                {log.username}
+                              </td>
+                              <td className="py-2.5 px-3.5 whitespace-nowrap">
+                                {log.role === 'admin' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                                    <Shield className="w-3 h-3" />
+                                    系統管理員
+                                  </span>
+                                ) : log.role === 'guest' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-700 border border-stone-300">
+                                    <Compass className="w-3 h-3" />
+                                    訪客模式
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#F0E6D8] text-[#5C3A1B]">
+                                    <UserCheck className="w-3 h-3" />
+                                    一般使用者
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3.5">
+                                <div className="flex flex-col gap-0.5">
+                                  {log.status === 'success' ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                                      <span>{log.message || '登入成功'}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600">
+                                      <XCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
+                                      <span>{log.message || '登入失敗'}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3.5 text-xs text-[#6E5D4F] whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1">
+                                  <Monitor className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                                  <span>{log.deviceInfo || '-'}</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLog(log.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold transition cursor-pointer"
+                                  title="刪除此筆登入紀錄"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>刪除</span>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+            </div>
           </div>
         </div>
       )}

@@ -1,12 +1,14 @@
 import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
-import { AppUser, CurrentUser } from '../types';
+import { AppUser, CurrentUser, LoginLogRecord, UserRole } from '../types';
 import { getDbInstance } from './storageService';
 
 const LOCAL_USERS_KEY = 'soundbook_system_users_v1';
 const SESSION_USER_KEY = 'soundbook_current_session_v1';
 const LOGIN_ATTEMPTS_KEY = 'soundbook_login_attempts_v1';
+const LOCAL_LOGIN_LOGS_KEY = 'soundbook_login_logs_v1';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 60 * 1000; // 連續失敗 5 次鎖定 60 秒
+const MAX_STORED_LOGIN_LOGS = 200; // 最多保留最近 200 筆登入紀錄
 
 export const DEFAULT_ADMIN_USER: AppUser = {
   id: 'user_admin',
@@ -25,6 +27,192 @@ export const GUEST_USER: CurrentUser = {
   role: 'guest',
   isGuest: true,
 };
+
+/**
+ * 偵測目前登入者的作業系統與瀏覽器摘要資訊
+ */
+function getDeviceAndBrowserInfo(): string {
+  if (typeof navigator === 'undefined') return 'Web Browser';
+  const ua = navigator.userAgent || '';
+  let os = '未知裝置';
+  if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS (iPhone/iPad)';
+  else if (/Android/i.test(ua)) os = 'Android';
+  else if (/Windows/i.test(ua)) os = 'Windows';
+  else if (/Mac OS X|Macintosh/i.test(ua)) os = 'macOS';
+  else if (/Linux/i.test(ua)) os = 'Linux';
+
+  let browser = '瀏覽器';
+  if (/Edg\//i.test(ua)) browser = 'Edge';
+  else if (/Chrome\//i.test(ua) && !/Edg\//i.test(ua)) browser = 'Chrome';
+  else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) browser = 'Safari';
+  else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+
+  return `${os} · ${browser}`;
+}
+
+/**
+ * 新增一筆人員登入紀錄（同步寫入本地 LocalStorage 與雲端 Firestore）
+ */
+export async function recordLoginLog(params: {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  status: 'success' | 'failed';
+  message?: string;
+}): Promise<LoginLogRecord> {
+  const now = new Date().toISOString();
+  const logEntry: LoginLogRecord = {
+    id: `login_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    userId: (params.userId || 'unknown').slice(0, 120),
+    username: (params.username || 'unknown').trim().slice(0, 50),
+    displayName: (params.displayName || params.username || '未知使用者').trim().slice(0, 50),
+    role: params.role || 'user',
+    status: params.status,
+    message: (params.message || '').trim().slice(0, 280),
+    deviceInfo: getDeviceAndBrowserInfo().slice(0, 280),
+    loginAt: now,
+  };
+
+  try {
+    const raw = localStorage.getItem(LOCAL_LOGIN_LOGS_KEY);
+    let currentLogs: LoginLogRecord[] = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(currentLogs)) currentLogs = [];
+    currentLogs = [logEntry, ...currentLogs].slice(0, MAX_STORED_LOGIN_LOGS);
+    localStorage.setItem(LOCAL_LOGIN_LOGS_KEY, JSON.stringify(currentLogs));
+  } catch (e) {
+    console.warn('儲存本機登入紀錄失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'loginLogs', logEntry.id), logEntry);
+    } catch (e) {
+      console.warn('儲存登入紀錄至 Firestore 失敗，已保存在本機:', e);
+    }
+  }
+
+  return logEntry;
+}
+
+/**
+ * 載入人員登入紀錄清單（合併雲端 Firestore 與本機紀錄，依登入時間由新到舊排列）
+ */
+export async function loadLoginLogs(): Promise<LoginLogRecord[]> {
+  let localLogs: LoginLogRecord[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_LOGIN_LOGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) localLogs = parsed;
+    }
+  } catch (e) {
+    console.warn('讀取本機登入紀錄失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'loginLogs'));
+      if (!snap.empty) {
+        const remoteLogs: LoginLogRecord[] = snap.docs.map((d) => d.data() as LoginLogRecord);
+        const byId = new Map<string, LoginLogRecord>();
+        localLogs.forEach((l) => {
+          if (l && l.id) byId.set(l.id, l);
+        });
+        remoteLogs.forEach((r) => {
+          if (r && r.id) byId.set(r.id, r);
+        });
+        const merged = Array.from(byId.values())
+          .sort((a, b) => new Date(b.loginAt || 0).getTime() - new Date(a.loginAt || 0).getTime())
+          .slice(0, MAX_STORED_LOGIN_LOGS);
+        try {
+          localStorage.setItem(LOCAL_LOGIN_LOGS_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore
+        }
+        return merged;
+      }
+    } catch (e) {
+      console.warn('從 Firestore 讀取登入紀錄受限或失敗，使用本地紀錄:', e);
+    }
+  }
+
+  // 若尚無任何登入紀錄但目前已有登入中的使用者，自動建立一筆當前登入紀錄
+  if (localLogs.length === 0) {
+    const currentSession = getCurrentSessionUser();
+    if (currentSession) {
+      const initialLog = await recordLoginLog({
+        userId: currentSession.id,
+        username: currentSession.username,
+        displayName: currentSession.displayName || currentSession.username,
+        role: currentSession.role,
+        status: 'success',
+        message: currentSession.isGuest ? '訪客模式登入系統' : '帳號密碼驗證登入成功（目前線上階段）',
+      });
+      return [initialLog];
+    }
+  }
+
+  return localLogs.sort(
+    (a, b) => new Date(b.loginAt || 0).getTime() - new Date(a.loginAt || 0).getTime()
+  );
+}
+
+/**
+ * 刪除單筆人員登入紀錄
+ */
+export async function deleteLoginLog(logId: string): Promise<void> {
+  try {
+    const raw = localStorage.getItem(LOCAL_LOGIN_LOGS_KEY);
+    let currentLogs: LoginLogRecord[] = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(currentLogs)) {
+      currentLogs = currentLogs.filter((l) => l.id !== logId);
+      localStorage.setItem(LOCAL_LOGIN_LOGS_KEY, JSON.stringify(currentLogs));
+    }
+  } catch (e) {
+    console.warn('本機刪除單筆登入紀錄失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      await deleteDoc(doc(db, 'loginLogs', logId));
+    } catch (e) {
+      console.warn('Firestore 刪除單筆登入紀錄失敗:', e);
+    }
+  }
+}
+
+/**
+ * 清空所有人員登入紀錄
+ */
+export async function clearAllLoginLogs(): Promise<void> {
+  let idsToDelete: string[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_LOGIN_LOGS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) {
+      idsToDelete = parsed.map((l: LoginLogRecord) => l.id).filter(Boolean);
+    }
+    localStorage.removeItem(LOCAL_LOGIN_LOGS_KEY);
+  } catch (e) {
+    console.warn('清空本機登入紀錄失敗:', e);
+  }
+
+  const db = getDbInstance();
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'loginLogs'));
+      const remoteIds = snap.docs.map((d) => d.id);
+      const allIds = Array.from(new Set([...idsToDelete, ...remoteIds]));
+      await Promise.all(allIds.map((id) => deleteDoc(doc(db, 'loginLogs', id)).catch(() => {})));
+    } catch (e) {
+      console.warn('清空 Firestore 登入紀錄失敗:', e);
+    }
+  }
+}
 
 /**
  * 讀取本機快取的系統使用者名冊
@@ -108,6 +296,32 @@ export async function loadSystemUsers(): Promise<AppUser[]> {
   // 同步快取至本機
   setLocalUsers(loadedUsers);
 
+  // 若目前已登入非訪客帳號，同步更新 Session 中的顯示名稱 (displayName) 與角色，確保上方工具列永遠顯示最新的「顯示名稱」
+  const currentSession = getCurrentSessionUser();
+  if (currentSession && !currentSession.isGuest && currentSession.role !== 'guest') {
+    const matchedSessionUser = loadedUsers.find(
+      (u) =>
+        u.id === currentSession.id ||
+        u.username.toLowerCase() === currentSession.username.toLowerCase()
+    );
+    if (matchedSessionUser) {
+      const latestDisplayName =
+        matchedSessionUser.displayName?.trim() || matchedSessionUser.username;
+      if (
+        currentSession.displayName !== latestDisplayName ||
+        currentSession.role !== matchedSessionUser.role
+      ) {
+        setCurrentSessionUser({
+          ...currentSession,
+          id: matchedSessionUser.id,
+          username: matchedSessionUser.username,
+          displayName: latestDisplayName,
+          role: matchedSessionUser.role,
+        });
+      }
+    }
+  }
+
   // 排序：admin 排首位，其餘依建立日期排序
   return loadedUsers.sort((a, b) => {
     if (a.username === 'admin') return -1;
@@ -131,7 +345,9 @@ export async function saveSystemUser(user: AppUser): Promise<AppUser> {
   };
 
   const users = await loadSystemUsers();
-  const existsIndex = users.findIndex((u) => u.id === cleaned.id || u.username.toLowerCase() === cleaned.username.toLowerCase());
+  const existsIndex = users.findIndex(
+    (u) => u.id === cleaned.id || u.username.toLowerCase() === cleaned.username.toLowerCase()
+  );
 
   let nextUsers: AppUser[];
   if (existsIndex >= 0) {
@@ -150,6 +366,23 @@ export async function saveSystemUser(user: AppUser): Promise<AppUser> {
     } catch (err) {
       console.error('儲存使用者至 Firestore 失敗:', err);
     }
+  }
+
+  // 若修改的是目前正在登入中的帳號，立即同步更新 Session 中的 displayName 與 role
+  const currentSession = getCurrentSessionUser();
+  if (
+    currentSession &&
+    !currentSession.isGuest &&
+    (currentSession.id === cleaned.id ||
+      currentSession.username.toLowerCase() === cleaned.username.toLowerCase())
+  ) {
+    setCurrentSessionUser({
+      ...currentSession,
+      id: cleaned.id,
+      username: cleaned.username,
+      displayName: cleaned.displayName,
+      role: cleaned.role,
+    });
   }
 
   return cleaned;
@@ -240,15 +473,36 @@ export async function authenticate(
   );
 
   if (!matched) {
-    const nextCount = (attemptRecord.lockedUntil > 0 && attemptRecord.lockedUntil <= now ? 0 : attemptRecord.count) + 1;
+    const existingAccount = users.find(
+      (u) => u.username.toLowerCase() === uTrim.toLowerCase()
+    );
+    const nextCount =
+      (attemptRecord.lockedUntil > 0 && attemptRecord.lockedUntil <= now ? 0 : attemptRecord.count) +
+      1;
     if (nextCount >= MAX_LOGIN_ATTEMPTS) {
       saveLoginAttemptRecord({ count: 0, lockedUntil: now + LOCKOUT_DURATION_MS });
+      recordLoginLog({
+        userId: existingAccount?.id || 'unknown',
+        username: existingAccount?.username || uTrim,
+        displayName: existingAccount?.displayName || uTrim,
+        role: existingAccount?.role || 'user',
+        status: 'failed',
+        message: `密碼錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，觸發系統安全鎖定 60 秒`,
+      }).catch(() => {});
       return {
         success: false,
         error: `帳號或密碼連續錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，為保護帳號安全，已暫時鎖定 60 秒！`,
       };
     }
     saveLoginAttemptRecord({ count: nextCount, lockedUntil: 0 });
+    recordLoginLog({
+      userId: existingAccount?.id || 'unknown',
+      username: existingAccount?.username || uTrim,
+      displayName: existingAccount?.displayName || uTrim,
+      role: existingAccount?.role || 'user',
+      status: 'failed',
+      message: existingAccount ? '登入失敗：密碼輸入錯誤' : '登入失敗：查無此登入帳號',
+    }).catch(() => {});
     return {
       success: false,
       error: `帳號或密碼輸入錯誤，請重新確認！（剩餘嘗試次數：${MAX_LOGIN_ATTEMPTS - nextCount} 次）`,
@@ -267,6 +521,14 @@ export async function authenticate(
   };
 
   setCurrentSessionUser(currentUser);
+  recordLoginLog({
+    userId: currentUser.id,
+    username: currentUser.username,
+    displayName: currentUser.displayName,
+    role: currentUser.role,
+    status: 'success',
+    message: '帳號密碼驗證登入成功',
+  }).catch(() => {});
   return { success: true, user: currentUser };
 }
 
@@ -275,6 +537,14 @@ export async function authenticate(
  */
 export function loginAsGuest(): CurrentUser {
   setCurrentSessionUser(GUEST_USER);
+  recordLoginLog({
+    userId: GUEST_USER.id,
+    username: GUEST_USER.username,
+    displayName: GUEST_USER.displayName,
+    role: 'guest',
+    status: 'success',
+    message: '以訪客模式免密進入系統',
+  }).catch(() => {});
   return GUEST_USER;
 }
 

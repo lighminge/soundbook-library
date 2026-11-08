@@ -27,7 +27,7 @@ import {
   saveAudioItem,
   saveCategoryItem,
 } from './services/storageService';
-import { getCurrentSessionUser, logout, GUEST_USER } from './services/authService';
+import { getCurrentSessionUser, loadSystemUsers, logout, GUEST_USER } from './services/authService';
 import { LoginView } from './components/LoginView';
 import { SystemManagementView, SystemSubTab } from './components/SystemManagementView';
 import { DashboardView } from './components/DashboardView';
@@ -98,6 +98,12 @@ export function App() {
     setDriveConnected(isGoogleDriveConfigured());
     loadLoginScreenConfig()
       .then((cfg) => setLoginScreenConfig(cfg))
+      .catch(() => {});
+    loadSystemUsers()
+      .then(() => {
+        const latest = getCurrentSessionUser();
+        if (latest) setCurrentUser(latest);
+      })
       .catch(() => {});
 
     // 支援跨裝置投放 / 連結分享時直接定位至指定語音作品
@@ -528,7 +534,9 @@ export function App() {
               {isAdmin ? (
                 <>
                   <Shield className="w-5 h-5 text-amber-400 shrink-0" />
-                  <span className="text-amber-200 font-bold">管理者 ({currentUser.username})</span>
+                  <span className="text-amber-200 font-bold truncate max-w-[180px]">
+                    {currentUser.displayName || currentUser.username}
+                  </span>
                 </>
               ) : isGuest ? (
                 <>
@@ -538,7 +546,7 @@ export function App() {
               ) : (
                 <>
                   <UserIcon className="w-5 h-5 text-stone-300 shrink-0" />
-                  <span className="text-[#E6D7C3] font-bold truncate max-w-[140px]">
+                  <span className="text-[#E6D7C3] font-bold truncate max-w-[180px]">
                     {currentUser.displayName || currentUser.username}
                   </span>
                 </>
@@ -738,6 +746,10 @@ export function App() {
             loginConfig={loginScreenConfig}
             onUpdateLoginConfig={setLoginScreenConfig}
             onCloudSaved={reloadAllData}
+            onUserUpdated={() => {
+              const latest = getCurrentSessionUser();
+              if (latest) setCurrentUser(latest);
+            }}
             initialSubTab={systemInitialSubTab}
           />
         )}
