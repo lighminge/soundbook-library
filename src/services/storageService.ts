@@ -544,14 +544,23 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
 
 /**
  * 載入所有已儲存的播放清單（優先自 Firestore 同步，離線或未就緒時使用本機 LocalStorage）
+ * 排序規則：依建立時間（createdAt）由舊到新排列，讓新建立的播放清單排在原本已有的清單之後
  */
 export async function loadSavedPlaylists(): Promise<SavedPlaylist[]> {
+  const sortByCreatedAsc = (list: SavedPlaylist[]) =>
+    [...list].sort((a, b) => {
+      const timeA = new Date(a.createdAt || 0).getTime();
+      const timeB = new Date(b.createdAt || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
+
   let localPlaylists: SavedPlaylist[] = [];
   try {
     const raw = localStorage.getItem(LOCAL_PLAYLISTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) localPlaylists = parsed;
+      if (Array.isArray(parsed)) localPlaylists = sortByCreatedAsc(parsed);
     }
   } catch (e) {
     console.warn('讀取本地播放清單失敗:', e);
@@ -563,15 +572,11 @@ export async function loadSavedPlaylists(): Promise<SavedPlaylist[]> {
       const snap = await getDocs(collection(db, 'playlists'));
       if (!snap.empty) {
         const remotePlaylists: SavedPlaylist[] = snap.docs.map((d) => d.data() as SavedPlaylist);
-        // 合併並以雲端資料為主
+        // 合併並以雲端資料為主，依建立時間由舊到新排列（新建清單排在既有清單之後）
         const map = new Map<string, SavedPlaylist>();
         localPlaylists.forEach((p) => map.set(p.id, p));
         remotePlaylists.forEach((p) => map.set(p.id, p));
-        const merged = Array.from(map.values()).sort(
-          (a, b) =>
-            new Date(b.updatedAt || b.createdAt).getTime() -
-            new Date(a.updatedAt || a.createdAt).getTime()
-        );
+        const merged = sortByCreatedAsc(Array.from(map.values()));
         try {
           localStorage.setItem(LOCAL_PLAYLISTS_KEY, JSON.stringify(merged));
         } catch {
@@ -593,7 +598,7 @@ export async function loadSavedPlaylists(): Promise<SavedPlaylist[]> {
 export async function saveSavedPlaylist(playlist: SavedPlaylist): Promise<void> {
   const sanitized: SavedPlaylist = JSON.parse(JSON.stringify(playlist));
 
-  // 1. 本機 LocalStorage 儲存
+  // 1. 本機 LocalStorage 儲存（新建的播放清單附加在原本有的清單之後）
   try {
     const raw = localStorage.getItem(LOCAL_PLAYLISTS_KEY);
     let currentList: SavedPlaylist[] = raw ? JSON.parse(raw) : [];
@@ -602,7 +607,7 @@ export async function saveSavedPlaylist(playlist: SavedPlaylist): Promise<void> 
     if (idx >= 0) {
       currentList[idx] = sanitized;
     } else {
-      currentList.unshift(sanitized);
+      currentList.push(sanitized);
     }
     localStorage.setItem(LOCAL_PLAYLISTS_KEY, JSON.stringify(currentList));
   } catch (e) {

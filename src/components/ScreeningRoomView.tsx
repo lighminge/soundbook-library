@@ -1027,13 +1027,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   };
 
   // 載入與重新整理已儲存的播放清單
-  const refreshSavedPlaylists = async () => {
+  const refreshSavedPlaylists = async (): Promise<SavedPlaylist[]> => {
     setIsLoadingPlaylists(true);
     try {
       const list = await loadSavedPlaylists();
       setSavedPlaylists(list);
+      return list;
     } catch (err) {
       console.warn('載入已儲存播放清單失敗:', err);
+      return savedPlaylists;
     } finally {
       setIsLoadingPlaylists(false);
     }
@@ -1043,8 +1045,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     refreshSavedPlaylists();
   }, []);
 
-  // 選取已儲存的播放清單
-  const handleSelectSavedPlaylist = (playlistId: string) => {
+  // 選取已儲存的播放清單（支援傳入 autoPlay 立即自動播放第一首）
+  const handleSelectSavedPlaylist = (playlistId: string, autoPlay = false) => {
     if (!playlistId) {
       setActiveSavedPlaylistId(null);
       localStorage.removeItem('soundbook_active_saved_playlist_id');
@@ -1058,14 +1060,47 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     localStorage.setItem('soundbook_active_saved_playlist_id', target.id);
     setPlaylistItemIds(target.audioItemIds);
 
-    // 如果當前播放的語音不在選取的清單中，切換至該清單的第一首
+    if (autoPlay) {
+      setShelfTab('playlist');
+    }
+
+    // 切換至該清單的第一首（或若 autoPlay 為 true 則強制載入並自動播放第一首）
     if (target.audioItemIds.length > 0) {
       const firstItem = audioItems.find((a) => a.id === target.audioItemIds[0]);
-      if (firstItem && firstItem.id !== currentItem?.id) {
-        onSelectAudio(firstItem);
+      if (firstItem) {
+        if (autoPlay) {
+          pendingAutoPlayRef.current = true;
+          onSelectAudio(firstItem);
+
+          const audio = audioRef.current;
+          if (audio && currentItem?.id === firstItem.id && playableScreeningUrl) {
+            audio.currentTime = 0;
+            audio
+              .play()
+              .then(() => {
+                setIsPlaying(true);
+                pendingAutoPlayRef.current = false;
+              })
+              .catch((err) => console.warn('載入播放清單自動播放失敗:', err));
+          }
+
+          if (window.innerWidth < 1024) {
+            if (playerStageRef.current) {
+              playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        } else if (firstItem.id !== currentItem?.id) {
+          onSelectAudio(firstItem);
+        }
       }
     }
-    showToast(`📂 已載入播放清單：「${target.name}」（共 ${target.audioItemIds.length} 部語音）`);
+    showToast(
+      autoPlay
+        ? `🎬 已載入並開始自動播放清單：「${target.name}」（共 ${target.audioItemIds.length} 部語音）`
+        : `📂 已載入播放清單：「${target.name}」（共 ${target.audioItemIds.length} 部語音）`
+    );
   };
 
   // 開啟「儲存播放清單」彈出視窗
@@ -1184,16 +1219,23 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       showToast('⚠️ 播放清單名稱不能為空');
       return;
     }
+    const nowIso = new Date().toISOString();
     const updated: SavedPlaylist = {
       ...editingPlaylistData,
       name: trimmed,
-      updatedAt: new Date().toISOString(),
+      createdAt: isCreatingNewPlaylist ? nowIso : editingPlaylistData.createdAt || nowIso,
+      updatedAt: nowIso,
     };
     await saveSavedPlaylist(updated);
     if (activeSavedPlaylistId === updated.id) {
       setPlaylistItemIds(updated.audioItemIds);
     }
-    await refreshSavedPlaylists();
+    const refreshedList = await refreshSavedPlaylists();
+    if (isCreatingNewPlaylist) {
+      // 新建立的播放清單排在原本有的清單之後，自動切換分頁至最後一頁以便立即檢視
+      const lastPage = Math.max(1, Math.ceil(refreshedList.length / managePageSize));
+      setManageCurrentPage(lastPage);
+    }
     setEditingPlaylistData(null);
     setIsCreatingNewPlaylist(false);
     setEditPickerSearchQuery('');
@@ -3988,7 +4030,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  handleSelectSavedPlaylist(p.id);
+                                  handleSelectSavedPlaylist(p.id, true);
                                   setShowManagePlaylistsModal(false);
                                 }}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-2xs ${
@@ -3996,7 +4038,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                                     ? 'bg-amber-400 text-[#2C221E]'
                                     : 'bg-[#2E5A44] hover:bg-[#234735] text-white'
                                 }`}
-                                title="載入此清單至放映室播放"
+                                title="載入此清單至放映室並自動播放"
                               >
                                 <Play className="w-3 h-3 fill-current" />
                                 <span>{isCurrentlyActive ? '重新載入' : '載入放映'}</span>

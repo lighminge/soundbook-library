@@ -585,6 +585,9 @@ export function App() {
             onDeleteAudioItem={handleDeleteAudioItem}
             onPlayInScreeningRoom={(item) => {
               setActiveAudioForPlayback(item);
+              setScreeningInitialPlaylistIds([]);
+              setScreeningInitialAutoPlay(true);
+              setScreeningCategoryFilter(item.categoryId || 'all');
               setActiveTab('screening');
             }}
             onClearEditing={() => setEditingAudioItem(null)}
@@ -604,6 +607,9 @@ export function App() {
             onRemoveTagFromAllAudioItems={handleRemoveTagFromAllAudioItems}
             onPlayInScreeningRoom={(item) => {
               setActiveAudioForPlayback(item);
+              setScreeningInitialPlaylistIds([]);
+              setScreeningInitialAutoPlay(true);
+              setScreeningCategoryFilter(item.categoryId || 'all');
               setActiveTab('screening');
             }}
             onEditInAudioLibrary={(item) => {
