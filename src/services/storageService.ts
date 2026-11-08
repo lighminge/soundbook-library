@@ -538,7 +538,11 @@ export async function saveAudioItem(item: AudioItem, allItems: AudioItem[]): Pro
 
   const db = getDbInstance();
   if (db) {
-    await setDoc(doc(db, 'audioItems', sanitizedItem.id), sanitizedItem);
+    try {
+      await setDoc(doc(db, 'audioItems', sanitizedItem.id), sanitizedItem);
+    } catch (e) {
+      console.warn('Firestore 儲存音檔失敗，已保存在本地:', e);
+    }
   }
 }
 
@@ -654,6 +658,7 @@ export async function deleteSavedPlaylist(playlistId: string): Promise<void> {
 
 /**
  * 載入所有已儲存的主講人名冊（優先自 Firestore 同步，離線或未就緒時使用本機 LocalStorage）
+ * 自動依主講人姓名（trim 後）去重，並自動清理重複 ID 的舊紀錄
  */
 export async function loadSavedSpeakers(): Promise<Speaker[]> {
   let localSpeakers: Speaker[] = [];
@@ -667,22 +672,53 @@ export async function loadSavedSpeakers(): Promise<Speaker[]> {
     console.warn('讀取本地主講人名冊失敗:', e);
   }
 
+  const deduplicateByName = (list: Speaker[]): { unique: Speaker[]; duplicateIds: string[] } => {
+    const byName = new Map<string, Speaker>();
+    const duplicateIds: string[] = [];
+    for (const rawSp of list) {
+      if (!rawSp || !rawSp.name || !rawSp.name.trim()) continue;
+      const cleanName = rawSp.name.trim();
+      const sp: Speaker = { ...rawSp, name: cleanName };
+      const existing = byName.get(cleanName);
+      if (!existing) {
+        byName.set(cleanName, sp);
+      } else {
+        // 保留較早建立或已存在於雲端的主講人 ID，將多餘重複的 ID 列入清理清單
+        if (sp.id !== existing.id) {
+          duplicateIds.push(sp.id);
+        }
+      }
+    }
+    const unique = Array.from(byName.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, 'zh-Hant')
+    );
+    return { unique, duplicateIds };
+  };
+
   const db = getDbInstance();
   if (db) {
     try {
       const snap = await getDocs(collection(db, 'speakers'));
       if (!snap.empty) {
         const remoteSpeakers: Speaker[] = snap.docs.map((d) => d.data() as Speaker);
-        const map = new Map<string, Speaker>();
-        localSpeakers.forEach((s) => map.set(s.id, s));
-        remoteSpeakers.forEach((s) => map.set(s.id, s));
-        const merged = Array.from(map.values()).sort((a, b) =>
-          a.name.localeCompare(b.name, 'zh-Hant')
-        );
+        // 以雲端資料為優先，再合併本地尚未同步的主講人，並依姓名去重
+        const { unique: merged, duplicateIds } = deduplicateByName([
+          ...remoteSpeakers,
+          ...localSpeakers,
+        ]);
         try {
           localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(merged));
         } catch {
           // ignore
+        }
+        // 背景清理雲端重複的主講人文件
+        if (duplicateIds.length > 0) {
+          const validIds = new Set(merged.map((s) => s.id));
+          duplicateIds.forEach((dupId) => {
+            if (!validIds.has(dupId)) {
+              deleteDoc(doc(db, 'speakers', dupId)).catch(() => {});
+            }
+          });
         }
         return merged;
       }
@@ -691,23 +727,49 @@ export async function loadSavedSpeakers(): Promise<Speaker[]> {
     }
   }
 
-  return localSpeakers.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+  const { unique: dedupedLocal } = deduplicateByName(localSpeakers);
+  try {
+    localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(dedupedLocal));
+  } catch {
+    // ignore
+  }
+  return dedupedLocal;
 }
 
 /**
  * 儲存/更新單一主講人（同時保存至本地 LocalStorage 與雲端 Firestore）
  */
-export async function saveSavedSpeaker(speaker: Speaker): Promise<void> {
-  const sanitized: Speaker = JSON.parse(JSON.stringify(speaker));
+export async function saveSavedSpeaker(speaker: Speaker, previousName?: string): Promise<void> {
+  const sanitized: Speaker = {
+    ...JSON.parse(JSON.stringify(speaker)),
+    name: speaker.name.trim(),
+  };
+  const prevClean = previousName?.trim();
 
-  // 1. 本地 LocalStorage 儲存
+  // 1. 本地 LocalStorage 儲存（同時比對 id、新名稱與舊名稱，避免產生重複項目）
   try {
     const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
     let currentList: Speaker[] = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(currentList)) currentList = [];
-    const idx = currentList.findIndex((s) => s.id === sanitized.id || s.name === sanitized.name);
-    if (idx >= 0) {
-      currentList[idx] = sanitized;
+    const matchingIndices: number[] = [];
+    currentList.forEach((s, idx) => {
+      const sName = (s.name || '').trim();
+      if (
+        s.id === sanitized.id ||
+        sName === sanitized.name ||
+        (prevClean && sName === prevClean)
+      ) {
+        matchingIndices.push(idx);
+      }
+    });
+
+    if (matchingIndices.length > 0) {
+      const primaryIdx = matchingIndices[0];
+      currentList[primaryIdx] = sanitized;
+      // 移除其餘重複項目
+      currentList = currentList.filter(
+        (_, idx) => idx === primaryIdx || !matchingIndices.includes(idx)
+      );
     } else {
       currentList.push(sanitized);
     }
@@ -728,15 +790,140 @@ export async function saveSavedSpeaker(speaker: Speaker): Promise<void> {
 }
 
 /**
- * 刪除單一主講人（同時於本地 LocalStorage 與雲端 Firestore 刪除）
+ * 修改主講人姓名：同步更新本地 LocalStorage 與雲端 Firestore，並徹底清除舊名稱或重複的紀錄
  */
-export async function deleteSavedSpeaker(speakerId: string): Promise<void> {
+export async function renameSavedSpeaker(
+  oldNameInput: string,
+  newNameInput: string
+): Promise<Speaker[]> {
+  const oldName = oldNameInput.trim();
+  const newName = newNameInput.trim();
+  const now = new Date().toISOString();
+
+  let currentList: Speaker[] = [];
+  try {
+    const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) currentList = parsed;
+    }
+  } catch {
+    // ignore
+  }
+
+  const db = getDbInstance();
+  let remoteDocs: Speaker[] = [];
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'speakers'));
+      remoteDocs = snap.docs.map((d) => d.data() as Speaker);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 優先採用雲端既有的主講人文件（確保 id 與 immutable 的 createdAt 與 Firestore 完全一致）
+  const matchedRemote = remoteDocs.filter(
+    (s) => (s.name || '').trim() === oldName || (s.name || '').trim() === newName
+  );
+  const matchedLocal = currentList.filter(
+    (s) => (s.name || '').trim() === oldName || (s.name || '').trim() === newName
+  );
+
+  // 挑選主要保留的主講人紀錄（若新名稱已存在則優先保留新名稱紀錄，否則保留舊名稱紀錄）
+  const primaryBase =
+    matchedRemote.find((s) => (s.name || '').trim() === newName) ||
+    matchedRemote.find((s) => (s.name || '').trim() === oldName) ||
+    matchedLocal.find((s) => (s.name || '').trim() === newName) ||
+    matchedLocal.find((s) => (s.name || '').trim() === oldName);
+
+  const updatedPrimary: Speaker = primaryBase
+    ? {
+        id: primaryBase.id,
+        name: newName,
+        createdAt: primaryBase.createdAt || now,
+        updatedAt: now,
+      }
+    : {
+        id: `speaker_${Date.now()}`,
+        name: newName,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+  // 整理合併後的主講人清單（移除所有舊名稱與同名的多餘紀錄，只放回單一 updatedPrimary）
+  const combinedSource = [...remoteDocs, ...currentList];
+  const byName = new Map<string, Speaker>();
+  const obsoleteIds = new Set<string>();
+
+  for (const sp of combinedSource) {
+    if (!sp || !sp.name) continue;
+    const spName = sp.name.trim();
+    if (!spName) continue;
+    if (spName === oldName || spName === newName || sp.id === updatedPrimary.id) {
+      if (sp.id !== updatedPrimary.id) {
+        obsoleteIds.add(sp.id);
+      }
+      continue;
+    }
+    if (!byName.has(spName)) {
+      byName.set(spName, { ...sp, name: spName });
+    } else {
+      const kept = byName.get(spName)!;
+      if (sp.id !== kept.id) obsoleteIds.add(sp.id);
+    }
+  }
+
+  byName.set(newName, updatedPrimary);
+  const finalSpeakers = Array.from(byName.values()).sort((a, b) =>
+    a.name.localeCompare(b.name, 'zh-Hant')
+  );
+
+  // 1. 寫入本地 LocalStorage
+  try {
+    localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(finalSpeakers));
+  } catch (e) {
+    console.warn('本地更新主講人名冊失敗:', e);
+  }
+
+  // 2. 寫入雲端 Firestore 並刪除多餘的舊文件
+  if (db) {
+    try {
+      await setDoc(doc(db, 'speakers', updatedPrimary.id), updatedPrimary);
+    } catch (e) {
+      console.warn('Firestore 更新主講人失敗:', e);
+    }
+    for (const delId of obsoleteIds) {
+      try {
+        await deleteDoc(doc(db, 'speakers', delId));
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return finalSpeakers;
+}
+
+/**
+ * 刪除單一主講人（同時依 ID 與姓名於本地 LocalStorage 與雲端 Firestore 刪除所有同名紀錄）
+ */
+export async function deleteSavedSpeaker(
+  speakerId: string,
+  speakerName?: string
+): Promise<void> {
+  const cleanName = speakerName?.trim();
+
   // 1. 本地 LocalStorage 刪除
   try {
     const raw = localStorage.getItem(LOCAL_SPEAKERS_KEY);
     let currentList: Speaker[] = raw ? JSON.parse(raw) : [];
     if (Array.isArray(currentList)) {
-      currentList = currentList.filter((s) => s.id !== speakerId);
+      currentList = currentList.filter(
+        (s) =>
+          s.id !== speakerId &&
+          (!cleanName || (s.name || '').trim() !== cleanName)
+      );
       localStorage.setItem(LOCAL_SPEAKERS_KEY, JSON.stringify(currentList));
     }
   } catch (e) {
@@ -747,7 +934,18 @@ export async function deleteSavedSpeaker(speakerId: string): Promise<void> {
   const db = getDbInstance();
   if (db) {
     try {
-      await deleteDoc(doc(db, 'speakers', speakerId));
+      if (speakerId) {
+        await deleteDoc(doc(db, 'speakers', speakerId));
+      }
+      if (cleanName) {
+        const snap = await getDocs(collection(db, 'speakers'));
+        for (const d of snap.docs) {
+          const data = d.data() as Speaker;
+          if ((data.name || '').trim() === cleanName) {
+            await deleteDoc(doc(db, 'speakers', d.id));
+          }
+        }
+      }
     } catch (e) {
       console.warn('Firestore 刪除主講人失敗:', e);
     }

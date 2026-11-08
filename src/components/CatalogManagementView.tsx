@@ -41,6 +41,7 @@ import {
   downloadAudioItemFile,
   loadSavedSpeakers,
   saveSavedSpeaker,
+  renameSavedSpeaker,
   deleteSavedSpeaker,
 } from '../services/storageService';
 import { getAudioItemCallNumberMap, getAudioFileType } from '../utils/audioFileUtils';
@@ -55,6 +56,8 @@ interface CatalogManagementViewProps {
   onSaveAudioItem: (item: AudioItem) => Promise<void>;
   onBatchMoveAudioCategory: (itemIds: string[], targetCategoryId: string) => Promise<void>;
   onRemoveTagFromAllAudioItems?: (tagToRemove: string) => Promise<void>;
+  onRenameSpeakerInAllAudioItems?: (oldSpeakerName: string, newSpeakerName: string) => Promise<number>;
+  onRemoveSpeakerFromAllAudioItems?: (speakerToRemove: string) => Promise<number>;
   onPlayInScreeningRoom: (item: AudioItem) => void;
   onEditInAudioLibrary: (item: AudioItem) => void;
 }
@@ -84,6 +87,8 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   onSaveAudioItem,
   onBatchMoveAudioCategory,
   onRemoveTagFromAllAudioItems,
+  onRenameSpeakerInAllAudioItems,
+  onRemoveSpeakerFromAllAudioItems,
   onPlayInScreeningRoom,
   onEditInAudioLibrary,
 }) => {
@@ -303,10 +308,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   // ============================================================================
   // 主講人名冊載入、統計與維護（新增、修改、刪除、指派）
   // ============================================================================
+  const isMutatingSpeakerRef = useRef<boolean>(false);
+
   useEffect(() => {
+    if (isMutatingSpeakerRef.current) return;
     let isMounted = true;
     loadSavedSpeakers().then((saved) => {
-      if (!isMounted) return;
+      if (!isMounted || isMutatingSpeakerRef.current) return;
       const usedSpeakers = new Set<string>();
       audioItems.forEach((a) => {
         if (a.speaker && a.speaker.trim()) {
@@ -314,7 +322,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         }
       });
 
-      const existingNames = new Set(saved.map((s) => s.name));
+      const existingNames = new Set(saved.map((s) => s.name.trim()));
       const newlyDiscovered: Speaker[] = [];
       const now = new Date().toISOString();
       usedSpeakers.forEach((name) => {
@@ -328,7 +336,14 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         }
       });
 
-      const combined = [...saved, ...newlyDiscovered].sort((a, b) =>
+      const byName = new Map<string, Speaker>();
+      [...saved, ...newlyDiscovered].forEach((sp) => {
+        const clean = sp.name.trim();
+        if (clean && !byName.has(clean)) {
+          byName.set(clean, { ...sp, name: clean });
+        }
+      });
+      const combined = Array.from(byName.values()).sort((a, b) =>
         a.name.localeCompare(b.name, 'zh-Hant')
       );
       setSpeakers(combined);
@@ -449,7 +464,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     setSpeakerTargetItem(null);
   };
 
-  // 確認修改主講人名稱（同步更新名冊與所有已關聯之語音檔）
+  // 確認修改主講人名稱（同步更新名冊與所有已關聯之語音檔，不會產生多餘重複項目）
   const handleConfirmEditSpeaker = async () => {
     if (!editingSpeakerOldName) return;
     const oldName = editingSpeakerOldName.trim();
@@ -461,73 +476,128 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }
     if (oldName === newName) {
       setEditingSpeakerOldName(null);
+      setEditingSpeakerNewName('');
       return;
     }
 
-    const targetSp = speakers.find((s) => s.name === oldName);
-    const now = new Date().toISOString();
-    if (targetSp) {
-      const updatedSp: Speaker = {
-        ...targetSp,
-        name: newName,
-        updatedAt: now,
-      };
-      await saveSavedSpeaker(updatedSp);
-      setSpeakers((prev) =>
-        prev
-          .map((s) => (s.id === targetSp.id ? updatedSp : s))
-          .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+    isMutatingSpeakerRef.current = true;
+    try {
+      // 1. 先在本地將名冊內的舊名稱立即更新為新名稱並去重（若修改為已存在的名稱則自動合併）
+      const now = new Date().toISOString();
+      setSpeakers((prev) => {
+        const byName = new Map<string, Speaker>();
+        prev.forEach((s) => {
+          const clean = s.name.trim();
+          const finalName = clean === oldName ? newName : clean;
+          if (!byName.has(finalName)) {
+            byName.set(
+              finalName,
+              clean === oldName ? { ...s, name: newName, updatedAt: now } : s
+            );
+          }
+        });
+        if (!byName.has(newName)) {
+          byName.set(newName, {
+            id: `speaker_${Date.now()}`,
+            name: newName,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+        return Array.from(byName.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, 'zh-Hant')
+        );
+      });
+
+      // 2. 一次性批次同步更新所有關聯此主講人的語音檔（避免逐筆更新造成舊閉包覆蓋與重複探索）
+      const affectedItems = audioItems.filter(
+        (a) => (a.speaker || '').trim() === oldName
       );
-    }
+      let updatedCount = affectedItems.length;
 
-    // 找出所有使用 oldName 的語音檔，批次更新
-    const affectedItems = audioItems.filter((a) => a.speaker === oldName);
-    for (const item of affectedItems) {
-      const updated: AudioItem = {
-        ...item,
-        speaker: newName,
-        updatedAt: now,
-      };
-      await onSaveAudioItem(updated);
-    }
+      if (onRenameSpeakerInAllAudioItems) {
+        updatedCount = await onRenameSpeakerInAllAudioItems(oldName, newName);
+      } else {
+        for (const item of affectedItems) {
+          const updated: AudioItem = {
+            ...item,
+            speaker: newName,
+            updatedAt: now,
+          };
+          await onSaveAudioItem(updated);
+        }
+      }
 
-    if (filterSpeaker === oldName) {
-      setFilterSpeaker(newName);
-    }
+      // 3. 同步更新本地 LocalStorage 與雲端 Firestore 主講人名冊（並自動清理舊名稱文件）
+      const nextSpeakers = await renameSavedSpeaker(oldName, newName);
+      setSpeakers(nextSpeakers);
 
-    showToast(`✅ 已將主講人「${oldName}」修改為「${newName}」（同步更新 ${affectedItems.length} 筆語音檔）！`);
-    setEditingSpeakerOldName(null);
-    setEditingSpeakerNewName('');
+      if (filterSpeaker === oldName) {
+        setFilterSpeaker(newName);
+      }
+
+      setEditingSpeakerOldName(null);
+      setEditingSpeakerNewName('');
+      showToast(
+        `✅ 已將主講人「${oldName}」修改為「${newName}」（同步更新 ${updatedCount} 筆語音檔）！`
+      );
+    } finally {
+      window.setTimeout(() => {
+        isMutatingSpeakerRef.current = false;
+      }, 300);
+    }
   };
 
   // 確認刪除主講人（自名冊刪除，並自動解除所有關聯語音檔之主講人設定）
   const handleConfirmDeleteSpeaker = async () => {
     if (!deletingSpeakerName) return;
     const targetName = deletingSpeakerName.trim();
-    const targetSp = speakers.find((s) => s.name === targetName);
+    const matchingSpeakers = speakers.filter((s) => s.name.trim() === targetName);
 
-    if (targetSp) {
-      await deleteSavedSpeaker(targetSp.id);
-      setSpeakers((prev) => prev.filter((s) => s.id !== targetSp.id));
+    isMutatingSpeakerRef.current = true;
+    try {
+      setSpeakers((prev) => prev.filter((s) => s.name.trim() !== targetName));
+
+      const affectedItems = audioItems.filter(
+        (a) => (a.speaker || '').trim() === targetName
+      );
+      let updatedCount = affectedItems.length;
+
+      if (onRemoveSpeakerFromAllAudioItems) {
+        updatedCount = await onRemoveSpeakerFromAllAudioItems(targetName);
+      } else {
+        const now = new Date().toISOString();
+        for (const item of affectedItems) {
+          const updated: AudioItem = {
+            ...item,
+            speaker: undefined,
+            updatedAt: now,
+          };
+          await onSaveAudioItem(updated);
+        }
+      }
+
+      if (matchingSpeakers.length > 0) {
+        for (const sp of matchingSpeakers) {
+          await deleteSavedSpeaker(sp.id, targetName);
+        }
+      } else {
+        await deleteSavedSpeaker('', targetName);
+      }
+
+      if (filterSpeaker === targetName) {
+        setFilterSpeaker('all');
+      }
+
+      setDeletingSpeakerName(null);
+      showToast(
+        `🗑️ 已刪除主講人「${targetName}」（已解除 ${updatedCount} 筆語音檔之主講人關聯）！`
+      );
+    } finally {
+      window.setTimeout(() => {
+        isMutatingSpeakerRef.current = false;
+      }, 300);
     }
-
-    const affectedItems = audioItems.filter((a) => a.speaker === targetName);
-    const now = new Date().toISOString();
-    for (const item of affectedItems) {
-      const updated: AudioItem = {
-        ...item,
-        speaker: undefined,
-        updatedAt: now,
-      };
-      await onSaveAudioItem(updated);
-    }
-
-    if (filterSpeaker === targetName) {
-      setFilterSpeaker('all');
-    }
-
-    showToast(`🗑️ 已刪除主講人「${targetName}」（已解除 ${affectedItems.length} 筆語音檔之主講人關聯）！`);
-    setDeletingSpeakerName(null);
   };
 
   // ============================================================================
@@ -3037,7 +3107,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
             <div className="p-6 space-y-4">
               <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#7A4B1D] leading-relaxed">
-                ℹ️ 修改後，名冊與所有目前標記為「<strong>{editingSpeakerOldName}</strong>」的語音檔案（共 {audioItems.filter((a) => a.speaker === editingSpeakerOldName).length} 筆）將同步自動更新。
+                ℹ️ 修改後，名冊與所有目前標記為「<strong>{editingSpeakerOldName}</strong>」的語音檔案（共 {audioItems.filter((a) => (a.speaker || '').trim() === editingSpeakerOldName.trim()).length} 筆）將同步自動更新。
               </div>
 
               <div>
@@ -3113,7 +3183,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               </p>
 
               {(() => {
-                const affectedCount = audioItems.filter((a) => a.speaker === deletingSpeakerName).length;
+                const affectedCount = audioItems.filter((a) => (a.speaker || '').trim() === deletingSpeakerName.trim()).length;
                 if (affectedCount > 0) {
                   return (
                     <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#6E4720] leading-relaxed">

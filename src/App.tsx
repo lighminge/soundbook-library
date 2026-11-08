@@ -270,16 +270,127 @@ export function App() {
     }
   };
 
+  // 批次將所有指定舊主講人的語音檔同步更新為新主講人名稱
+  const handleRenameSpeakerInAllAudioItems = async (
+    oldSpeakerName: string,
+    newSpeakerName: string
+  ): Promise<number> => {
+    const cleanOld = oldSpeakerName.trim();
+    const cleanNew = newSpeakerName.trim();
+    if (!cleanOld || !cleanNew || cleanOld === cleanNew) return 0;
+
+    const now = new Date().toISOString();
+    const updatedList: AudioItem[] = [];
+    let latestAllItems: AudioItem[] = [];
+
+    setAudioItems((prev) => {
+      const nextItems = prev.map((a) => {
+        if ((a.speaker || '').trim() === cleanOld) {
+          const updated: AudioItem = {
+            ...a,
+            speaker: cleanNew,
+            updatedAt: now,
+          };
+          updatedList.push(updated);
+          return updated;
+        }
+        return a;
+      });
+      latestAllItems = nextItems;
+      return nextItems;
+    });
+
+    if (activeAudioForPlayback && (activeAudioForPlayback.speaker || '').trim() === cleanOld) {
+      setActiveAudioForPlayback({
+        ...activeAudioForPlayback,
+        speaker: cleanNew,
+        updatedAt: now,
+      });
+    }
+
+    if (updatedList.length > 0) {
+      const allToPersist =
+        latestAllItems.length > 0
+          ? latestAllItems
+          : audioItems.map((a) =>
+              (a.speaker || '').trim() === cleanOld
+                ? { ...a, speaker: cleanNew, updatedAt: now }
+                : a
+            );
+      await Promise.all(updatedList.map((item) => saveAudioItem(item, allToPersist)));
+    }
+    return updatedList.length;
+  };
+
+  // 批次從所有語音檔中解除指定主講人
+  const handleRemoveSpeakerFromAllAudioItems = async (
+    speakerToRemove: string
+  ): Promise<number> => {
+    const cleanTarget = speakerToRemove.trim();
+    if (!cleanTarget) return 0;
+
+    const now = new Date().toISOString();
+    const updatedList: AudioItem[] = [];
+    let latestAllItems: AudioItem[] = [];
+
+    setAudioItems((prev) => {
+      const nextItems = prev.map((a) => {
+        if ((a.speaker || '').trim() === cleanTarget) {
+          const updated: AudioItem = {
+            ...a,
+            speaker: undefined,
+            updatedAt: now,
+          };
+          updatedList.push(updated);
+          return updated;
+        }
+        return a;
+      });
+      latestAllItems = nextItems;
+      return nextItems;
+    });
+
+    if (activeAudioForPlayback && (activeAudioForPlayback.speaker || '').trim() === cleanTarget) {
+      setActiveAudioForPlayback({
+        ...activeAudioForPlayback,
+        speaker: undefined,
+        updatedAt: now,
+      });
+    }
+
+    if (updatedList.length > 0) {
+      const allToPersist =
+        latestAllItems.length > 0
+          ? latestAllItems
+          : audioItems.map((a) =>
+              (a.speaker || '').trim() === cleanTarget
+                ? { ...a, speaker: undefined, updatedAt: now }
+                : a
+            );
+      await Promise.all(updatedList.map((item) => saveAudioItem(item, allToPersist)));
+    }
+    return updatedList.length;
+  };
+
   // 儲存（新增或更新）語音檔
   const handleSaveAudioItem = async (item: AudioItem) => {
-    const exists = audioItems.some((a) => a.id === item.id);
-    const nextItems = exists
-      ? audioItems.map((a) => (a.id === item.id ? item : a))
-      : [item, ...audioItems];
-
-    setAudioItems(nextItems);
+    let computedNextItems: AudioItem[] = [];
+    setAudioItems((prev) => {
+      const exists = prev.some((a) => a.id === item.id);
+      const nextItems = exists
+        ? prev.map((a) => (a.id === item.id ? item : a))
+        : [item, ...prev];
+      computedNextItems = nextItems;
+      return nextItems;
+    });
     setActiveAudioForPlayback(item);
-    await saveAudioItem(item, nextItems);
+    const itemsToSave =
+      computedNextItems.length > 0
+        ? computedNextItems
+        : audioItems.some((a) => a.id === item.id)
+        ? audioItems.map((a) => (a.id === item.id ? item : a))
+        : [item, ...audioItems];
+    await saveAudioItem(item, itemsToSave);
   };
 
   // 刪除語音檔（同時刪除 Firebase 資料與 Google 雲端硬碟內的實體檔案）
@@ -605,6 +716,8 @@ export function App() {
             onSaveAudioItem={handleSaveAudioItem}
             onBatchMoveAudioCategory={handleBatchMoveAudioCategory}
             onRemoveTagFromAllAudioItems={handleRemoveTagFromAllAudioItems}
+            onRenameSpeakerInAllAudioItems={handleRenameSpeakerInAllAudioItems}
+            onRemoveSpeakerFromAllAudioItems={handleRemoveSpeakerFromAllAudioItems}
             onPlayInScreeningRoom={(item) => {
               setActiveAudioForPlayback(item);
               setScreeningInitialPlaylistIds([]);

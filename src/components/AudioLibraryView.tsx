@@ -321,7 +321,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         }
       });
 
-      const existingNames = new Set(saved.map((s) => s.name));
+      const existingNames = new Set(saved.map((s) => s.name.trim()));
       const newlyDiscovered: Speaker[] = [];
       const now = new Date().toISOString();
       usedSpeakers.forEach((name) => {
@@ -335,7 +335,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         }
       });
 
-      const combined = [...saved, ...newlyDiscovered].sort((a, b) =>
+      const byName = new Map<string, Speaker>();
+      [...saved, ...newlyDiscovered].forEach((sp) => {
+        const clean = sp.name.trim();
+        if (clean && !byName.has(clean)) {
+          byName.set(clean, { ...sp, name: clean });
+        }
+      });
+      const combined = Array.from(byName.values()).sort((a, b) =>
         a.name.localeCompare(b.name, 'zh-Hant')
       );
       setSpeakers(combined);
