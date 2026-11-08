@@ -30,8 +30,13 @@ import {
   Compass,
   XCircle,
   Monitor,
+  CalendarDays,
+  ArrowUpDown,
+  BarChart3,
 } from 'lucide-react';
-import { AppUser, CloudConfig, LoginLogRecord, LoginScreenConfig } from '../types';
+import { AppUser, AudioItem, Category, CloudConfig, LoginLogRecord, LoginScreenConfig } from '../types';
+import { PaginationBar, dateInputToEndMs, dateInputToStartMs } from './PaginationBar';
+import { PlayStatisticsPanel } from './PlayStatisticsPanel';
 import {
   loadSystemUsers,
   saveSystemUser,
@@ -167,7 +172,7 @@ function doPost(e) {
   }
 }`;
 
-export type SystemSubTab = 'accounts' | 'loginScreen' | 'cloud';
+export type SystemSubTab = 'accounts' | 'loginScreen' | 'cloud' | 'statistics';
 
 interface SystemManagementViewProps {
   currentUserId: string;
@@ -176,6 +181,8 @@ interface SystemManagementViewProps {
   onCloudSaved: () => void;
   onUserUpdated?: () => void;
   initialSubTab?: SystemSubTab;
+  audioItems?: AudioItem[];
+  categories?: Category[];
 }
 
 export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
@@ -185,6 +192,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   onCloudSaved,
   onUserUpdated,
   initialSubTab = 'accounts',
+  audioItems = [],
+  categories = [],
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SystemSubTab>(initialSubTab);
 
@@ -221,6 +230,17 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   const [logSearchQuery, setLogSearchQuery] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [confirmClearLogs, setConfirmClearLogs] = useState(false);
+  const [logDateFrom, setLogDateFrom] = useState('');
+  const [logDateTo, setLogDateTo] = useState('');
+  const [logSortField, setLogSortField] = useState<'loginAt' | 'username' | 'deviceInfo'>('loginAt');
+  const [logSortDir, setLogSortDir] = useState<'asc' | 'desc'>('desc');
+  const [logPageSize, setLogPageSize] = useState<number>(10);
+  const [logPage, setLogPage] = useState<number>(1);
+
+  // 篩選條件變更時回到第一頁
+  useEffect(() => {
+    setLogPage(1);
+  }, [logSearchQuery, logStatusFilter, logDateFrom, logDateTo, logSortField, logSortDir, logPageSize]);
 
   const fetchLoginLogs = async () => {
     setLoadingLogs(true);
@@ -580,6 +600,19 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
             >
               <Cloud className="w-4 h-4" />
               <span>雲端連線</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('statistics')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                activeSubTab === 'statistics'
+                  ? 'bg-[#8B5A2B] text-[#FFFDF9] shadow-md border border-[#D4A373]/40'
+                  : 'text-[#C8B29B] hover:text-white hover:bg-[#3A271C]'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>統計作業</span>
             </button>
           </div>
         </div>
@@ -1025,6 +1058,65 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                 </div>
               </div>
 
+              {/* 日期起迄、排序條件列 */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-xl bg-[#FAF4E8] border border-[#E5D9C5]">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#5C3A1B]">
+                  <CalendarDays className="w-4 h-4 text-[#8B5A2B]" />
+                  <span className="font-semibold">登入日期</span>
+                  <input
+                    type="date"
+                    value={logDateFrom}
+                    max={logDateTo || undefined}
+                    onChange={(e) => setLogDateFrom(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                  <span>至</span>
+                  <input
+                    type="date"
+                    value={logDateTo}
+                    min={logDateFrom || undefined}
+                    onChange={(e) => setLogDateTo(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#8B5A2B]"
+                  />
+                  {(logDateFrom || logDateTo) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLogDateFrom('');
+                        setLogDateTo('');
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#EFE2C8] text-xs font-semibold cursor-pointer"
+                    >
+                      清除日期
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#5C3A1B]">
+                  <ArrowUpDown className="w-4 h-4 text-[#8B5A2B]" />
+                  <span className="font-semibold">排序</span>
+                  <select
+                    value={logSortField}
+                    onChange={(e) =>
+                      setLogSortField(e.target.value as 'loginAt' | 'username' | 'deviceInfo')
+                    }
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
+                  >
+                    <option value="loginAt">登入時間</option>
+                    <option value="username">登入帳號</option>
+                    <option value="deviceInfo">裝置 / 瀏覽器</option>
+                  </select>
+                  <select
+                    value={logSortDir}
+                    onChange={(e) => setLogSortDir(e.target.value as 'asc' | 'desc')}
+                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
+                  >
+                    <option value="desc">由大到小</option>
+                    <option value="asc">由小到大</option>
+                  </select>
+                </div>
+              </div>
+
               {/* 登入紀錄清單表格 */}
               {loadingLogs ? (
                 <div className="py-12 flex flex-col items-center justify-center text-[#7A6855] gap-2">
@@ -1033,10 +1125,15 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                 </div>
               ) : (() => {
                   const q = logSearchQuery.trim().toLowerCase();
+                  const fromMs = dateInputToStartMs(logDateFrom);
+                  const toMs = dateInputToEndMs(logDateTo);
                   const filteredLogs = loginLogs.filter((log) => {
                     if (logStatusFilter !== 'all' && log.status !== logStatusFilter) {
                       return false;
                     }
+                    const ts = new Date(log.loginAt || 0).getTime();
+                    if (fromMs !== null && ts < fromMs) return false;
+                    if (toMs !== null && ts > toMs) return false;
                     if (!q) return true;
                     return (
                       log.displayName.toLowerCase().includes(q) ||
@@ -1045,6 +1142,31 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                       (log.message || '').toLowerCase().includes(q)
                     );
                   });
+
+                  const dirFactor = logSortDir === 'asc' ? 1 : -1;
+                  filteredLogs.sort((a, b) => {
+                    let cmp = 0;
+                    if (logSortField === 'loginAt') {
+                      cmp =
+                        new Date(a.loginAt || 0).getTime() - new Date(b.loginAt || 0).getTime();
+                    } else if (logSortField === 'username') {
+                      cmp = (a.username || '').localeCompare(b.username || '', 'zh-Hant');
+                    } else {
+                      cmp = (a.deviceInfo || '').localeCompare(b.deviceInfo || '', 'zh-Hant');
+                    }
+                    if (cmp === 0 && logSortField !== 'loginAt') {
+                      // 次要排序：登入時間由新到舊
+                      cmp =
+                        (new Date(b.loginAt || 0).getTime() - new Date(a.loginAt || 0).getTime()) *
+                        dirFactor;
+                    }
+                    return cmp * dirFactor;
+                  });
+
+                  const logTotalPages = Math.max(1, Math.ceil(filteredLogs.length / logPageSize));
+                  const safeLogPage = Math.min(logPage, logTotalPages);
+                  const pageStart = (safeLogPage - 1) * logPageSize;
+                  const pagedLogs = filteredLogs.slice(pageStart, pageStart + logPageSize);
 
                   if (filteredLogs.length === 0) {
                     return (
@@ -1055,7 +1177,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                   }
 
                   return (
-                    <div className="border border-[#E5D9C5] rounded-xl overflow-x-auto max-h-[480px] overflow-y-auto">
+                    <div className="space-y-3">
+                    <div className="border border-[#E5D9C5] rounded-xl overflow-x-auto">
                       <table className="w-full text-left border-collapse min-w-[760px]">
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-[#F3ECE0] text-[#5C3A1B] text-xs border-b border-[#E5D9C5]">
@@ -1070,10 +1193,10 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#EFE6D5] text-sm bg-white">
-                          {filteredLogs.map((log, idx) => (
+                          {pagedLogs.map((log, idx) => (
                             <tr key={log.id} className="hover:bg-[#FAF6EE] transition-colors">
                               <td className="py-2.5 px-3.5 text-xs font-mono text-[#8C7A6B]">
-                                {idx + 1}
+                                {pageStart + idx + 1}
                               </td>
                               <td className="py-2.5 px-3.5 text-xs font-mono text-[#4A3728] whitespace-nowrap">
                                 {log.loginAt
@@ -1149,11 +1272,26 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                         </tbody>
                       </table>
                     </div>
+                    <PaginationBar
+                      totalItems={filteredLogs.length}
+                      page={safeLogPage}
+                      pageSize={logPageSize}
+                      onPageChange={setLogPage}
+                      onPageSizeChange={setLogPageSize}
+                    />
+                    </div>
                   );
                 })()}
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 新分頁：統計作業 */}
+      {/* ========================================================= */}
+      {activeSubTab === 'statistics' && (
+        <PlayStatisticsPanel audioItems={audioItems} categories={categories} />
       )}
 
       {/* ========================================================= */}

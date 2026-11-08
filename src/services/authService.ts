@@ -8,7 +8,7 @@ const LOGIN_ATTEMPTS_KEY = 'soundbook_login_attempts_v1';
 const LOCAL_LOGIN_LOGS_KEY = 'soundbook_login_logs_v1';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 60 * 1000; // 連續失敗 5 次鎖定 60 秒
-const MAX_STORED_LOGIN_LOGS = 200; // 最多保留最近 200 筆登入紀錄
+const MAX_STORED_LOGIN_LOGS = 1000; // 最多保留最近 1000 筆登入紀錄
 
 export const DEFAULT_ADMIN_USER: AppUser = {
   id: 'user_admin',

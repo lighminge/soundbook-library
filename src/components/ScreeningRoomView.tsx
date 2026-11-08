@@ -69,6 +69,7 @@ import {
   sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
+import { recordPlayLog } from '../services/playStatsService';
 
 interface ScreeningRoomViewProps {
   categories: Category[];
@@ -288,6 +289,69 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       fetchAudioBlobFromGoogleDrive,
       currentItem?.id
     );
+
+  // ==========================================
+  // 播放統計：累計每首語音檔實際播放的秒數，於暫停 / 結束 / 切換曲目 / 離開頁面時寫入播放紀錄
+  // ==========================================
+  const playAccumRef = useRef<{ item: AudioItem | null; seconds: number; lastTime: number | null }>({
+    item: null,
+    seconds: 0,
+    lastTime: null,
+  });
+
+  const flushPlayStats = () => {
+    const acc = playAccumRef.current;
+    if (acc.item && acc.seconds >= 1) {
+      recordPlayLog(acc.item, acc.seconds).catch(() => {});
+    }
+    acc.seconds = 0;
+    acc.lastTime = null;
+  };
+
+  const trackPlayProgress = (t: number, paused: boolean) => {
+    const acc = playAccumRef.current;
+    if (!currentItem) return;
+    if (!acc.item || acc.item.id !== currentItem.id) {
+      flushPlayStats();
+      acc.item = currentItem;
+    }
+    if (paused) {
+      acc.lastTime = t;
+      return;
+    }
+    if (acc.lastTime !== null) {
+      const delta = t - acc.lastTime;
+      // 只累計正常推進的播放（排除拖曳跳轉與循環重播造成的大幅跳動）
+      if (delta > 0 && delta < 3) {
+        acc.seconds += delta;
+      }
+    }
+    acc.lastTime = t;
+  };
+
+  useEffect(() => {
+    playAccumRef.current.item = currentItem;
+    playAccumRef.current.seconds = 0;
+    playAccumRef.current.lastTime = null;
+    return () => {
+      flushPlayStats();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentItem?.id]);
+
+  useEffect(() => {
+    const handleHidden = () => {
+      if (document.visibilityState === 'hidden') flushPlayStats();
+    };
+    const handleUnload = () => flushPlayStats();
+    document.addEventListener('visibilitychange', handleHidden);
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleHidden);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 當切換曲目時重置播放狀態（保留 pendingAutoPlayRef，讓新曲目就緒後立即自動放映）
   useEffect(() => {
@@ -1634,8 +1698,15 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         playsInline
         preload="auto"
         loop={playbackLoopMode === 'single'}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPlay={() => {
+          setIsPlaying(true);
+          if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, true);
+        }}
+        onPause={() => {
+          setIsPlaying(false);
+          if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, false);
+          flushPlayStats();
+        }}
         onCanPlay={() => {
           if (pendingAutoPlayRef.current && audioRef.current) {
             pendingAutoPlayRef.current = false;
@@ -1649,6 +1720,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           if (audioRef.current) {
             const t = audioRef.current.currentTime;
             setCurrentTime(t);
+            trackPlayProgress(t, audioRef.current.paused);
             // 當音訊實際播放推進超過手動選取的區段結束時間時（且未處於編輯狀態），自動交回時間軸控制
             if (
               !isEditingSegment &&
@@ -1667,6 +1739,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           }
         }}
         onEnded={() => {
+          if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, false);
+          flushPlayStats();
           playNextTrack(true);
         }}
       />

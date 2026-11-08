@@ -751,6 +751,8 @@ export function App() {
               if (latest) setCurrentUser(latest);
             }}
             initialSubTab={systemInitialSubTab}
+            audioItems={audioItems}
+            categories={categories}
           />
         )}
       </main>

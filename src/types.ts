@@ -95,6 +95,19 @@ export interface LoginLogRecord {
   loginAt: string; // ISO 8601 登入時間
 }
 
+export interface PlayLogRecord {
+  id: string; // e.g. "play_1730592000000_abc12"
+  audioId: string; // 語音檔 ID
+  audioTitle: string; // 播放當下的語音檔標題（快照）
+  categoryId: string; // 播放當下的館藏分類 ID（快照）
+  speaker: string; // 播放當下的主講人（快照）
+  tags: string[]; // 播放當下的類別標籤（快照）
+  userId: string; // 播放者 ID
+  username: string; // 播放者帳號
+  playedSeconds: number; // 本次實際播放的秒數
+  playedAt: string; // ISO 8601 播放時間
+}
+
 export interface LoginScreenConfig {
   icon: string; // e.g., 'BookOpen' (對應 50 個圖示選項)
   title: string; // 登入畫面圖示下方的標題文字（預設：有聲書樓放映閣）

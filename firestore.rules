@@ -104,6 +104,20 @@ rules_version = '2';
 //   - deviceInfo: string (optional, 0..300 chars) - Device and browser environment info
 //   - loginAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Login timestamp string
 //
+// Collection: playLogs
+// Document ID: {logId} (matches field `id`, e.g., "play_1730592000000_abc12")
+// Fields:
+//   - id: string (required, immutable, 1..120 chars, must equal logId) - Unique playback log identifier
+//   - audioId: string (required, 1..200 chars) - Reference to audioItems/{audioId}
+//   - audioTitle: string (required, 0..300 chars) - Snapshot of the audio title at play time
+//   - categoryId: string (required, 0..200 chars) - Snapshot of the audio category ID
+//   - speaker: string (required, 0..100 chars) - Snapshot of the speaker / narrator name
+//   - tags: list of strings (required, 0..50 items) - Snapshot of the audio tags
+//   - userId: string (required, 1..120 chars) - Reference to systemUsers/{userId} or "guest"
+//   - username: string (required, 1..50 chars) - Account name of the listener
+//   - playedSeconds: number (required, 0..86400) - Seconds of audio played in this session
+//   - playedAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Playback timestamp string
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -467,6 +481,37 @@ service cloud.firestore {
         isValidDateString(data.loginAt);
     }
 
+    // Validate PlayLog (audio playback statistics) document schema and field bounds
+    function isValidPlayLog(data, logId) {
+      let fields = [
+        'id',
+        'audioId',
+        'audioTitle',
+        'categoryId',
+        'speaker',
+        'tags',
+        'userId',
+        'username',
+        'playedSeconds',
+        'playedAt'
+      ];
+
+      return hasRequiredFields(fields) &&
+        hasOnlyAllowedFields(fields) &&
+        data.id is string && data.id == logId &&
+        validStringLength('id', 1, 120) &&
+        validStringLength('audioId', 1, 200) &&
+        validStringLength('audioTitle', 0, 300) &&
+        validStringLength('categoryId', 0, 200) &&
+        validStringLength('speaker', 0, 100) &&
+        isValidList(data.tags, 50) &&
+        (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() <= 100)) &&
+        validStringLength('userId', 1, 120) &&
+        validStringLength('username', 1, 50) &&
+        data.playedSeconds is number && data.playedSeconds >= 0 && data.playedSeconds <= 86400 &&
+        isValidDateString(data.playedAt);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -533,6 +578,15 @@ service cloud.firestore {
       allow create: if isValidLoginLog(request.resource.data, logId);
       allow update: if isValidLoginLog(request.resource.data, logId) &&
                        areImmutableFieldsUnchanged(['id', 'loginAt']);
+      allow delete: if true;
+    }
+
+    // Audio Playback Statistics Logs (playLogs/{logId})
+    match /playLogs/{logId} {
+      allow read: if true;
+      allow create: if isValidPlayLog(request.resource.data, logId);
+      allow update: if isValidPlayLog(request.resource.data, logId) &&
+                       areImmutableFieldsUnchanged(['id', 'playedAt']);
       allow delete: if true;
     }
 
