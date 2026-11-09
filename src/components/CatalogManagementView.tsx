@@ -2318,7 +2318,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                     {/* 第三列：所屬館藏分類切換 + 主講人選取與管理（含新增、修改、刪除功能） */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
                       {/* 左側：所屬館藏分類 */}
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-w-0 w-full sm:w-auto">
                         <span className="text-xs font-semibold text-[#5C3A1B] shrink-0">
                           所屬館藏分類：
                         </span>
@@ -2327,7 +2327,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           onChange={(e) =>
                             handleSingleItemCategoryChange(item, e.target.value)
                           }
-                          className="px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer shadow-2xs hover:border-[#8B5A2B]"
+                          className="flex-1 min-w-0 max-w-full sm:max-w-xs px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs font-semibold text-[#2C221E] cursor-pointer shadow-2xs hover:border-[#8B5A2B] truncate"
                         >
                           {categories.map((cat) => (
                             <option key={cat.id} value={cat.id}>
@@ -2338,7 +2338,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                       </div>
 
                       {/* 右側：主講人下拉選單（包含新增、修改、刪除）與快捷操作按鈕 */}
-                      <div className="flex flex-wrap items-center gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 border-[#E2D5C1]">
+                      <div className="flex flex-wrap items-center gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 border-[#E2D5C1] min-w-0 w-full sm:w-auto">
                         <label className="text-xs font-bold text-[#5C3A1B] shrink-0 flex items-center gap-1">
                           <User className="w-3.5 h-3.5 text-[#8B5A2B]" />
                           <span>主講人：</span>
@@ -2348,7 +2348,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         <select
                           value={item.speaker || ''}
                           onChange={(e) => handleSpeakerDropdownChange(item, e.target.value)}
-                          className={`px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer shadow-2xs transition ${
+                          className={`flex-1 sm:flex-none min-w-0 max-w-full sm:max-w-[200px] px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer shadow-2xs transition truncate ${
                             item.speaker
                               ? 'border-[#8B5A2B] bg-[#FFF8EE] text-[#5C3A1B]'
                               : 'border-[#C8B598] bg-white text-[#6B5A4B]'

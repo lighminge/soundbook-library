@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Landmark,
@@ -567,6 +567,120 @@ export function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+interface BookshelfCardTitleProps {
+  title: string;
+  size?: 'base' | 'sm';
+}
+
+/**
+ * 書架語音檔名過長跑馬燈與展開顯示組件
+ * 當檔名超過卡片寬度時：
+ * 1. 滑鼠懸停（Hover）或觸控啟用時，自動啟動平滑水平跑馬燈滾動（左右往返巡航）
+ * 2. 檔名右側提供「完整」快捷展開按鈕，點擊可直接切換為完整多行檔名
+ * 3. 具備原生 title 屬性提供瀏覽器原生提示
+ */
+export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, size = 'base' }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLHeadingElement>(null);
+  const [isOverflow, setIsOverflow] = useState(false);
+  const [scrollDist, setScrollDist] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (containerRef.current && textRef.current) {
+        const containerWidth = containerRef.current.clientWidth;
+        const textWidth = textRef.current.scrollWidth;
+        if (textWidth > containerWidth + 2) {
+          setIsOverflow(true);
+          setScrollDist(textWidth - containerWidth);
+        } else {
+          setIsOverflow(false);
+          setScrollDist(0);
+        }
+      }
+    };
+
+    checkOverflow();
+    window.addEventListener('resize', checkOverflow);
+    return () => window.removeEventListener('resize', checkOverflow);
+  }, [title]);
+
+  const durationSec = Math.max(4, Math.min(14, Math.round(scrollDist / 20)));
+
+  return (
+    <div className="relative group/title w-full">
+      {isExpanded ? (
+        <div className="space-y-1">
+          <h4
+            className={`font-bold font-serif-tc text-[#2C221E] break-words leading-snug cursor-text ${
+              size === 'sm' ? 'text-sm' : 'text-base'
+            }`}
+            title={title}
+          >
+            {title}
+          </h4>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsExpanded(false);
+            }}
+            className="text-[10px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold underline cursor-pointer"
+          >
+            收合標題
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div
+            ref={containerRef}
+            className="relative flex-1 min-w-0 overflow-hidden"
+            title={title}
+          >
+            <h4
+              ref={textRef}
+              className={`font-bold font-serif-tc text-[#2C221E] whitespace-nowrap inline-block transition-colors group-hover:text-[#8B5A2B] ${
+                size === 'sm' ? 'text-sm' : 'text-base'
+              } ${isOverflow ? 'animate-marquee-on-hover' : ''}`}
+              style={
+                isOverflow
+                  ? ({
+                      '--marquee-dist': `-${scrollDist + 12}px`,
+                      '--marquee-duration': `${durationSec}s`,
+                    } as React.CSSProperties)
+                  : undefined
+              }
+            >
+              {title}
+            </h4>
+
+            {/* 若檔名過長超出卡片寬度，右側增加淡出微漸層作為視覺指引 */}
+            {isOverflow && (
+              <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-[#FFFDF9] to-transparent pointer-events-none group-hover:opacity-0 transition-opacity" />
+            )}
+          </div>
+
+          {/* 檔名過長時，提供「完整」展開按鈕，方便使用者直接查閱全名 */}
+          {isOverflow && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(true);
+              }}
+              className="shrink-0 text-[10px] px-1.5 py-0.2 rounded bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] cursor-pointer transition font-mono font-medium shadow-2xs hover:border-[#8B5A2B]"
+              title="檔名過長，點擊可直接展開查看全部語音檔名"
+            >
+              完整
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const DashboardView: React.FC<DashboardViewProps> = ({
   categories,
   audioItems,
@@ -710,10 +824,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [audioItems]);
 
-  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數
+  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數（當選取主講人時，僅顯示該主講人語音檔案裡面有的標籤）
   const availableDashboardTags = useMemo(() => {
     const tagCountMap: Record<string, number> = {};
-    audioItems.forEach((item) => {
+    const targetItems = audioItems.filter((item) => {
+      if (!quickSearchSpeaker) return true;
+      if (quickSearchSpeaker === '__unassigned__') {
+        return !item.speaker || !item.speaker.trim();
+      }
+      return item.speaker?.trim() === quickSearchSpeaker.trim();
+    });
+
+    targetItems.forEach((item) => {
       (item.tags || []).forEach((t) => {
         const trimmed = t.trim();
         if (trimmed) {
@@ -728,7 +850,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         tag,
         count: tagCountMap[tag],
       }));
-  }, [audioItems]);
+  }, [audioItems, quickSearchSpeaker]);
+
+  // 當選取的主講人變更時，若已選取的類別標籤不在該主講人的語音檔案中，自動重設標籤選取
+  useEffect(() => {
+    if (quickSearchSpeaker && quickSearchTag) {
+      const tagExists = availableDashboardTags.some((t) => t.tag === quickSearchTag);
+      if (!tagExists) {
+        setQuickSearchTag('');
+      }
+    }
+  }, [quickSearchSpeaker, availableDashboardTags, quickSearchTag]);
 
   // 快速檢索篩選：比對語音檔案名稱、館藏分類、主講人、類別標籤下拉選取與故事說明內容
   const matchedAudioItems = useMemo(() => {
@@ -1013,7 +1145,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
               <option value="">
-                全部類別標籤 {availableDashboardTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                {quickSearchSpeaker
+                  ? `該主講人所有標籤 (${availableDashboardTags.length > 0 ? `共 ${availableDashboardTags.length} 種` : '無標籤'})`
+                  : `全部類別標籤 ${availableDashboardTags.length === 0 ? '(尚無標籤)' : '(不限)'}`}
               </option>
               {availableDashboardTags.map(({ tag, count }) => (
                 <option key={tag} value={tag}>
@@ -1134,9 +1268,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </button>
                       </div>
 
-                      <h4 className="font-bold font-serif-tc text-sm text-[#2C221E] break-words break-all leading-snug line-clamp-2">
-                        {item.title}
-                      </h4>
+                      <BookshelfCardTitle title={item.title} size="sm" />
                       <p className="text-xs text-[#6E5D4F] line-clamp-1 mt-0.5">
                         {item.description}
                       </p>
@@ -1776,9 +1908,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     </span>
                                   )}
                                 </div>
-                                <h4 className="font-bold font-serif-tc text-base text-[#2C221E] line-clamp-1 group-hover:text-[#8B5A2B] transition-colors">
-                                  {item.title}
-                                </h4>
+                                <BookshelfCardTitle title={item.title} size="base" />
                                 <p className="text-xs text-[#6E5D4F] mt-1.5 line-clamp-2 leading-relaxed">
                                   {item.description || '尚無館藏說明'}
                                 </p>

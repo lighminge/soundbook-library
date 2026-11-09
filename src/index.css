@@ -29,3 +29,30 @@
   background: linear-gradient(145deg, #FFFDF9 0%, #F7F1E5 100%);
   border: 1px solid #E5D9C5;
 }
+
+/* 語音檔卡片檔名過長跑馬燈動畫 */
+@keyframes shelf-title-marquee {
+  0%, 15% {
+    transform: translateX(0);
+  }
+  70%, 85% {
+    transform: translateX(var(--marquee-dist, -50%));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.group:hover .animate-marquee-on-hover,
+.group:active .animate-marquee-on-hover,
+.group\/title:hover .animate-marquee-on-hover {
+  animation: shelf-title-marquee var(--marquee-duration, 6s) ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group:hover .animate-marquee-on-hover,
+  .group:active .animate-marquee-on-hover,
+  .group\/title:hover .animate-marquee-on-hover {
+    animation: none;
+  }
+}
