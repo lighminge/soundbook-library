@@ -570,6 +570,32 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     shelfStartIndex + shelfPageSize
   );
 
+  // 底部翻頁按鈕智能精簡視窗（避免頁數過多時「下一頁」按鈕超出卡片區塊）
+  const visibleShelfPages = useMemo(() => {
+    if (totalShelfPages <= 5) {
+      return Array.from({ length: totalShelfPages }, (_, i) => i + 1);
+    }
+    const pages: (number | string)[] = [];
+    const start = Math.max(1, Math.min(safeShelfPage - 1, totalShelfPages - 3));
+    const end = Math.min(totalShelfPages, Math.max(safeShelfPage + 1, 4));
+
+    if (start > 1) {
+      pages.push(1);
+      if (start > 2) pages.push('...');
+    }
+
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+
+    if (end < totalShelfPages) {
+      if (end < totalShelfPages - 1) pages.push('...');
+      pages.push(totalShelfPages);
+    }
+
+    return pages;
+  }, [safeShelfPage, totalShelfPages]);
+
   // 當分類、搜尋關鍵字、書架檔案名稱查詢、類別標籤查詢、主講人或每頁筆數變更時，自動回到第 1 頁
   useEffect(() => {
     setShelfCurrentPage(1);
@@ -3173,47 +3199,68 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
                 {/* 書架底部翻頁控制列 */}
                 {totalShelfPages > 1 && (
-                  <div className="flex items-center justify-between pt-2 border-t border-[#E5D9C5] text-xs">
-                    <span className="text-[#7A6855] text-[11px]">
-                      共 {totalShelfCount} 部語音
-                    </span>
+                  <div className="pt-2.5 border-t border-[#E5D9C5] space-y-2">
+                    {/* 總部數與頁碼統計資訊 */}
+                    <div className="flex items-center justify-between text-[11px] text-[#7A6855] px-0.5">
+                      <span>
+                        共 <strong className="text-[#8B5A2B] font-mono font-bold">{totalShelfCount}</strong> 部語音
+                      </span>
+                      <span>
+                        第 <strong className="text-[#8B5A2B] font-mono font-bold">{safeShelfPage}</strong> /{' '}
+                        <strong className="text-[#8B5A2B] font-mono">{totalShelfPages}</strong> 頁
+                      </span>
+                    </div>
 
-                    <div className="flex items-center gap-1">
+                    {/* 翻頁按鈕列 (置中、換行自適應、防超出區塊) */}
+                    <div className="flex items-center justify-center gap-1 flex-wrap">
                       <button
                         type="button"
                         disabled={safeShelfPage <= 1}
                         onClick={() => setShelfCurrentPage((p) => Math.max(1, p - 1))}
-                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 disabled:cursor-not-allowed text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer shrink-0 transition"
                       >
-                        <ChevronLeft className="w-3 h-3" />
+                        <ChevronLeft className="w-3.5 h-3.5" />
                         <span>上一頁</span>
                       </button>
 
                       <div className="flex items-center gap-1">
-                        {Array.from({ length: totalShelfPages }, (_, i) => i + 1).map((pageNum) => (
-                          <button
-                            key={pageNum}
-                            type="button"
-                            onClick={() => setShelfCurrentPage(pageNum)}
-                            className={`w-6 h-6 rounded-md font-mono text-[11px] font-bold transition cursor-pointer ${
-                              pageNum === safeShelfPage
-                                ? 'bg-[#8B5A2B] text-white shadow-xs'
-                                : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
-                            }`}
-                          >
-                            {pageNum}
-                          </button>
-                        ))}
+                        {visibleShelfPages.map((pageNum, idx) => {
+                          if (typeof pageNum === 'string') {
+                            return (
+                              <span
+                                key={`shelf-ellipsis-${idx}`}
+                                className="w-4 text-center text-[11px] font-mono text-[#8C7A6B] select-none"
+                              >
+                                …
+                              </span>
+                            );
+                          }
+                          const isCurrent = pageNum === safeShelfPage;
+                          return (
+                            <button
+                              key={pageNum}
+                              type="button"
+                              onClick={() => setShelfCurrentPage(pageNum)}
+                              className={`w-6 h-6 rounded-md font-mono text-[11px] font-bold transition cursor-pointer flex items-center justify-center ${
+                                isCurrent
+                                  ? 'bg-[#8B5A2B] text-white shadow-xs'
+                                  : 'bg-white text-[#5C3A1B] border border-[#D5C5AE] hover:bg-[#FAF4E8]'
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       <button
                         type="button"
                         disabled={safeShelfPage >= totalShelfPages}
                         onClick={() => setShelfCurrentPage((p) => Math.min(totalShelfPages, p + 1))}
-                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer"
+                        className="px-2 py-1 rounded-md border border-[#D5C5AE] bg-white hover:bg-[#F4ECE0] disabled:opacity-40 disabled:cursor-not-allowed text-[#3A2518] text-[11px] font-medium flex items-center gap-0.5 cursor-pointer shrink-0 transition"
                       >
                         <span>下一頁</span>
-                        <ChevronRight className="w-3 h-3" />
+                        <ChevronRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
