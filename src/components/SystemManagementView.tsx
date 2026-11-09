@@ -33,6 +33,14 @@ import {
   CalendarDays,
   ArrowUpDown,
   BarChart3,
+  List,
+  TrendingUp,
+  Clock,
+  PieChart,
+  Activity,
+  Award,
+  Smartphone,
+  Laptop,
 } from 'lucide-react';
 import { AppUser, AudioItem, Category, CloudConfig, LoginLogRecord, LoginScreenConfig } from '../types';
 import { PaginationBar, dateInputToEndMs, dateInputToStartMs } from './PaginationBar';
@@ -227,6 +235,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   // 人員登入情況紀錄狀態
   const [loginLogs, setLoginLogs] = useState<LoginLogRecord[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logViewMode, setLogViewMode] = useState<'list' | 'chart'>('list');
   const [logSearchQuery, setLogSearchQuery] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [confirmClearLogs, setConfirmClearLogs] = useState(false);
@@ -961,12 +970,40 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-[#6E5D4F]">
-                    以清單方式即時記錄所有人員帳號登入（含成功、密碼錯誤失敗與訪客模式）的時間、身分與裝置資訊
+                    即時記錄並以清單或視覺化圖表分析所有人員帳號登入（含成功、失敗與訪客模式）的時間、身分與裝置資訊
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {/* 清單 / 圖表 顯示切換 */}
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-[#D5C5AE] shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setLogViewMode('list')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      logViewMode === 'list'
+                        ? 'bg-[#8B5A2B] text-white shadow-xs'
+                        : 'text-[#6E5D4F] hover:text-[#2C221E] hover:bg-[#F3ECE0]'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span>清單</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLogViewMode('chart')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      logViewMode === 'chart'
+                        ? 'bg-[#8B5A2B] text-white shadow-xs'
+                        : 'text-[#6E5D4F] hover:text-[#2C221E] hover:bg-[#F3ECE0]'
+                    }`}
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>圖表</span>
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={fetchLoginLogs}
@@ -1092,29 +1129,36 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 text-xs text-[#5C3A1B]">
-                  <ArrowUpDown className="w-4 h-4 text-[#8B5A2B]" />
-                  <span className="font-semibold">排序</span>
-                  <select
-                    value={logSortField}
-                    onChange={(e) =>
-                      setLogSortField(e.target.value as 'loginAt' | 'username' | 'deviceInfo')
-                    }
-                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
-                  >
-                    <option value="loginAt">登入時間</option>
-                    <option value="username">登入帳號</option>
-                    <option value="deviceInfo">裝置 / 瀏覽器</option>
-                  </select>
-                  <select
-                    value={logSortDir}
-                    onChange={(e) => setLogSortDir(e.target.value as 'asc' | 'desc')}
-                    className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
-                  >
-                    <option value="desc">由大到小</option>
-                    <option value="asc">由小到大</option>
-                  </select>
-                </div>
+                {logViewMode === 'chart' ? (
+                  <div className="text-xs text-[#6E5D4F] flex items-center gap-1.5">
+                    <BarChart3 className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                    <span>圖表依當前關鍵字、狀態與日期篩選即時匯總統計</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[#5C3A1B]">
+                    <ArrowUpDown className="w-4 h-4 text-[#8B5A2B]" />
+                    <span className="font-semibold">排序</span>
+                    <select
+                      value={logSortField}
+                      onChange={(e) =>
+                        setLogSortField(e.target.value as 'loginAt' | 'username' | 'deviceInfo')
+                      }
+                      className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
+                    >
+                      <option value="loginAt">登入時間</option>
+                      <option value="username">登入帳號</option>
+                      <option value="deviceInfo">裝置 / 瀏覽器</option>
+                    </select>
+                    <select
+                      value={logSortDir}
+                      onChange={(e) => setLogSortDir(e.target.value as 'asc' | 'desc')}
+                      className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold focus:outline-none focus:border-[#8B5A2B] cursor-pointer"
+                    >
+                      <option value="desc">由大到小</option>
+                      <option value="asc">由小到大</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               {/* 登入紀錄清單表格 */}
@@ -1172,6 +1216,512 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     return (
                       <div className="py-10 text-center border border-dashed border-[#D5C5AE] rounded-xl bg-[#FAF6EE]/60 text-[#7A6855] text-xs sm:text-sm">
                         目前尚無符合條件的人員登入紀錄
+                      </div>
+                    );
+                  }
+
+                  // 依檢視模式切換：圖表模式或清單模式
+                  if (logViewMode === 'chart') {
+                    // 1. 指標總計
+                    const totalCount = filteredLogs.length;
+                    const successLogs = filteredLogs.filter((l) => l.status === 'success');
+                    const failedLogs = filteredLogs.filter((l) => l.status === 'failed');
+                    const successCount = successLogs.length;
+                    const failedCount = failedLogs.length;
+                    const successRate = totalCount > 0 ? ((successCount / totalCount) * 100).toFixed(1) : '0.0';
+                    const failedRate = totalCount > 0 ? ((failedCount / totalCount) * 100).toFixed(1) : '0.0';
+
+                    // 2. 角色分佈
+                    const adminCount = filteredLogs.filter((l) => l.role === 'admin').length;
+                    const userCount = filteredLogs.filter((l) => l.role === 'user').length;
+                    const guestCount = filteredLogs.filter((l) => l.role === 'guest').length;
+
+                    // 3. 人員聚合排行
+                    const userAggMap = new Map<
+                      string,
+                      {
+                        username: string;
+                        displayName: string;
+                        role: 'admin' | 'user' | 'guest';
+                        total: number;
+                        success: number;
+                        failed: number;
+                        lastLogin: string;
+                      }
+                    >();
+
+                    filteredLogs.forEach((log) => {
+                      const key = log.username || log.displayName || 'unknown';
+                      const existing = userAggMap.get(key);
+                      if (existing) {
+                        existing.total += 1;
+                        if (log.status === 'success') existing.success += 1;
+                        else existing.failed += 1;
+                        if (new Date(log.loginAt || 0) > new Date(existing.lastLogin || 0)) {
+                          existing.lastLogin = log.loginAt;
+                          existing.displayName = log.displayName || existing.displayName;
+                        }
+                      } else {
+                        userAggMap.set(key, {
+                          username: log.username,
+                          displayName: log.displayName || log.username,
+                          role: log.role,
+                          total: 1,
+                          success: log.status === 'success' ? 1 : 0,
+                          failed: log.status === 'failed' ? 1 : 0,
+                          lastLogin: log.loginAt,
+                        });
+                      }
+                    });
+
+                    const userRanking = Array.from(userAggMap.values()).sort((a, b) => b.total - a.total);
+                    const maxUserLogCount = userRanking.length > 0 ? userRanking[0].total : 1;
+
+                    // 4. 每日登入趨勢
+                    const dailyAggMap = new Map<string, { total: number; success: number; failed: number }>();
+                    filteredLogs.forEach((log) => {
+                      if (!log.loginAt) return;
+                      const d = new Date(log.loginAt);
+                      const y = d.getFullYear();
+                      const m = String(d.getMonth() + 1).padStart(2, '0');
+                      const day = String(d.getDate()).padStart(2, '0');
+                      const dateKey = `${y}-${m}-${day}`;
+                      const existing = dailyAggMap.get(dateKey);
+                      if (existing) {
+                        existing.total += 1;
+                        if (log.status === 'success') existing.success += 1;
+                        else existing.failed += 1;
+                      } else {
+                        dailyAggMap.set(dateKey, {
+                          total: 1,
+                          success: log.status === 'success' ? 1 : 0,
+                          failed: log.status === 'failed' ? 1 : 0,
+                        });
+                      }
+                    });
+                    const dailyTrend = Array.from(dailyAggMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+                    const maxDailyTotal = dailyTrend.reduce((max, [, d]) => Math.max(max, d.total), 1);
+
+                    // 5. 24小時時段分佈
+                    const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({
+                      hour,
+                      total: 0,
+                      success: 0,
+                      failed: 0,
+                    }));
+                    filteredLogs.forEach((log) => {
+                      if (!log.loginAt) return;
+                      const d = new Date(log.loginAt);
+                      const h = d.getHours();
+                      if (h >= 0 && h < 24) {
+                        hourlyDistribution[h].total += 1;
+                        if (log.status === 'success') hourlyDistribution[h].success += 1;
+                        else hourlyDistribution[h].failed += 1;
+                      }
+                    });
+                    const maxHourlyTotal = hourlyDistribution.reduce((max, h) => Math.max(max, h.total), 1);
+                    let peakHour = 0;
+                    let peakHourCount = 0;
+                    hourlyDistribution.forEach((h) => {
+                      if (h.total > peakHourCount) {
+                        peakHourCount = h.total;
+                        peakHour = h.hour;
+                      }
+                    });
+
+                    // 6. 常用裝置分佈
+                    const deviceAggMap = new Map<string, number>();
+                    filteredLogs.forEach((l) => {
+                      const d = (l.deviceInfo || '未知裝置').trim();
+                      deviceAggMap.set(d, (deviceAggMap.get(d) || 0) + 1);
+                    });
+                    const topDevices = Array.from(deviceAggMap.entries())
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 5);
+
+                    return (
+                      <div className="space-y-4">
+                        {/* 摘要統計卡片 */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                          <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-[#8B5A2B]">
+                              <History className="w-4 h-4" />
+                              <span className="text-xs font-semibold text-[#6E5D4F]">登入總次數</span>
+                            </div>
+                            <div className="mt-1.5 text-xl font-bold font-mono text-[#2C221E]">{totalCount} 次</div>
+                            <div className="text-[11px] text-[#8C7A6B] mt-0.5">全區間共 {loginLogs.length} 筆</div>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-emerald-700">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span className="text-xs font-semibold text-[#6E5D4F]">登入成功</span>
+                            </div>
+                            <div className="mt-1.5 text-xl font-bold font-mono text-emerald-800">{successCount} 次</div>
+                            <div className="text-[11px] text-emerald-700 font-medium mt-0.5">成功率 {successRate}%</div>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-rose-700">
+                              <XCircle className="w-4 h-4 text-rose-600" />
+                              <span className="text-xs font-semibold text-[#6E5D4F]">登入失敗</span>
+                            </div>
+                            <div className="mt-1.5 text-xl font-bold font-mono text-rose-700">{failedCount} 次</div>
+                            <div className="text-[11px] text-rose-600 font-medium mt-0.5">失敗率 {failedRate}%</div>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-[#8B5A2B]">
+                              <Users className="w-4 h-4" />
+                              <span className="text-xs font-semibold text-[#6E5D4F]">活躍帳號</span>
+                            </div>
+                            <div className="mt-1.5 text-xl font-bold font-mono text-[#2C221E]">{userRanking.length} 人</div>
+                            <div className="text-[11px] text-[#8C7A6B] mt-0.5">曾登入之不同帳號</div>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-stone-700">
+                              <Compass className="w-4 h-4 text-stone-600" />
+                              <span className="text-xs font-semibold text-[#6E5D4F]">訪客登入</span>
+                            </div>
+                            <div className="mt-1.5 text-xl font-bold font-mono text-stone-800">{guestCount} 次</div>
+                            <div className="text-[11px] text-[#8C7A6B] mt-0.5">
+                              佔比 {totalCount > 0 ? ((guestCount / totalCount) * 100).toFixed(1) : 0}%
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 第一組圖表：每日登入趨勢柱狀圖 + 24小時活躍時段分佈 */}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                          {/* 每日登入次數趨勢長條圖 */}
+                          <div className="lg:col-span-7 p-4 rounded-xl bg-white border border-[#E5D9C5] flex flex-col shadow-2xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
+                                <TrendingUp className="w-4 h-4 text-[#8B5A2B]" />
+                                <span>每日登入次數趨勢（最近 {dailyTrend.length} 個有登入的日期）</span>
+                              </div>
+                              <div className="flex items-center gap-3 text-[11px] font-semibold text-[#5C3A1B]">
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" />
+                                  <span>成功</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" />
+                                  <span>失敗</span>
+                                </span>
+                              </div>
+                            </div>
+
+                            {dailyTrend.length === 0 ? (
+                              <div className="flex-1 flex items-center justify-center text-xs text-[#8C7A6B] py-12">
+                                查詢區間內尚無登入紀錄
+                              </div>
+                            ) : (
+                              <div className="flex-1 flex items-end gap-1.5 sm:gap-2 h-56 pt-6 border-b border-l border-[#E5D9C5] px-2">
+                                {dailyTrend.map(([day, d]) => (
+                                  <div
+                                    key={day}
+                                    className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group relative cursor-pointer"
+                                  >
+                                    <div
+                                      className="w-full max-w-[28px] rounded-t flex flex-col justify-end overflow-hidden transition-all duration-200 shadow-2xs group-hover:brightness-110"
+                                      style={{ height: `${Math.max((d.total / maxDailyTotal) * 100, 4)}%` }}
+                                    >
+                                      {d.failed > 0 && (
+                                        <div
+                                          className="w-full bg-rose-500"
+                                          style={{ height: `${(d.failed / d.total) * 100}%` }}
+                                        />
+                                      )}
+                                      <div
+                                        className="w-full bg-gradient-to-t from-emerald-700 to-emerald-500"
+                                        style={{ height: `${(d.success / d.total) * 100}%` }}
+                                      />
+                                    </div>
+
+                                    {/* 浮動提示 */}
+                                    <div className="absolute -top-12 hidden group-hover:flex flex-col items-center whitespace-nowrap text-[10px] font-mono bg-[#2C221E] text-white px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
+                                      <span className="font-bold">{day}</span>
+                                      <span>
+                                        總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {dailyTrend.length > 0 && (
+                              <div className="flex justify-between text-[10px] font-mono text-[#8C7A6B] mt-1.5">
+                                <span>{dailyTrend[0][0]}</span>
+                                <span>{dailyTrend[dailyTrend.length - 1][0]}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 24 小時時段分佈圖 */}
+                          <div className="lg:col-span-5 p-4 rounded-xl bg-white border border-[#E5D9C5] flex flex-col shadow-2xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
+                                <Clock className="w-4 h-4 text-[#8B5A2B]" />
+                                <span>24 小時登入活躍時段分佈</span>
+                              </div>
+                              {peakHourCount > 0 && (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  尖峰：{String(peakHour).padStart(2, '0')}:00 ({peakHourCount} 次)
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex-1 flex items-end gap-0.5 sm:gap-1 h-56 pt-6 border-b border-l border-[#E5D9C5] px-1">
+                              {hourlyDistribution.map((h) => {
+                                const isPeak = h.total > 0 && h.total === peakHourCount;
+                                return (
+                                  <div
+                                    key={h.hour}
+                                    className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group relative cursor-pointer"
+                                  >
+                                    <div
+                                      className={`w-full rounded-t transition-all duration-200 ${
+                                        h.total === 0
+                                          ? 'bg-[#EFE6D5]'
+                                          : isPeak
+                                          ? 'bg-gradient-to-t from-amber-600 to-amber-400 shadow-xs'
+                                          : 'bg-gradient-to-t from-[#8B5A2B] to-[#D4A373]'
+                                      } group-hover:brightness-110`}
+                                      style={{
+                                        height: `${
+                                          h.total > 0
+                                            ? Math.max((h.total / maxHourlyTotal) * 100, 4)
+                                            : 2
+                                        }%`,
+                                      }}
+                                    />
+                                    {/* 浮動提示 */}
+                                    <div className="absolute -top-12 hidden group-hover:flex flex-col items-center whitespace-nowrap text-[10px] font-mono bg-[#2C221E] text-white px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
+                                      <span className="font-bold">
+                                        {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
+                                      </span>
+                                      <span>
+                                        登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <div className="flex justify-between text-[10px] font-mono text-[#8C7A6B] mt-1.5 px-0.5">
+                              <span>00:00</span>
+                              <span>06:00</span>
+                              <span>12:00</span>
+                              <span>18:00</span>
+                              <span>23:00</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 第二組圖表：人員登入次數排行 + 狀態與角色分佈比例 */}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                          {/* 人員登入次數排行 */}
+                          <div className="lg:col-span-7 p-4 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
+                                <Award className="w-4 h-4 text-[#8B5A2B]" />
+                                <span>人員登入次數排行（共 {userRanking.length} 位人員）</span>
+                              </div>
+                              <span className="text-[11px] text-[#6E5D4F]">
+                                依總登入次數由高至低排列
+                              </span>
+                            </div>
+
+                            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                              {userRanking.slice(0, 15).map((u, idx) => {
+                                const pct = (u.total / maxUserLogCount) * 100;
+                                return (
+                                  <div
+                                    key={u.username}
+                                    className="p-2.5 rounded-xl bg-[#FAF6EE] border border-[#EFE2C8] hover:bg-[#F5EBD8] transition"
+                                  >
+                                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span
+                                          className={`w-6 h-6 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0 ${
+                                            idx === 0
+                                              ? 'bg-amber-400 text-amber-950 shadow-xs'
+                                              : idx === 1
+                                              ? 'bg-stone-300 text-stone-900'
+                                              : idx === 2
+                                              ? 'bg-amber-700/70 text-white'
+                                              : 'bg-white text-[#8C7A6B] border border-[#D5C5AE]'
+                                          }`}
+                                        >
+                                          #{idx + 1}
+                                        </span>
+                                        <span className="font-bold text-xs sm:text-sm text-[#2C221E] truncate">
+                                          {u.displayName}
+                                        </span>
+                                        <span className="font-mono text-[11px] text-[#6E5D4F] truncate">
+                                          ({u.username})
+                                        </span>
+                                        {u.role === 'admin' ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
+                                            管理員
+                                          </span>
+                                        ) : u.role === 'guest' ? (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-stone-100 text-stone-700 border border-stone-300 shrink-0">
+                                            訪客
+                                          </span>
+                                        ) : (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#F0E6D8] text-[#5C3A1B] shrink-0">
+                                            使用者
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="text-right shrink-0">
+                                        <span className="font-mono text-xs font-bold text-[#8B5A2B]">
+                                          {u.total} 次
+                                        </span>
+                                        <span className="text-[10px] text-[#8C7A6B] ml-1.5">
+                                          (成功 {u.success} / 失敗 {u.failed})
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* 水平長條圖 */}
+                                    <div className="w-full h-2 rounded-full bg-[#E8DDD0] overflow-hidden flex">
+                                      {u.failed > 0 && (
+                                        <div
+                                          className="h-full bg-rose-500"
+                                          style={{ width: `${(u.failed / u.total) * pct}%` }}
+                                        />
+                                      )}
+                                      <div
+                                        className="h-full bg-gradient-to-r from-emerald-600 to-amber-600"
+                                        style={{ width: `${(u.success / u.total) * pct}%` }}
+                                      />
+                                    </div>
+
+                                    {u.lastLogin && (
+                                      <div className="flex justify-end text-[10px] font-mono text-[#8C7A6B] mt-1">
+                                        最近登入：{new Date(u.lastLogin).toLocaleString('zh-TW', { hour12: false })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* 狀態、角色與裝置分佈 */}
+                          <div className="lg:col-span-5 space-y-4">
+                            {/* 登入狀態與角色權限比例 */}
+                            <div className="p-4 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs space-y-3.5">
+                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
+                                <PieChart className="w-4 h-4 text-[#8B5A2B]" />
+                                <span>登入狀態與角色分佈比例</span>
+                              </div>
+
+                              {/* 登入狀態條 */}
+                              <div>
+                                <div className="flex justify-between text-xs font-semibold text-[#5C3A1B] mb-1">
+                                  <span>登入狀態分佈</span>
+                                  <span className="font-mono text-[11px]">
+                                    成功 {successRate}% / 失敗 {failedRate}%
+                                  </span>
+                                </div>
+                                <div className="w-full h-3 rounded-full bg-stone-100 overflow-hidden flex shadow-2xs">
+                                  <div
+                                    className="h-full bg-emerald-600 transition-all duration-300"
+                                    style={{ width: `${successRate}%` }}
+                                    title={`成功 ${successCount} 次 (${successRate}%)`}
+                                  />
+                                  <div
+                                    className="h-full bg-rose-500 transition-all duration-300"
+                                    style={{ width: `${failedRate}%` }}
+                                    title={`失敗 ${failedCount} 次 (${failedRate}%)`}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between text-[11px] text-[#6E5D4F] mt-1">
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                                    <span>成功：{successCount} 筆</span>
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                                    <span>失敗：{failedCount} 筆</span>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* 角色權限分佈 */}
+                              <div className="pt-2 border-t border-[#F1E8D8]">
+                                <div className="flex justify-between text-xs font-semibold text-[#5C3A1B] mb-1">
+                                  <span>角色身分分佈</span>
+                                  <span className="font-mono text-[11px]">共 3 類角色</span>
+                                </div>
+                                <div className="w-full h-3 rounded-full bg-stone-100 overflow-hidden flex shadow-2xs">
+                                  <div
+                                    className="h-full bg-amber-600"
+                                    style={{ width: `${totalCount > 0 ? (adminCount / totalCount) * 100 : 0}%` }}
+                                    title={`管理員 ${adminCount} 次`}
+                                  />
+                                  <div
+                                    className="h-full bg-[#8B5A2B]"
+                                    style={{ width: `${totalCount > 0 ? (userCount / totalCount) * 100 : 0}%` }}
+                                    title={`一般使用者 ${userCount} 次`}
+                                  />
+                                  <div
+                                    className="h-full bg-stone-400"
+                                    style={{ width: `${totalCount > 0 ? (guestCount / totalCount) * 100 : 0}%` }}
+                                    title={`訪客模式 ${guestCount} 次`}
+                                  />
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#6E5D4F] mt-1">
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-amber-600" />
+                                    <span>管理員：{adminCount}</span>
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-[#8B5A2B]" />
+                                    <span>一般使用者：{userCount}</span>
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-stone-400" />
+                                    <span>訪客：{guestCount}</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 常用裝置與瀏覽器排行 */}
+                            <div className="p-4 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs space-y-2.5">
+                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
+                                <Monitor className="w-4 h-4 text-[#8B5A2B]" />
+                                <span>常用登入裝置與瀏覽器</span>
+                              </div>
+                              <div className="divide-y divide-[#EFE6D5] text-xs">
+                                {topDevices.map(([dev, cnt], dIdx) => (
+                                  <div key={dev} className="py-2 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="font-mono text-[#8C7A6B] text-[11px]">#{dIdx + 1}</span>
+                                      <span className="text-[#2C221E] font-medium truncate" title={dev}>
+                                        {dev}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="font-mono font-bold text-[#8B5A2B]">{cnt} 次</span>
+                                      <span className="text-[10px] text-[#8C7A6B]">
+                                        ({((cnt / totalCount) * 100).toFixed(1)}%)
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     );
                   }
