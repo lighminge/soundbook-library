@@ -32,6 +32,7 @@ import {
   Edit2,
 } from 'lucide-react';
 import { AudioItem, AudioTag, Category, Speaker } from '../types';
+import { PaginationBar } from './PaginationBar';
 import {
   loadAudioTags,
   addAudioTag,
@@ -137,6 +138,16 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const [tagManagerError, setTagManagerError] = useState('');
   const [tagManagerBusy, setTagManagerBusy] = useState(false);
   const [expandedUsageTagNames, setExpandedUsageTagNames] = useState<string[]>([]);
+  // 類別標籤管理視窗：館藏分類選取、分頁（以 10 的倍數）
+  const [tagManagerCategoryFilter, setTagManagerCategoryFilter] = useState<string>('all');
+  const [tagManagerOnlyUsedInCat, setTagManagerOnlyUsedInCat] = useState<boolean>(false);
+  const [tagManagerPageSize, setTagManagerPageSize] = useState<number>(10);
+  const [tagManagerPage, setTagManagerPage] = useState<number>(1);
+
+  // 當管理視窗之搜尋、館藏分類、分頁大小變動時，重置分頁回到第 1 頁
+  useEffect(() => {
+    setTagManagerPage(1);
+  }, [tagManagerSearch, tagManagerCategoryFilter, tagManagerOnlyUsedInCat, tagManagerPageSize]);
 
   // ============================================================================
   // 館藏分類：新增、修改、刪除、移動排序 狀態
@@ -3067,34 +3078,110 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 )}
               </div>
 
-              {/* 搜尋與統計資訊 */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-                <div className="relative flex-1 max-w-xs">
-                  <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={tagManagerSearch}
-                    onChange={(e) => setTagManagerSearch(e.target.value)}
-                    placeholder="搜尋已登錄標籤名稱..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
-                  />
-                </div>
-                <div className="text-xs text-[#5C3A1B] flex flex-wrap items-center gap-3">
-                  <div>
-                    名冊標籤：<strong className="text-[#2E5A44] font-mono text-sm">{audioTags.length}</strong> 個
+              {/* 搜尋、館藏分類選取與統計資訊 */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
+                <div className="flex flex-wrap items-center gap-2 flex-1">
+                  {/* 搜尋標籤 */}
+                  <div className="relative min-w-[160px] max-w-xs flex-1">
+                    <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={tagManagerSearch}
+                      onChange={(e) => setTagManagerSearch(e.target.value)}
+                      placeholder="搜尋已登錄標籤名稱..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
+                    />
                   </div>
-                  <div>
-                    尚未標記類別之語音：<strong className="text-amber-800 font-mono text-sm">{untaggedCount}</strong> 筆
+
+                  {/* 館藏分類選取 */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-xs font-semibold text-[#5C3A1B] whitespace-nowrap">館藏分類：</span>
+                    <select
+                      value={tagManagerCategoryFilter}
+                      onChange={(e) => setTagManagerCategoryFilter(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#2E5A44] cursor-pointer"
+                    >
+                      <option value="all">所有館藏分類 (全館 {audioItems.length} 筆)</option>
+                      {categories.map((cat) => {
+                        const countInCat = audioItems.filter((a) => a.categoryId === cat.id).length;
+                        return (
+                          <option key={cat.id} value={cat.id}>
+                            [{cat.code}] {cat.name} ({countInCat} 筆語音)
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
+
+                  {/* 當選取特定館藏分類時，可勾選是否僅顯示該分類有使用的標籤 */}
+                  {tagManagerCategoryFilter !== 'all' && (
+                    <label className="inline-flex items-center gap-1 text-xs font-medium text-[#5C3A1B] cursor-pointer select-none ml-1">
+                      <input
+                        type="checkbox"
+                        checked={tagManagerOnlyUsedInCat}
+                        onChange={(e) => setTagManagerOnlyUsedInCat(e.target.checked)}
+                        className="accent-[#2E5A44]"
+                      />
+                      <span>僅顯示此分類使用之標籤</span>
+                    </label>
+                  )}
                 </div>
+
+                {/* 統計計數 */}
+                {(() => {
+                  const currentCategory = categories.find((c) => c.id === tagManagerCategoryFilter);
+                  const scopedAudios =
+                    tagManagerCategoryFilter === 'all'
+                      ? audioItems
+                      : audioItems.filter((a) => a.categoryId === tagManagerCategoryFilter);
+                  const scopedUntagged = scopedAudios.filter(
+                    (a) => !a.tags || a.tags.length === 0
+                  ).length;
+
+                  return (
+                    <div className="text-xs text-[#5C3A1B] flex flex-wrap items-center gap-3 shrink-0">
+                      <div>
+                        {tagManagerCategoryFilter === 'all' ? (
+                          <>
+                            名冊標籤：<strong className="text-[#2E5A44] font-mono text-sm">{audioTags.length}</strong> 個
+                          </>
+                        ) : (
+                          <>
+                            分類：<strong className="text-[#2E5A44] font-semibold">{currentCategory?.name || '指定館別'}</strong>
+                          </>
+                        )}
+                      </div>
+                      <div>
+                        {tagManagerCategoryFilter === 'all'
+                          ? '尚未標記類別之語音：'
+                          : '該分類尚未標記語音：'}
+                        <strong className="text-amber-800 font-mono text-sm">{scopedUntagged}</strong> 筆
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              {/* 標籤名冊清單列表 */}
+              {/* 標籤名冊清單列表（含分頁與館藏分類同步） */}
               {(() => {
                 const searchQ = tagManagerSearch.trim().toLowerCase();
-                const displayTags = audioTags.filter(
-                  (t) => !searchQ || t.name.toLowerCase().includes(searchQ)
-                );
+                const currentCategory = categories.find((c) => c.id === tagManagerCategoryFilter);
+
+                // 依據選取的館藏分類決定語音檔計算範圍
+                const scopedAudios =
+                  tagManagerCategoryFilter === 'all'
+                    ? audioItems
+                    : audioItems.filter((a) => a.categoryId === tagManagerCategoryFilter);
+
+                // 依搜尋關鍵字與分類使用情況篩選標籤
+                const displayTags = audioTags.filter((t) => {
+                  if (searchQ && !t.name.toLowerCase().includes(searchQ)) return false;
+                  if (tagManagerCategoryFilter !== 'all' && tagManagerOnlyUsedInCat) {
+                    const hasUsage = scopedAudios.some((a) => (a.tags || []).includes(t.name));
+                    if (!hasUsage) return false;
+                  }
+                  return true;
+                });
 
                 if (audioTags.length === 0) {
                   return (
@@ -3107,25 +3194,41 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 if (displayTags.length === 0) {
                   return (
                     <div className="text-center py-8 text-sm text-[#7A6855] bg-[#FAF6EE]/50 rounded-xl border border-dashed border-[#DFCEB4]">
-                      找不到符合「{tagManagerSearch}」的類別標籤
+                      {tagManagerSearch
+                        ? `找不到符合「${tagManagerSearch}」的類別標籤`
+                        : `在「${currentCategory?.name || '此館藏分類'}」中尚無任何使用之標籤`}
                     </div>
                   );
                 }
 
-                return (
-                  <div className="rounded-xl border border-[#E2D5C1] overflow-hidden bg-white shadow-2xs">
-                    <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#F4ECE0] text-xs font-bold text-[#5C3A1B] border-b border-[#E2D5C1]">
-                      <div className="col-span-2 sm:col-span-1 text-center font-mono">排序</div>
-                      <div className="col-span-1 sm:col-span-1 text-center font-mono">序號</div>
-                      <div className="col-span-5 sm:col-span-4">標籤名稱</div>
-                      <div className="col-span-4 sm:col-span-4">使用情況</div>
-                      <div className="hidden sm:block sm:col-span-2 text-right">操作</div>
-                    </div>
+                // 分頁計算（以 10 的倍數做選取）
+                const totalPages = Math.max(1, Math.ceil(displayTags.length / tagManagerPageSize));
+                const safePage = Math.min(Math.max(1, tagManagerPage), totalPages);
+                const pageStartIdx = (safePage - 1) * tagManagerPageSize;
+                const pagedTags = displayTags.slice(pageStartIdx, pageStartIdx + tagManagerPageSize);
 
-                    <div className="divide-y divide-[#EFE6D5]">
-                      {displayTags.map((tag, idx) => {
-                        const originalIdx = audioTags.findIndex((t) => t.id === tag.id);
-                        const isEditing = editingTagId === tag.id;
+                return (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-[#E2D5C1] overflow-hidden bg-white shadow-2xs">
+                      <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#F4ECE0] text-xs font-bold text-[#5C3A1B] border-b border-[#E2D5C1]">
+                        <div className="col-span-2 sm:col-span-1 text-center font-mono">排序</div>
+                        <div className="col-span-1 sm:col-span-1 text-center font-mono">序號</div>
+                        <div className="col-span-4 sm:col-span-4">標籤名稱</div>
+                        <div className="col-span-5 sm:col-span-4">
+                          使用情況
+                          {tagManagerCategoryFilter !== 'all' && (
+                            <span className="text-[10px] text-[#2E5A44] font-normal ml-1">
+                              (僅計「{currentCategory?.name}」)
+                            </span>
+                          )}
+                        </div>
+                        <div className="hidden sm:block sm:col-span-2 text-right">操作</div>
+                      </div>
+
+                      <div className="divide-y divide-[#EFE6D5]">
+                        {pagedTags.map((tag, idx) => {
+                          const originalIdx = audioTags.findIndex((t) => t.id === tag.id);
+                          const isEditing = editingTagId === tag.id;
                         const matchingAudios = audioItems.filter((a) =>
                           (a.tags || []).includes(tag.name)
                         );
@@ -3160,13 +3263,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                 </button>
                               </div>
 
-                              {/* 序號 */}
+                              {/* 序號（顯示分頁後的累計流水序號） */}
                               <div className="col-span-1 sm:col-span-1 text-center font-mono text-xs text-[#8C7A6B]">
-                                {originalIdx + 1}
+                                {pageStartIdx + idx + 1}
                               </div>
 
                               {/* 標籤名稱（支援就地編輯） */}
-                              <div className="col-span-5 sm:col-span-4">
+                              <div className="col-span-4 sm:col-span-4">
                                 {isEditing ? (
                                   <div className="flex items-center gap-1.5">
                                     <input
@@ -3215,38 +3318,58 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                                 )}
                               </div>
 
-                              {/* 使用情況 */}
-                              <div className="col-span-4 sm:col-span-4">
-                                {usedCount > 0 ? (
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-[#2E5A44]/15 text-[#2E5A44] border border-[#2E5A44]/30">
-                                      <span>{usedCount} 筆語音檔</span>
+                              {/* 使用情況（依選定館別動態更新） */}
+                              <div className="col-span-5 sm:col-span-4">
+                                {(() => {
+                                  const matchingInScope = scopedAudios.filter((a) =>
+                                    (a.tags || []).includes(tag.name)
+                                  );
+                                  const usedInScope = matchingInScope.length;
+                                  const totalInAll = audioItems.filter((a) =>
+                                    (a.tags || []).includes(tag.name)
+                                  ).length;
+
+                                  if (usedInScope > 0) {
+                                    return (
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-[#2E5A44]/15 text-[#2E5A44] border border-[#2E5A44]/30">
+                                          <span>
+                                            {tagManagerCategoryFilter === 'all'
+                                              ? `${usedInScope} 筆語音檔`
+                                              : `此分類 ${usedInScope} 筆 (全館共 ${totalInAll} 筆)`}
+                                          </span>
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setExpandedUsageTagNames((prev) =>
+                                              prev.includes(tag.name)
+                                                ? prev.filter((n) => n !== tag.name)
+                                                : [...prev, tag.name]
+                                            );
+                                          }}
+                                          className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold inline-flex items-center gap-0.5 cursor-pointer"
+                                          title="展開或收合使用此標籤之語音檔名單"
+                                        >
+                                          <span>{isExpanded ? '收合' : '清單'}</span>
+                                          {isExpanded ? (
+                                            <ChevronUp className="w-3 h-3" />
+                                          ) : (
+                                            <ChevronDown className="w-3 h-3" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-500 border border-stone-200">
+                                      {tagManagerCategoryFilter === 'all'
+                                        ? '尚無語音檔使用'
+                                        : `此分類尚無使用 (全館共 ${totalInAll} 筆)`}
                                     </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setExpandedUsageTagNames((prev) =>
-                                          prev.includes(tag.name)
-                                            ? prev.filter((n) => n !== tag.name)
-                                            : [...prev, tag.name]
-                                        );
-                                      }}
-                                      className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold inline-flex items-center gap-0.5 cursor-pointer"
-                                      title="展開或收合使用此標籤之語音檔名單"
-                                    >
-                                      <span>{isExpanded ? '收合' : '清單'}</span>
-                                      {isExpanded ? (
-                                        <ChevronUp className="w-3 h-3" />
-                                      ) : (
-                                        <ChevronDown className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-500 border border-stone-200">
-                                    尚無語音檔使用
-                                  </span>
-                                )}
+                                  );
+                                })()}
                               </div>
 
                               {/* 操作按鈕（大螢幕） */}
@@ -3308,38 +3431,68 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                               )}
                             </div>
 
-                            {/* 展開之語音檔案使用清單 */}
-                            {isExpanded && matchingAudios.length > 0 && (
-                              <div className="mt-2.5 p-3 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5] space-y-1.5 animate-in fade-in duration-150">
-                                <div className="text-xs font-bold text-[#5C3A1B] flex items-center gap-1">
-                                  <span>使用「{tag.name}」標籤的語音檔案名單（共 {matchingAudios.length} 筆）：</span>
-                                </div>
-                                <div className="max-h-48 overflow-y-auto divide-y divide-[#EFE6D5] bg-white rounded-lg border border-[#E5D9C5] px-2.5">
-                                  {matchingAudios.map((a, aIdx) => (
-                                    <div
-                                      key={a.id}
-                                      className="py-1.5 text-xs text-[#3A2D25] flex items-center justify-between gap-2"
-                                    >
-                                      <div className="flex items-center gap-1.5 min-w-0">
-                                        <span className="font-mono text-[#8C7A6B] text-[11px] shrink-0">
-                                          {aIdx + 1}.
-                                        </span>
-                                        <span className="font-semibold truncate" title={a.title}>
-                                          {a.title}
-                                        </span>
+                            {/* 展開之語音檔案使用清單（依所選館藏分類同步） */}
+                            {(() => {
+                              const matchingInScope = scopedAudios.filter((a) =>
+                                (a.tags || []).includes(tag.name)
+                              );
+
+                              if (!isExpanded || matchingInScope.length === 0) return null;
+
+                              return (
+                                <div className="mt-2.5 p-3 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5] space-y-1.5 animate-in fade-in duration-150">
+                                  <div className="text-xs font-bold text-[#5C3A1B] flex items-center justify-between">
+                                    <span>
+                                      使用「{tag.name}」標籤的語音檔案名單
+                                      {tagManagerCategoryFilter !== 'all' && `（${currentCategory?.name || ''} 分類內）`}
+                                      （共 {matchingInScope.length} 筆）：
+                                    </span>
+                                  </div>
+                                  <div className="max-h-48 overflow-y-auto divide-y divide-[#EFE6D5] bg-white rounded-lg border border-[#E5D9C5] px-2.5">
+                                    {matchingInScope.map((a, aIdx) => (
+                                      <div
+                                        key={a.id}
+                                        className="py-1.5 text-xs text-[#3A2D25] flex items-center justify-between gap-2"
+                                      >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <span className="font-mono text-[#8C7A6B] text-[11px] shrink-0">
+                                            {aIdx + 1}.
+                                          </span>
+                                          <span className="font-semibold truncate" title={a.title}>
+                                            {a.title}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0 text-[10px] text-[#8C7A6B]">
+                                          {tagManagerCategoryFilter === 'all' && (
+                                            <span className="bg-[#FAF4E8] px-1.5 py-0.5 rounded border border-[#E5D9C5]">
+                                              {categories.find((c) => c.id === a.categoryId)?.name || '未分類'}
+                                            </span>
+                                          )}
+                                          <span>{a.speaker ? `主講：${a.speaker}` : '未指定主講人'}</span>
+                                        </div>
                                       </div>
-                                      <span className="text-[10px] text-[#8C7A6B] shrink-0">
-                                        {a.speaker ? `主講：${a.speaker}` : '未指定主講人'}
-                                      </span>
-                                    </div>
-                                  ))}
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/* 分頁控制列（以 10 的倍數做選取：10, 20, 30, 50, 100） */}
+                  {displayTags.length > 0 && (
+                    <PaginationBar
+                      totalItems={displayTags.length}
+                      page={safePage}
+                      pageSize={tagManagerPageSize}
+                      onPageChange={setTagManagerPage}
+                      onPageSizeChange={setTagManagerPageSize}
+                      unitLabel="個標籤"
+                    />
+                  )}
                   </div>
                 );
               })()}
