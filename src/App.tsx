@@ -276,6 +276,39 @@ export function App() {
     }
   };
 
+  // 批次將所有語音檔中的指定類別標籤更名（若新名稱已存在則合併去重）
+  const handleRenameTagInAllAudioItems = async (
+    oldTagName: string,
+    newTagName: string
+  ): Promise<number> => {
+    const cleanOld = oldTagName.trim();
+    const cleanNew = newTagName.trim();
+    if (!cleanOld || !cleanNew || cleanOld === cleanNew) return 0;
+    const now = new Date().toISOString();
+    const affectedIds = new Set<string>();
+    const nextItems = audioItems.map((a) => {
+      const currentTags = a.tags || [];
+      if (currentTags.includes(cleanOld)) {
+        affectedIds.add(a.id);
+        const renamed = Array.from(
+          new Set(currentTags.map((t) => (t === cleanOld ? cleanNew : t)))
+        );
+        return { ...a, tags: renamed, updatedAt: now };
+      }
+      return a;
+    });
+    if (affectedIds.size > 0) {
+      setAudioItems(nextItems);
+      if (activeAudioForPlayback && affectedIds.has(activeAudioForPlayback.id)) {
+        const synced = nextItems.find((a) => a.id === activeAudioForPlayback.id);
+        if (synced) setActiveAudioForPlayback(synced);
+      }
+      const updatedList = nextItems.filter((a) => affectedIds.has(a.id));
+      await Promise.all(updatedList.map((item) => saveAudioItem(item, nextItems)));
+    }
+    return affectedIds.size;
+  };
+
   // 批次將所有指定舊主講人的語音檔同步更新為新主講人名稱
   const handleRenameSpeakerInAllAudioItems = async (
     oldSpeakerName: string,
@@ -724,6 +757,7 @@ export function App() {
             onSaveAudioItem={handleSaveAudioItem}
             onBatchMoveAudioCategory={handleBatchMoveAudioCategory}
             onRemoveTagFromAllAudioItems={handleRemoveTagFromAllAudioItems}
+            onRenameTagInAllAudioItems={handleRenameTagInAllAudioItems}
             onRenameSpeakerInAllAudioItems={handleRenameSpeakerInAllAudioItems}
             onRemoveSpeakerFromAllAudioItems={handleRemoveSpeakerFromAllAudioItems}
             onPlayInScreeningRoom={(item) => {

@@ -21,6 +21,8 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   FileText,
   FileAudio,
   Loader2,
@@ -29,7 +31,16 @@ import {
   Users,
   Edit2,
 } from 'lucide-react';
-import { AudioItem, Category, Speaker } from '../types';
+import { AudioItem, AudioTag, Category, Speaker } from '../types';
+import {
+  loadAudioTags,
+  addAudioTag,
+  addAudioTags,
+  renameAudioTag,
+  deleteAudioTag,
+  saveAudioTagsOrder,
+  AUDIO_TAGS_CHANGED_EVENT,
+} from '../services/tagRegistryService';
 import {
   formatDuration,
   getCategoryIcon,
@@ -56,26 +67,13 @@ interface CatalogManagementViewProps {
   onSaveAudioItem: (item: AudioItem) => Promise<void>;
   onBatchMoveAudioCategory: (itemIds: string[], targetCategoryId: string) => Promise<void>;
   onRemoveTagFromAllAudioItems?: (tagToRemove: string) => Promise<void>;
+  onRenameTagInAllAudioItems?: (oldTagName: string, newTagName: string) => Promise<number>;
   onRenameSpeakerInAllAudioItems?: (oldSpeakerName: string, newSpeakerName: string) => Promise<number>;
   onRemoveSpeakerFromAllAudioItems?: (speakerToRemove: string) => Promise<number>;
   onPlayInScreeningRoom: (item: AudioItem) => void;
   onEditInAudioLibrary: (item: AudioItem) => void;
 }
 
-const DEFAULT_QUICK_TAGS = [
-  '繪本',
-  '小說',
-  '經典童話',
-  '散文',
-  '科普',
-  '歷史故事',
-  '傳記',
-  '詩詞朗誦',
-  '自然音景',
-  '生活手札',
-];
-
-const QUICK_TAGS_STORAGE_KEY = 'soundbook_quick_tags_v1';
 
 export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   categories,
@@ -87,6 +85,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   onSaveAudioItem,
   onBatchMoveAudioCategory,
   onRemoveTagFromAllAudioItems,
+  onRenameTagInAllAudioItems,
   onRenameSpeakerInAllAudioItems,
   onRemoveSpeakerFromAllAudioItems,
   onPlayInScreeningRoom,
@@ -96,34 +95,48 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const audioListSectionRef = useRef<HTMLElement | null>(null);
 
   // ============================================================================
-  // 快速標記 (Quick Tags) 狀態：支援新增自訂標籤同步加入、以及刪除確認視窗
+  // 類別標籤名冊（快速標記即為名冊中所有已登錄的標籤，不自行新增未登錄的標籤）
   // ============================================================================
-  const [quickTags, setQuickTags] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(QUICK_TAGS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return DEFAULT_QUICK_TAGS;
-  });
+  const [audioTags, setAudioTags] = useState<AudioTag[]>([]);
+  const quickTags = useMemo(() => audioTags.map((t) => t.name), [audioTags]);
+  const audioTagsRef = useRef<AudioTag[]>([]);
+  audioTagsRef.current = audioTags;
 
-  // 待刪除的快速標記類別標籤（控制系統風格確認視窗）
+  useEffect(() => {
+    let alive = true;
+    if (audioItems.length === 0 && audioTagsRef.current.length > 0) return;
+    loadAudioTags(audioItems)
+      .then((list) => {
+        if (alive) setAudioTags(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioItems.length]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<AudioTag[]>).detail;
+      if (Array.isArray(detail)) setAudioTags(detail);
+    };
+    window.addEventListener(AUDIO_TAGS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(AUDIO_TAGS_CHANGED_EVENT, handler);
+  }, []);
+
+  // 待刪除的類別標籤（控制系統風格確認視窗）
   const [quickTagPendingDelete, setQuickTagPendingDelete] = useState<string | null>(null);
 
-  const saveQuickTags = (nextTags: string[]) => {
-    setQuickTags(nextTags);
-    try {
-      localStorage.setItem(QUICK_TAGS_STORAGE_KEY, JSON.stringify(nextTags));
-    } catch {
-      // ignore storage errors
-    }
-  };
+  // 類別標籤管理視窗狀態
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const [tagManagerSearch, setTagManagerSearch] = useState('');
+  const [newTagNameInput, setNewTagNameInput] = useState('');
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState('');
+  const [tagManagerError, setTagManagerError] = useState('');
+  const [tagManagerBusy, setTagManagerBusy] = useState(false);
+  const [expandedUsageTagNames, setExpandedUsageTagNames] = useState<string[]>([]);
 
   // ============================================================================
   // 館藏分類：新增、修改、刪除、移動排序 狀態
@@ -839,10 +852,12 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     const currentTags = item.tags || [];
     const mergedTags = Array.from(new Set([...currentTags, ...splitTags]));
 
-    // 同步將新增的自訂類別標籤加入到「快速標記」清單中
-    const nextQuickTags = Array.from(new Set([...quickTags, ...splitTags]));
-    if (nextQuickTags.length !== quickTags.length) {
-      saveQuickTags(nextQuickTags);
+    // 同步將新增的自訂類別標籤登錄至類別標籤名冊（即快速標記）
+    const newOnes = splitTags.filter((t) => !quickTags.includes(t));
+    if (newOnes.length > 0) {
+      addAudioTags(newOnes, audioTags)
+        .then((list) => setAudioTags(list))
+        .catch(() => {});
     }
 
     const updated: AudioItem = {
@@ -858,12 +873,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     );
   };
 
-  // 確認刪除「快速標記」中的類別標籤
+  // 確認刪除類別標籤（從名冊刪除並同步移除所有語音檔上的該標籤）
   const handleConfirmDeleteQuickTag = async () => {
     if (!quickTagPendingDelete) return;
     const targetTag = quickTagPendingDelete;
-    const nextQuickTags = quickTags.filter((t) => t !== targetTag);
-    saveQuickTags(nextQuickTags);
+    const targetRecord = audioTags.find((t) => t.name === targetTag);
+    if (targetRecord) {
+      const next = await deleteAudioTag(targetRecord.id, audioTags);
+      setAudioTags(next);
+    }
 
     if (onRemoveTagFromAllAudioItems) {
       await onRemoveTagFromAllAudioItems(targetTag);
@@ -874,7 +892,90 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     }
 
     setQuickTagPendingDelete(null);
-    showToast(`✅ 已從快速標記中刪除類別標籤「${targetTag}」！`);
+    showToast(`✅ 已刪除類別標籤「${targetTag}」，並同步從所有語音檔移除！`);
+  };
+
+  // ============================================================================
+  // 類別標籤管理：新增、修改、刪除、排序與使用情況
+  // ============================================================================
+  const handleCreateTag = async () => {
+    const clean = newTagNameInput.trim();
+    setTagManagerError('');
+    if (!clean) {
+      setTagManagerError('請輸入類別標籤名稱');
+      return;
+    }
+    if (clean.length > 50) {
+      setTagManagerError('類別標籤名稱最多 50 個字');
+      return;
+    }
+    if (quickTags.includes(clean)) {
+      setTagManagerError(`類別標籤「${clean}」已存在`);
+      return;
+    }
+    setTagManagerBusy(true);
+    try {
+      const next = await addAudioTag(clean, audioTags);
+      setAudioTags(next);
+      setNewTagNameInput('');
+      showToast(`✅ 已新增類別標籤「${clean}」！`);
+    } finally {
+      setTagManagerBusy(false);
+    }
+  };
+
+  const handleConfirmRenameTag = async () => {
+    if (!editingTagId) return;
+    const target = audioTags.find((t) => t.id === editingTagId);
+    const clean = editingTagName.trim();
+    setTagManagerError('');
+    if (!target) return;
+    if (!clean) {
+      setTagManagerError('類別標籤名稱不可為空白');
+      return;
+    }
+    if (clean.length > 50) {
+      setTagManagerError('類別標籤名稱最多 50 個字');
+      return;
+    }
+    if (clean === target.name) {
+      setEditingTagId(null);
+      return;
+    }
+    if (audioTags.some((t) => t.id !== target.id && t.name === clean)) {
+      setTagManagerError(`類別標籤「${clean}」已存在，請使用其他名稱`);
+      return;
+    }
+    setTagManagerBusy(true);
+    try {
+      const next = await renameAudioTag(target.id, clean, audioTags);
+      setAudioTags(next);
+      let affected = 0;
+      if (onRenameTagInAllAudioItems) {
+        affected = await onRenameTagInAllAudioItems(target.name, clean);
+      }
+      if (filterTag === target.name) setFilterTag(clean);
+      setEditingTagId(null);
+      setEditingTagName('');
+      showToast(
+        `✅ 已將類別標籤「${target.name}」修改為「${clean}」${
+          affected > 0 ? `，並同步更新 ${affected} 筆語音檔` : ''
+        }！`
+      );
+    } finally {
+      setTagManagerBusy(false);
+    }
+  };
+
+  const handleMoveTag = async (tagId: string, direction: -1 | 1) => {
+    const idx = audioTags.findIndex((t) => t.id === tagId);
+    const swapIdx = idx + direction;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= audioTags.length) return;
+    const reordered = [...audioTags];
+    [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
+    setAudioTags(reordered);
+    const saved = await saveAudioTagsOrder(reordered);
+    setAudioTags(saved);
   };
 
   const handleBatchMoveSelectedItems = async () => {
@@ -1592,13 +1693,36 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
         ref={audioListSectionRef}
         className="parchment-card rounded-2xl p-6 shadow-md space-y-5 scroll-mt-20"
       >
-        <div className="border-b border-[#E5D9C5] pb-4">
+        <div className="border-b border-[#E5D9C5] pb-4 flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div>
           <h3 className="text-lg font-bold font-serif-tc text-[#2C221E]">
             語音檔案館藏資料管理（語音檔案名稱 · 館藏分類 · 說明內容 · 類別標籤設定）
           </h3>
           <p className="text-xs text-[#7A6855] mt-1">
             可直接修改每筆語音檔的「語音檔案名稱」、調整「館藏分類」、編輯「說明內容」，並為每個檔案標記「類別標籤（如：繪本、小說、童話、科普等）」，修改後立即自動儲存
           </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setTagManagerError('');
+                setIsTagManagerOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+            >
+              <Tag className="w-4 h-4" />
+              <span>類別標籤管理 ({audioTags.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSpeakerManagerOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#8B5A2B] hover:bg-[#70461F] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+            >
+              <Users className="w-4 h-4" />
+              <span>主講人名冊維護管理</span>
+            </button>
+          </div>
         </div>
 
         {/* 查詢區塊：分成 語音檔案名稱、館藏分類、說明內容、標籤 四個查詢欄位 */}
@@ -1724,9 +1848,23 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
             {/* 欄位 5：標籤（支援下拉選取與關鍵字查詢） */}
             <div>
-              <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
-                5. 標籤（類別標籤）
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#5C3A1B]">
+                  5. 標籤（類別標籤）
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTagManagerError('');
+                    setIsTagManagerOpen(true);
+                  }}
+                  className="text-[10px] text-[#2E5A44] hover:text-[#1C3A2B] flex items-center gap-0.5 cursor-pointer font-semibold"
+                  title="開啟類別標籤管理"
+                >
+                  <Tag className="w-3 h-3" />
+                  <span>標籤管理</span>
+                </button>
+              </div>
               <div className="flex flex-col gap-1.5">
                 <select
                   value={filterTag}
@@ -2331,7 +2469,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                             </span>
                           </label>
                           <span className="text-[11px] text-[#7A6855]">
-                            點擊下方快速標記即可套用或取消，點擊「×」可從快速標記中刪除
+                            點擊下方快速標記即可套用或取消；標籤的新增、修改、刪除請至「類別標籤管理」
                           </span>
                         </div>
 
@@ -2339,7 +2477,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         <div className="flex flex-wrap items-center gap-1.5 min-h-[28px]">
                           {itemTags.length === 0 ? (
                             <span className="text-xs text-[#9C8B7A] italic">
-                              尚未標記類別標籤（請點擊下方「+ 繪本」、「+ 小說」或自行輸入新增）
+                              尚未標記類別標籤（請點擊下方快速標記套用，或自行輸入新增）
                             </span>
                           ) : (
                             itemTags.map((tag) => (
@@ -2362,45 +2500,50 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           )}
                         </div>
 
-                        {/* 快速標記類別標籤列（支援點選標記 + 刪除快速標記按鈕） */}
+                        {/* 快速標記類別標籤列（帶入類別標籤名冊中所有已登錄的標籤） */}
                         <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[#E5D9C5]">
                           <span className="text-[11px] font-semibold text-[#6E5D4F] mr-1">
                             快速標記：
                           </span>
+                          {quickTags.length === 0 && (
+                            <span className="text-[11px] text-[#9C8B7A] italic">
+                              尚未登錄任何類別標籤，請點擊右側「類別標籤管理」新增
+                            </span>
+                          )}
                           {quickTags.map((presetTag) => {
                             const isTagged = itemTags.includes(presetTag);
                             return (
-                              <div
+                              <button
                                 key={presetTag}
-                                className={`inline-flex items-center rounded-md text-[11px] font-semibold transition overflow-hidden border ${
+                                type="button"
+                                onClick={() => handleToggleItemTag(item, presetTag)}
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold transition border cursor-pointer ${
                                   isTagged
                                     ? 'bg-[#2E5A44]/20 text-[#2E5A44] border-[#2E5A44]'
                                     : 'bg-white text-[#5C3A1B] border-[#D5C5AE] hover:border-[#8B5A2B]'
                                 }`}
+                                title={
+                                  isTagged
+                                    ? `點擊取消標記「${presetTag}」`
+                                    : `點擊為此語音檔標記「${presetTag}」`
+                                }
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleItemTag(item, presetTag)}
-                                  className="px-2 py-0.5 cursor-pointer"
-                                  title={
-                                    isTagged
-                                      ? `點擊取消標記「${presetTag}」`
-                                      : `點擊為此語音檔標記「${presetTag}」`
-                                  }
-                                >
-                                  {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setQuickTagPendingDelete(presetTag)}
-                                  className="px-1.5 py-0.5 border-l border-[#D5C5AE]/70 hover:bg-red-600 hover:text-white text-[#8B735B] transition cursor-pointer"
-                                  title={`從快速標記清單中刪除「${presetTag}」`}
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
+                                {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
+                              </button>
                             );
                           })}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTagManagerError('');
+                              setIsTagManagerOpen(true);
+                            }}
+                            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold text-[#8B5A2B] hover:text-white hover:bg-[#8B5A2B] border border-[#8B5A2B]/40 transition cursor-pointer"
+                            title="開啟類別標籤管理（新增、修改、刪除、排序）"
+                          >
+                            <Tag className="w-3 h-3" />
+                            <span>類別標籤管理</span>
+                          </button>
                         </div>
                       </div>
 
@@ -2421,7 +2564,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                               handleAddCustomTagToItem(item);
                             }
                           }}
-                          placeholder="輸入自訂類別（例如：繪本、奇幻小說... 新增後將自動加入快速標記）"
+                  placeholder="輸入新類別標籤名稱（新增後將自動登錄至類別標籤名冊與快速標記）"
                           className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
                         />
                         <button
@@ -2779,10 +2922,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       )}
 
       {/* ========================================================================
-          Modal 4：刪除「快速標記」類別標籤確認視窗（符合系統典藏風格）
+          Modal 4：刪除類別標籤確認視窗（層級 z-[70]）
          ======================================================================== */}
       {quickTagPendingDelete && (
-        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="parchment-card rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
             <div className="px-6 py-4 bg-gradient-to-r from-[#3A2218] to-[#522D20] text-[#FAF5EC] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -2790,7 +2933,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   <AlertTriangle className="w-4 h-4" />
                 </div>
                 <h3 className="font-bold font-serif-tc text-base tracking-wide">
-                  刪除快速標記類別確認
+                  刪除類別標籤確認
                 </h3>
               </div>
               <button
@@ -2804,7 +2947,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
 
             <div className="p-6 space-y-4">
               <p className="text-sm text-[#3A2D25] leading-relaxed">
-                確定要從「快速標記」清單中刪除類別標籤「
+                確定要刪除類別標籤「
                 <strong className="text-[#8B5A2B]">{quickTagPendingDelete}</strong>
                 」嗎？
               </p>
@@ -2814,15 +2957,13 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                 if (usedCount > 0) {
                   return (
                     <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#6E4720] leading-relaxed">
-                      ⚠️ 目前共有 <strong>{usedCount}</strong> 筆語音檔標記了「
-                      <strong>{quickTagPendingDelete}</strong>
-                      」，確認刪除後也會一併從這些語音檔中移除此類別標籤並同步更新 Firebase。
+                      ⚠️ 目前共有 <strong>{usedCount}</strong> 筆語音檔標記了此標籤，確認刪除後將自標籤名冊刪除，並同步從這些語音檔中移除此標籤（語音檔本身不會刪除），更新至 Firebase。
                     </div>
                   );
                 }
                 return (
                   <div className="p-3.5 rounded-xl bg-[#F4ECE0] border border-[#DFCEB4] text-xs text-[#5C4938]">
-                    目前沒有任何語音檔使用此標籤，可直接從快速標記清單中安全移除。
+                    目前沒有任何語音檔使用此標籤，可直接安全刪除。
                   </div>
                 );
               })()}
@@ -2844,6 +2985,382 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   <span>確認刪除類別標籤</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================
+          Modal 4.5：類別標籤維護管理視窗（層級 z-50）
+         ======================================================================== */}
+      {isTagManagerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-3xl w-full max-h-[88vh] flex flex-col overflow-hidden shadow-2xl border border-[#D8C8B0] animate-in fade-in zoom-in-95 duration-150">
+            {/* 視窗頂部標題列 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#1C3A2B] to-[#2E5A44] text-[#FAF5EC] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-white/20 border border-white/30 flex items-center justify-center text-white">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base tracking-wide">
+                    類別標籤維護管理
+                  </h3>
+                  <p className="text-[11px] text-[#D0E2D8]">
+                    管理數位有聲圖書館之類別標籤名冊，支援新增、修改、刪除、排序與使用情況統計
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTagManagerOpen(false);
+                  setEditingTagId(null);
+                  setTagManagerError('');
+                }}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-[#E6D7C3] cursor-pointer transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 內容區塊 */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* 新增類別標籤輸入列 */}
+              <div className="p-3.5 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5] space-y-2">
+                <label className="block text-xs font-bold text-[#3A2518]">
+                  新增類別標籤
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newTagNameInput}
+                    onChange={(e) => {
+                      setNewTagNameInput(e.target.value);
+                      setTagManagerError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCreateTag();
+                      }
+                    }}
+                    placeholder="輸入新的類別標籤名稱（例如：兒童童話、奇幻小說、文史專題）..."
+                    className="flex-1 min-w-0 px-3.5 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs sm:text-sm font-medium focus:outline-none focus:border-[#2E5A44]"
+                  />
+                  <button
+                    type="button"
+                    disabled={tagManagerBusy || !newTagNameInput.trim()}
+                    onClick={handleCreateTag}
+                    className="px-4 py-2 rounded-xl bg-[#2E5A44] hover:bg-[#234735] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    {tagManagerBusy ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-3.5 h-3.5" />
+                    )}
+                    <span>確認新增</span>
+                  </button>
+                </div>
+                {tagManagerError && (
+                  <p className="text-xs text-red-600 font-semibold">{tagManagerError}</p>
+                )}
+              </div>
+
+              {/* 搜尋與統計資訊 */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                <div className="relative flex-1 max-w-xs">
+                  <Search className="w-3.5 h-3.5 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={tagManagerSearch}
+                    onChange={(e) => setTagManagerSearch(e.target.value)}
+                    placeholder="搜尋已登錄標籤名稱..."
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs focus:outline-none focus:border-[#2E5A44]"
+                  />
+                </div>
+                <div className="text-xs text-[#5C3A1B] flex flex-wrap items-center gap-3">
+                  <div>
+                    名冊標籤：<strong className="text-[#2E5A44] font-mono text-sm">{audioTags.length}</strong> 個
+                  </div>
+                  <div>
+                    尚未標記類別之語音：<strong className="text-amber-800 font-mono text-sm">{untaggedCount}</strong> 筆
+                  </div>
+                </div>
+              </div>
+
+              {/* 標籤名冊清單列表 */}
+              {(() => {
+                const searchQ = tagManagerSearch.trim().toLowerCase();
+                const displayTags = audioTags.filter(
+                  (t) => !searchQ || t.name.toLowerCase().includes(searchQ)
+                );
+
+                if (audioTags.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-sm text-[#7A6855] bg-[#FAF6EE]/50 rounded-xl border border-dashed border-[#DFCEB4]">
+                      目前名冊中尚未有任何類別標籤，請於上方輸入名稱並點擊「確認新增」！
+                    </div>
+                  );
+                }
+
+                if (displayTags.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-sm text-[#7A6855] bg-[#FAF6EE]/50 rounded-xl border border-dashed border-[#DFCEB4]">
+                      找不到符合「{tagManagerSearch}」的類別標籤
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="rounded-xl border border-[#E2D5C1] overflow-hidden bg-white shadow-2xs">
+                    <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#F4ECE0] text-xs font-bold text-[#5C3A1B] border-b border-[#E2D5C1]">
+                      <div className="col-span-2 sm:col-span-1 text-center font-mono">排序</div>
+                      <div className="col-span-1 sm:col-span-1 text-center font-mono">序號</div>
+                      <div className="col-span-5 sm:col-span-4">標籤名稱</div>
+                      <div className="col-span-4 sm:col-span-4">使用情況</div>
+                      <div className="hidden sm:block sm:col-span-2 text-right">操作</div>
+                    </div>
+
+                    <div className="divide-y divide-[#EFE6D5]">
+                      {displayTags.map((tag, idx) => {
+                        const originalIdx = audioTags.findIndex((t) => t.id === tag.id);
+                        const isEditing = editingTagId === tag.id;
+                        const matchingAudios = audioItems.filter((a) =>
+                          (a.tags || []).includes(tag.name)
+                        );
+                        const usedCount = matchingAudios.length;
+                        const isExpanded = expandedUsageTagNames.includes(tag.name);
+
+                        return (
+                          <div
+                            key={tag.id}
+                            className="px-4 py-3 hover:bg-[#FAF6EE] transition-colors"
+                          >
+                            <div className="grid grid-cols-12 gap-2 items-center">
+                              {/* 排序上移下移按鈕 */}
+                              <div className="col-span-2 sm:col-span-1 flex items-center justify-center gap-0.5">
+                                <button
+                                  type="button"
+                                  disabled={originalIdx <= 0}
+                                  onClick={() => handleMoveTag(tag.id, -1)}
+                                  className="p-1 rounded hover:bg-[#EFE2C8] text-[#7A6855] disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
+                                  title="在快速標記中往前排序"
+                                >
+                                  <ArrowUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={originalIdx >= audioTags.length - 1}
+                                  onClick={() => handleMoveTag(tag.id, 1)}
+                                  className="p-1 rounded hover:bg-[#EFE2C8] text-[#7A6855] disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer"
+                                  title="在快速標記中往後排序"
+                                >
+                                  <ArrowDown className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* 序號 */}
+                              <div className="col-span-1 sm:col-span-1 text-center font-mono text-xs text-[#8C7A6B]">
+                                {originalIdx + 1}
+                              </div>
+
+                              {/* 標籤名稱（支援就地編輯） */}
+                              <div className="col-span-5 sm:col-span-4">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      value={editingTagName}
+                                      onChange={(e) => {
+                                        setEditingTagName(e.target.value);
+                                        setTagManagerError('');
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleConfirmRenameTag();
+                                        } else if (e.key === 'Escape') {
+                                          setEditingTagId(null);
+                                        }
+                                      }}
+                                      className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#2E5A44] bg-white text-xs font-semibold focus:outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={tagManagerBusy}
+                                      onClick={handleConfirmRenameTag}
+                                      className="p-1 rounded bg-[#2E5A44] text-white hover:bg-[#234735] cursor-pointer"
+                                      title="確認儲存修改（將同步更新所有語音檔）"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingTagId(null)}
+                                      className="p-1 rounded border border-[#D5C5AE] bg-white text-[#5C3A1B] hover:bg-stone-100 cursor-pointer"
+                                      title="取消"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#2C221E]">
+                                      <Tag className="w-3 h-3 text-[#2E5A44]" />
+                                      <span>{tag.name}</span>
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* 使用情況 */}
+                              <div className="col-span-4 sm:col-span-4">
+                                {usedCount > 0 ? (
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-[#2E5A44]/15 text-[#2E5A44] border border-[#2E5A44]/30">
+                                      <span>{usedCount} 筆語音檔</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setExpandedUsageTagNames((prev) =>
+                                          prev.includes(tag.name)
+                                            ? prev.filter((n) => n !== tag.name)
+                                            : [...prev, tag.name]
+                                        );
+                                      }}
+                                      className="text-[11px] text-[#8B5A2B] hover:text-[#5C3A1B] font-semibold inline-flex items-center gap-0.5 cursor-pointer"
+                                      title="展開或收合使用此標籤之語音檔名單"
+                                    >
+                                      <span>{isExpanded ? '收合' : '清單'}</span>
+                                      {isExpanded ? (
+                                        <ChevronUp className="w-3 h-3" />
+                                      ) : (
+                                        <ChevronDown className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-500 border border-stone-200">
+                                    尚無語音檔使用
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* 操作按鈕（大螢幕） */}
+                              <div className="hidden sm:flex col-span-2 items-center justify-end gap-1.5">
+                                {!isEditing && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingTagId(tag.id);
+                                        setEditingTagName(tag.name);
+                                        setTagManagerError('');
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#FAF4E8] text-xs font-semibold text-[#5C3A1B] cursor-pointer transition shadow-2xs"
+                                      title="修改此標籤名稱（將同步更新所有語音檔）"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                      <span>修改</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setQuickTagPendingDelete(tag.name)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-xs font-semibold text-red-600 cursor-pointer transition shadow-2xs"
+                                      title="刪除此類別標籤"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span>刪除</span>
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 小螢幕操作按鈕列 */}
+                            <div className="sm:hidden flex items-center justify-end gap-1.5 pt-2 mt-2 border-t border-[#EFE6D5]">
+                              {!isEditing && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingTagId(tag.id);
+                                      setEditingTagName(tag.name);
+                                      setTagManagerError('');
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[#D5C5AE] bg-white hover:bg-[#FAF4E8] text-xs font-semibold text-[#5C3A1B] cursor-pointer transition"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                    <span>修改名稱</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuickTagPendingDelete(tag.name)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-xs font-semibold text-red-600 cursor-pointer transition"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>刪除標籤</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+
+                            {/* 展開之語音檔案使用清單 */}
+                            {isExpanded && matchingAudios.length > 0 && (
+                              <div className="mt-2.5 p-3 rounded-xl bg-[#FAF6EE] border border-[#E5D9C5] space-y-1.5 animate-in fade-in duration-150">
+                                <div className="text-xs font-bold text-[#5C3A1B] flex items-center gap-1">
+                                  <span>使用「{tag.name}」標籤的語音檔案名單（共 {matchingAudios.length} 筆）：</span>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto divide-y divide-[#EFE6D5] bg-white rounded-lg border border-[#E5D9C5] px-2.5">
+                                  {matchingAudios.map((a, aIdx) => (
+                                    <div
+                                      key={a.id}
+                                      className="py-1.5 text-xs text-[#3A2D25] flex items-center justify-between gap-2"
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="font-mono text-[#8C7A6B] text-[11px] shrink-0">
+                                          {aIdx + 1}.
+                                        </span>
+                                        <span className="font-semibold truncate" title={a.title}>
+                                          {a.title}
+                                        </span>
+                                      </div>
+                                      <span className="text-[10px] text-[#8C7A6B] shrink-0">
+                                        {a.speaker ? `主講：${a.speaker}` : '未指定主講人'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 視窗底端操作列 */}
+            <div className="px-6 py-3.5 bg-[#FAF4E8] border-t border-[#E5D9C5] flex items-center justify-between shrink-0">
+              <span className="text-xs text-[#7A6855]">
+                ℹ️ 標籤修改與刪除將即時同步至雲端資料庫與所有使用此標籤的語音檔案
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTagManagerOpen(false);
+                  setEditingTagId(null);
+                  setTagManagerError('');
+                }}
+                className="px-4 py-2 rounded-xl bg-[#8B5A2B] hover:bg-[#6F4520] text-white text-xs font-semibold cursor-pointer transition shadow-xs"
+              >
+                關閉視窗
+              </button>
             </div>
           </div>
         </div>

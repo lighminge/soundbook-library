@@ -28,7 +28,7 @@ import {
   Tags,
   Scale,
 } from 'lucide-react';
-import { AudioItem, Category, PlaybackSlide, Speaker } from '../types';
+import { AudioItem, AudioTag, Category, PlaybackSlide, Speaker } from '../types';
 import {
   getAudioFileDuration,
   uploadFileToGoogleDrive,
@@ -42,6 +42,11 @@ import {
   saveSavedSpeaker,
 } from '../services/storageService';
 import { usePlayableAudioUrl } from '../utils/mediaCache';
+import {
+  loadAudioTags,
+  addAudioTag,
+  AUDIO_TAGS_CHANGED_EVENT,
+} from '../services/tagRegistryService';
 import {
   getAudioInputAccept,
   isSupportedAudioFile,
@@ -86,21 +91,6 @@ const DEFAULT_COVER_IMAGES = [
   'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=800&q=80',
   'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?auto=format&fit=crop&w=800&q=80',
 ];
-
-const DEFAULT_QUICK_TAGS = [
-  '繪本',
-  '小說',
-  '經典童話',
-  '散文',
-  '科普',
-  '歷史故事',
-  '傳記',
-  '詩詞朗誦',
-  '自然音景',
-  '生活手札',
-];
-
-const QUICK_TAGS_STORAGE_KEY = 'soundbook_quick_tags_v1';
 
 export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   categories,
@@ -152,42 +142,31 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [isAddingNewSpeaker, setIsAddingNewSpeaker] = useState<boolean>(false);
   const [inlineNewSpeakerName, setInlineNewSpeakerName] = useState<string>('');
 
-  // 類別標籤設定（快速標記清單與自訂輸入狀態，與館藏資料管理同步共用快速標記）
-  const [quickTags, setQuickTags] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(QUICK_TAGS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return DEFAULT_QUICK_TAGS;
-  });
+  // 類別標籤設定（與館藏資料管理同步共用類別標籤名冊，不自行加入未登錄的標籤）
+  const [audioTags, setAudioTags] = useState<AudioTag[]>([]);
+  const availableQuickTags = useMemo(() => audioTags.map((t) => t.name), [audioTags]);
   const [customEditorTagInput, setCustomEditorTagInput] = useState<string>('');
 
-  const saveQuickTags = (nextTags: string[]) => {
-    setQuickTags(nextTags);
-    try {
-      localStorage.setItem(QUICK_TAGS_STORAGE_KEY, JSON.stringify(nextTags));
-    } catch {
-      // ignore storage errors
-    }
-  };
+  useEffect(() => {
+    let alive = true;
+    loadAudioTags(audioItems)
+      .then((list) => {
+        if (alive) setAudioTags(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [audioItems]);
 
-  // 合併快速標記與館藏中已使用過的所有類別標籤，方便使用者一鍵點選
-  const availableQuickTags = useMemo(() => {
-    const merged = new Set<string>(quickTags);
-    audioItems.forEach((a) => {
-      (a.tags || []).forEach((t) => {
-        if (t && t.trim()) merged.add(t.trim());
-      });
-    });
-    return Array.from(merged);
-  }, [quickTags, audioItems]);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<AudioTag[]>).detail;
+      if (Array.isArray(detail)) setAudioTags(detail);
+    };
+    window.addEventListener(AUDIO_TAGS_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(AUDIO_TAGS_CHANGED_EVENT, handler);
+  }, []);
 
   // ============================================================================
   // 區塊 3：播放時的文字顯示 (SRT 結構化時間區段編輯器 + 批次修改時間區段 + 播放秒數即時同步)
@@ -700,7 +679,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   /**
-   * 在「編輯語音檔」新增自訂類別標籤並自動加入快速標記與當前語音檔
+   * 在「編輯語音檔」新增自訂類別標籤並自動登錄至類別標籤名冊與當前語音檔
    */
   const handleAddCustomEditorTag = async () => {
     const trimmed = customEditorTagInput.trim().replace(/^#/, '');
@@ -708,8 +687,10 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       showToast('⚠️ 請先輸入要新增的類別標籤名稱');
       return;
     }
-    if (!quickTags.includes(trimmed)) {
-      saveQuickTags([...quickTags, trimmed]);
+    if (!availableQuickTags.includes(trimmed)) {
+      addAudioTag(trimmed, audioTags)
+        .then((list) => setAudioTags(list))
+        .catch(() => {});
     }
     const nextTags = itemTags.includes(trimmed) ? itemTags : [...itemTags, trimmed];
     setItemTags(nextTags);
@@ -725,15 +706,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       { tags: nextTags }
     );
     showToast(`✅ 已新增並標記類別標籤「${trimmed}」！`);
-  };
-
-  /**
-   * 從快速標記清單移除某個預設類別標籤
-   */
-  const handleRemoveQuickTagFromEditor = (tagToRemove: string) => {
-    const nextQuick = quickTags.filter((t) => t !== tagToRemove);
-    saveQuickTags(nextQuick);
-    showToast(`🗑️ 已從快速標記移除「${tagToRemove}」`);
   };
 
   /**
@@ -3101,47 +3073,37 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       <span className="font-semibold">快速標記（點選即可套用或取消）：</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
+                      {availableQuickTags.length === 0 && (
+                        <span className="text-[11px] text-[#9C8B7A] italic">
+                          尚未登錄任何類別標籤，可由下方自行輸入新增
+                        </span>
+                      )}
                       {availableQuickTags.map((presetTag) => {
                         const isTagged = itemTags.includes(presetTag);
-                        const isRemovableQuick = quickTags.includes(presetTag);
                         return (
-                          <div
+                          <button
                             key={presetTag}
-                            className={`inline-flex items-center rounded-md text-[11px] font-semibold transition overflow-hidden border ${
+                            type="button"
+                            onClick={() => handleToggleEditorTag(presetTag)}
+                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-semibold transition border cursor-pointer ${
                               isTagged
                                 ? 'bg-[#2E5A44]/20 text-[#2E5A44] border-[#2E5A44]'
                                 : 'bg-[#FAF6EE] text-[#5C3A1B] border-[#D5C5AE] hover:border-[#8B5A2B]'
                             }`}
+                            title={
+                              isTagged
+                                ? `點擊取消標記「${presetTag}」`
+                                : `點擊為此語音檔標記「${presetTag}」`
+                            }
                           >
-                            <button
-                              type="button"
-                              onClick={() => handleToggleEditorTag(presetTag)}
-                              className="px-2 py-1 cursor-pointer"
-                              title={
-                                isTagged
-                                  ? `點擊取消標記「${presetTag}」`
-                                  : `點擊為此語音檔標記「${presetTag}」`
-                              }
-                            >
-                              {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
-                            </button>
-                            {isRemovableQuick && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveQuickTagFromEditor(presetTag)}
-                                className="px-1.5 py-1 border-l border-[#D5C5AE]/70 hover:bg-red-600 hover:text-white text-[#8B735B] transition cursor-pointer"
-                                title={`從快速標記清單中移除「${presetTag}」`}
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
+                            {isTagged ? `✓ ${presetTag}` : `+ ${presetTag}`}
+                          </button>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* 自訂類別標籤輸入框（新增後自動加入快速標記並標記於此語音檔） */}
+                  {/* 自訂類別標籤輸入框（新增後自動登錄至標籤名冊並標記於此語音檔） */}
                   <div className="flex items-center gap-2 pt-2 border-t border-[#E5D9C5]">
                     <input
                       type="text"
@@ -3153,7 +3115,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                           handleAddCustomEditorTag();
                         }
                       }}
-                      placeholder="輸入自訂類別（例如：繪本、奇幻小說... 新增後自動加入快速標記）"
+                      placeholder="輸入自訂類別（新增後將自動登錄至名冊與快速標記）"
                       className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-[#C8B598] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#2E5A44]"
                     />
                     <button

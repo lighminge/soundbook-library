@@ -59,6 +59,15 @@ rules_version = '2';
 //   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
 //   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
 //
+// Collection: audioTags
+// Document ID: {tagId} (matches field `id`, e.g., "tag_1730592000000_ab12c")
+// Fields:
+//   - id: string (required, immutable, 1..120 chars, must equal tagId) - Unique category tag identifier
+//   - name: string (required, 1..50 chars) - Category tag (類別標籤) display name
+//   - order: int (required, 0..100000) - Display sort order
+//   - createdAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Creation timestamp string
+//   - updatedAt: string (required, ISO 8601 format, <= 64 chars) - Last update timestamp string
+//
 // Collection: audioChunks
 // Document ID: {chunkId} (matches field `id`, e.g., "{audioId}_chunk_0")
 // Fields:
@@ -348,6 +357,26 @@ service cloud.firestore {
         isValidDateString(data.updatedAt);
     }
 
+    // Validate AudioTag (category tag registry) document schema and field bounds
+    function isValidAudioTag(data, tagId) {
+      let fields = [
+        'id',
+        'name',
+        'order',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasRequiredFields(fields) &&
+        hasOnlyAllowedFields(fields) &&
+        data.id is string && data.id == tagId &&
+        validStringLength('id', 1, 120) &&
+        validStringLength('name', 1, 50) &&
+        data.order is int && data.order >= 0 && data.order <= 100000 &&
+        isValidDateString(data.createdAt) &&
+        isValidDateString(data.updatedAt);
+    }
+
     // Validate AudioChunk document schema and field bounds
     function isValidAudioChunk(data, chunkId) {
       let requiredFields = [
@@ -539,6 +568,15 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isValidSpeaker(request.resource.data, speakerId);
       allow update: if isValidSpeaker(request.resource.data, speakerId) &&
+                       areImmutableFieldsUnchanged(['id', 'createdAt']);
+      allow delete: if true;
+    }
+
+    // Audio Category Tags (audioTags/{tagId}) - mirrors speakers permission model
+    match /audioTags/{tagId} {
+      allow read: if true;
+      allow create: if isValidAudioTag(request.resource.data, tagId);
+      allow update: if isValidAudioTag(request.resource.data, tagId) &&
                        areImmutableFieldsUnchanged(['id', 'createdAt']);
       allow delete: if true;
     }

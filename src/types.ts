@@ -54,6 +54,14 @@ export interface Speaker {
   updatedAt: string; // ISO 8601
 }
 
+export interface AudioTag {
+  id: string; // e.g. "tag_1730592000000_ab12c"
+  name: string; // 類別標籤名稱（如：繪本、小說）
+  order: number; // 顯示排序
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+}
+
 export interface SavedPlaylist {
   id: string; // e.g. "playlist_1730592000000"
   name: string; // 播放清單名稱
