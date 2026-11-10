@@ -1483,8 +1483,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                 <span className="text-[#8C7A6B] hidden sm:inline">單日最高：<strong className="text-[#8B5A2B]">{maxDailyTotal} 次</strong></span>
                               </div>
 
-                              {/* 長條圖本體：加大至 h-88 (352px)，提供充足 pt-20 頂部空間與 px-6 水平安全邊距，徹底解決提示裁切與未對齊長條圖問題 */}
-                              <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-6 sm:px-8 overflow-x-auto">
+                              {/* 長條圖本體：加大至 h-88 (352px)，提供充足 pt-20 頂部空間與 px-8 sm:px-12 水平寬裕安全邊距，邊緣自適應對齊，徹底杜絕左右文字裁切 */}
+                              <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-8 sm:px-12 overflow-x-auto">
                                 {/* 背景水平虛線參考線 */}
                                 <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                   <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1494,10 +1494,12 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                 </div>
 
                                 <div className="h-full flex items-end gap-3 sm:gap-4 min-w-full">
-                                  {dailyTrend.map(([day, d]) => {
+                                  {dailyTrend.map(([day, d], idx) => {
                                     const barHeightPx = Math.max(16, Math.round((d.total / maxDailyTotal) * 190));
                                     const successPct = d.total > 0 ? (d.success / d.total) * 100 : 0;
                                     const failedPct = d.total > 0 ? (d.failed / d.total) * 100 : 0;
+                                    const isLeftEdge = dailyTrend.length > 2 && idx <= 1;
+                                    const isRightEdge = dailyTrend.length > 2 && idx >= dailyTrend.length - 2;
 
                                     return (
                                       <div
@@ -1506,16 +1508,34 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                         onMouseLeave={() => setHoveredDaily(null)}
                                         className="flex-1 min-w-[46px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                       >
-                                        {/* 柱狀與數值包裝層：懸停提示直接以柱體為基準，箭頭 100% 精準指向長條圖與數值 */}
+                                        {/* 柱狀與數值包裝層：懸停提示在邊緣自適應靠內側，小箭頭 100% 精準對準柱心，徹底防止左右被裁切 */}
                                         <div className="relative flex flex-col items-center">
-                                          {/* 懸停詳細資訊卡片（緊貼柱體頂部，向下箭頭精確置中指向長條圖） */}
-                                          <div className="absolute bottom-full mb-2 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none left-1/2 -translate-x-1/2">
+                                          {/* 懸停詳細資訊卡片（緊貼柱體頂部，在最左/最右側自適應調整靠齊方向，小箭頭始終指向長條柱中心） */}
+                                          <div
+                                            className={`absolute bottom-full mb-2 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none ${
+                                              isLeftEdge
+                                                ? 'left-0 items-start'
+                                                : isRightEdge
+                                                ? 'right-0 items-end'
+                                                : 'left-1/2 -translate-x-1/2 items-center'
+                                            }`}
+                                          >
                                             <span className="font-bold text-amber-300">{day}</span>
-                                            <span className="mt-0.5 text-[11px]">
-                                              總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
-                                            </span>
-                                            {/* 向下小箭頭：精準置中指向長條圖 */}
-                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-[#2C221E] rotate-45" />
+                                            <div className="flex items-center gap-1.5 mt-0.5 text-[11px]">
+                                              <span>總計 <strong>{d.total}</strong> 次</span>
+                                              <span className="text-emerald-400">✓ {d.success}</span>
+                                              {d.failed > 0 && <span className="text-rose-400">✗ {d.failed}</span>}
+                                            </div>
+                                            {/* 向下小箭頭：無論卡片靠左、靠右或居中，小箭頭永遠精準指向長條圖柱中心 */}
+                                            <div
+                                              className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${
+                                                isLeftEdge
+                                                  ? 'left-3.5'
+                                                  : isRightEdge
+                                                  ? 'right-3.5'
+                                                  : 'left-1/2 -translate-x-1/2'
+                                              }`}
+                                            />
                                           </div>
 
                                           {/* 柱狀圖上方數值標籤（免 hover 直接清晰呈現） */}
@@ -1636,7 +1656,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               </span>
                             </div>
 
-                            <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-6 sm:px-8 overflow-x-auto">
+                            <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-8 sm:px-12 overflow-x-auto">
                               {/* 背景水平虛線參考線 */}
                               <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                 <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1646,10 +1666,12 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               </div>
 
                               <div className="h-full flex items-end gap-1 sm:gap-2 min-w-[700px]">
-                                {hourlyDistribution.map((h) => {
+                                {hourlyDistribution.map((h, idx) => {
                                   const isPeak = h.total > 0 && h.total === peakHourCount;
                                   const barHeightPx =
                                     h.total > 0 ? Math.max(16, Math.round((h.total / maxHourlyTotal) * 190)) : 6;
+                                  const isLeftEdge = idx <= 2;
+                                  const isRightEdge = idx >= 21;
 
                                   return (
                                     <div
@@ -1658,18 +1680,36 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                       onMouseLeave={() => setHoveredHourly(null)}
                                       className="flex-1 min-w-[26px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                     >
-                                      {/* 柱狀與數值包裝層：懸停提示直接以柱體為基準，箭頭 100% 精準指向時段長條圖 */}
+                                      {/* 柱狀與數值包裝層：懸停提示在邊緣自適應靠內側，小箭頭 100% 精準對準柱心，徹底防止左右被裁切 */}
                                       <div className="relative flex flex-col items-center">
-                                        {/* 懸停詳細提示（緊貼柱體頂部，向下箭頭精確置中指向長條圖） */}
-                                        <div className="absolute bottom-full mb-2 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none left-1/2 -translate-x-1/2">
+                                        {/* 懸停詳細提示（緊貼柱體頂部，最左側靠左展開、最右側靠右展開，小箭頭始終指向時段長條柱中心） */}
+                                        <div
+                                          className={`absolute bottom-full mb-2 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none ${
+                                            isLeftEdge
+                                              ? 'left-0 items-start'
+                                              : isRightEdge
+                                              ? 'right-0 items-end'
+                                              : 'left-1/2 -translate-x-1/2 items-center'
+                                          }`}
+                                        >
                                           <span className="font-bold text-amber-300">
                                             {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
                                           </span>
-                                          <span className="mt-0.5 text-[11px]">
-                                            登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
-                                          </span>
-                                          {/* 向下小箭頭：精準置中指向長條圖 */}
-                                          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-[#2C221E] rotate-45" />
+                                          <div className="flex items-center gap-1.5 mt-0.5 text-[11px]">
+                                            <span>登入 <strong>{h.total}</strong> 次</span>
+                                            <span className="text-emerald-400">✓ {h.success}</span>
+                                            {h.failed > 0 && <span className="text-rose-400">✗ {h.failed}</span>}
+                                          </div>
+                                          {/* 向下小箭頭：無論卡片靠左、靠右或居中，小箭頭永遠精準指向長條圖柱中心 */}
+                                          <div
+                                            className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${
+                                              isLeftEdge
+                                                ? 'left-2.5'
+                                                : isRightEdge
+                                                ? 'right-2.5'
+                                                : 'left-1/2 -translate-x-1/2'
+                                            }`}
+                                          />
                                         </div>
 
                                         {/* 若該小時有登入，上方即時標示登入次數 */}
@@ -1687,7 +1727,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
 
                                         {/* 時段長條柱（有登入顯示溫暖琥珀/古木漸層，尖峰時段高亮呈現） */}
                                         <div
-                                          className={`w-full rounded-t-md transition-all duration-200 ${
+                                          className={`w-full max-w-[24px] min-w-[14px] rounded-t-md transition-all duration-200 ${
                                             h.total === 0
                                               ? 'bg-[#EFE6D5]/80 hover:bg-[#E5D9C5]'
                                               : isPeak
