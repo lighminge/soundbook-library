@@ -117,6 +117,93 @@ function parsePlaybackText(rawText: string): ParsedParagraph[] {
   });
 }
 
+interface ScreeningMarqueeTitleProps {
+  title: string;
+  size?: 'xs' | 'sm' | 'base';
+  className?: string;
+  isSelected?: boolean;
+}
+
+/**
+ * 放映室專用書架與播放清單語音檔名跑馬燈元件：
+ * 當檔名長度超出容器時，滑鼠移入卡片時自動啟動跑馬燈動畫，顯示完整語音檔名
+ */
+export const ScreeningMarqueeTitle: React.FC<ScreeningMarqueeTitleProps> = ({
+  title,
+  size = 'sm',
+  className = '',
+  isSelected = false,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLHeadingElement>(null);
+  const [isOverflow, setIsOverflow] = useState(false);
+  const [scrollDist, setScrollDist] = useState(0);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      if (containerRef.current && textRef.current) {
+        const containerWidth = containerRef.current.clientWidth;
+        const textWidth = textRef.current.scrollWidth;
+        if (textWidth > containerWidth + 2) {
+          setIsOverflow(true);
+          // 額外加上 36px 餘裕並搭配 pr-8，確保跑馬燈滾動至最末端時，最後字元完全呈現且留有舒適間距
+          setScrollDist(textWidth - containerWidth + 36);
+        } else {
+          setIsOverflow(false);
+          setScrollDist(0);
+        }
+      }
+    };
+
+    checkOverflow();
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(checkOverflow);
+    }
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+      ro = new ResizeObserver(() => checkOverflow());
+      ro.observe(containerRef.current);
+    }
+
+    window.addEventListener('resize', checkOverflow);
+    return () => {
+      window.removeEventListener('resize', checkOverflow);
+      if (ro) ro.disconnect();
+    };
+  }, [title]);
+
+  const durationSec = Math.max(4, Math.min(14, Math.round(scrollDist / 20)));
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative w-full overflow-hidden ${className}`}
+      title={title}
+    >
+      <h4
+        ref={textRef}
+        className={`font-bold font-serif-tc whitespace-nowrap inline-block transition-colors ${
+          size === 'xs' ? 'text-xs' : size === 'base' ? 'text-base' : 'text-sm'
+        } ${isSelected ? 'text-[#FAF5EC]' : 'text-[#2C221E]'} ${
+          isOverflow ? 'animate-marquee-on-hover pr-8' : 'truncate'
+        }`}
+        style={
+          isOverflow
+            ? ({
+                '--marquee-dist': `-${scrollDist}px`,
+                '--marquee-duration': `${durationSec}s`,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
+        {title}
+      </h4>
+    </div>
+  );
+};
+
 export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   categories,
   audioItems,
@@ -2445,7 +2532,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                             pendingAutoPlayRef.current = true;
                             onSelectAudio(item);
                           }}
-                          className={`flex items-center gap-2.5 p-2 rounded-xl transition cursor-pointer ${
+                          className={`group flex items-center gap-2.5 p-2 rounded-xl transition cursor-pointer ${
                             isCurrent
                               ? 'bg-amber-500/25 border border-amber-400/50 text-white'
                               : 'bg-white/5 hover:bg-white/10 border border-white/5 text-white/80'
@@ -2460,7 +2547,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                             className="w-9 h-9 rounded object-cover shrink-0"
                           />
                           <div className="flex-1 min-w-0 text-left">
-                            <h5 className="font-bold text-xs truncate">{item.title}</h5>
+                            <ScreeningMarqueeTitle
+                              title={item.title}
+                              size="xs"
+                              isSelected={isCurrent}
+                            />
                             <span className="text-[10px] text-white/50 font-mono">
                               {formatDuration(item.duration)}
                             </span>
@@ -3133,9 +3224,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                               </div>
                             </div>
 
-                            <h4 className="font-bold font-serif-tc text-sm truncate">
-                              {item.title}
-                            </h4>
+                            <ScreeningMarqueeTitle
+                              title={item.title}
+                              size="sm"
+                              isSelected={isSelected}
+                            />
                             <p
                               className={`text-xs line-clamp-1 mt-0.5 ${
                                 isSelected ? 'text-[#E2D4C0]' : 'text-[#6E5D4F]'
@@ -3547,9 +3640,12 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                                 </span>
                               )}
                             </div>
-                            <h4 className="font-bold font-serif-tc text-xs truncate mt-0.5">
-                              {item.title}
-                            </h4>
+                            <ScreeningMarqueeTitle
+                              title={item.title}
+                              size="xs"
+                              isSelected={isCurrent}
+                              className="mt-0.5"
+                            />
                           </div>
 
                           {/* 順序調整控制按鈕群 */}

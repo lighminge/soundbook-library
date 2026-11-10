@@ -15,6 +15,7 @@ import {
   User as UserIcon,
   Compass,
   LayoutTemplate,
+  ArrowUp,
 } from 'lucide-react';
 import { AudioItem, Category, CurrentUser, LoginScreenConfig } from './types';
 import {
@@ -37,6 +38,53 @@ import { CatalogManagementView } from './components/CatalogManagementView';
 import { CloudSettingsModal } from './components/CloudSettingsModal';
 
 type NavTab = 'dashboard' | 'screening' | 'library' | 'catalog' | 'system';
+
+/**
+ * 全系統通用「回到頂部」浮動功能按鈕：
+ * 當頁面垂直滾動超過 250px 時自動淡入顯示，
+ * 點擊後以平滑動畫 (behavior: 'smooth') 滾動回頁面頂端。
+ */
+const ScrollToTopButton: React.FC = () => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 250) {
+        setIsVisible(true);
+      } else {
+        setIsVisible(false);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleScrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleScrollToTop}
+      aria-label="回到頂部"
+      title="回到頂部"
+      className={`fixed z-40 p-3 sm:p-3.5 rounded-full bg-[#3A2518]/90 hover:bg-[#5C3A1B] text-[#FAF5EC] border-2 border-[#D4A373]/60 shadow-2xl backdrop-blur-sm cursor-pointer transition-all duration-300 hover:scale-110 active:scale-95 group focus:outline-none focus:ring-2 focus:ring-amber-400 ${
+        isVisible
+          ? 'opacity-100 translate-y-0 pointer-events-auto'
+          : 'opacity-0 translate-y-6 pointer-events-none'
+      } bottom-20 sm:bottom-8 right-5 sm:right-8`}
+    >
+      <ArrowUp className="w-5 h-5 sm:w-5.5 sm:h-5.5 text-amber-200 group-hover:-translate-y-1 transition-transform stroke-[2.5]" />
+      <span className="sr-only">回到頂部</span>
+    </button>
+  );
+};
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
@@ -824,6 +872,9 @@ export function App() {
         onClose={() => setIsCloudModalOpen(false)}
         onSaved={reloadAllData}
       />
+
+      {/* 全系統所有頁面通用「回到頂部」浮動按鈕 */}
+      <ScrollToTopButton />
     </div>
   );
 }

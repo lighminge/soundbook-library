@@ -45,14 +45,16 @@
 
 .group:hover .animate-marquee-on-hover,
 .group:active .animate-marquee-on-hover,
-.group\/title:hover .animate-marquee-on-hover {
+.group\/title:hover .animate-marquee-on-hover,
+.animate-marquee-on-hover:hover {
   animation: shelf-title-marquee var(--marquee-duration, 6s) ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .group:hover .animate-marquee-on-hover,
   .group:active .animate-marquee-on-hover,
-  .group\/title:hover .animate-marquee-on-hover {
+  .group\/title:hover .animate-marquee-on-hover,
+  .animate-marquee-on-hover:hover {
     animation: none;
   }
 }

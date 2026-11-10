@@ -593,7 +593,9 @@ export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, s
         const textWidth = textRef.current.scrollWidth;
         if (textWidth > containerWidth + 2) {
           setIsOverflow(true);
-          setScrollDist(textWidth - containerWidth);
+          // 額外加上 48px 安全餘裕距離，並配合 pr-12，確保跑馬燈滾動到最末端時，
+          // 最後一個字能夠完全脫離右側邊界與「完整」按鈕，毫無遮擋、完全清晰呈現在可視範圍內
+          setScrollDist(textWidth - containerWidth + 48);
         } else {
           setIsOverflow(false);
           setScrollDist(0);
@@ -602,8 +604,24 @@ export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, s
     };
 
     checkOverflow();
+
+    // 監聽字體載入完成，重新計算正確寬度
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(checkOverflow);
+    }
+
+    // 使用 ResizeObserver 進行精確容器與文字尺寸監聽
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+      ro = new ResizeObserver(() => checkOverflow());
+      ro.observe(containerRef.current);
+    }
+
     window.addEventListener('resize', checkOverflow);
-    return () => window.removeEventListener('resize', checkOverflow);
+    return () => {
+      window.removeEventListener('resize', checkOverflow);
+      if (ro) ro.disconnect();
+    };
   }, [title]);
 
   const durationSec = Math.max(4, Math.min(14, Math.round(scrollDist / 20)));
@@ -642,11 +660,11 @@ export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, s
               ref={textRef}
               className={`font-bold font-serif-tc text-[#2C221E] whitespace-nowrap inline-block transition-colors group-hover:text-[#8B5A2B] ${
                 size === 'sm' ? 'text-sm' : 'text-base'
-              } ${isOverflow ? 'animate-marquee-on-hover' : ''}`}
+              } ${isOverflow ? 'animate-marquee-on-hover pr-12' : ''}`}
               style={
                 isOverflow
                   ? ({
-                      '--marquee-dist': `-${scrollDist + 12}px`,
+                      '--marquee-dist': `-${scrollDist}px`,
                       '--marquee-duration': `${durationSec}s`,
                     } as React.CSSProperties)
                   : undefined
@@ -655,9 +673,9 @@ export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, s
               {title}
             </h4>
 
-            {/* 若檔名過長超出卡片寬度，右側增加淡出微漸層作為視覺指引 */}
+            {/* 若檔名過長超出卡片寬度，靜止時右側增加淡出微漸層作為指引；跑馬燈滾動/滑鼠移入時完全隱藏不擋字 */}
             {isOverflow && (
-              <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-[#FFFDF9] to-transparent pointer-events-none group-hover:opacity-0 transition-opacity" />
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white/90 sm:from-[#FFFDF9]/90 to-transparent pointer-events-none group-hover:opacity-0 group-hover/title:opacity-0 group-hover:hidden group-hover/title:hidden transition-opacity" />
             )}
           </div>
 
@@ -669,7 +687,7 @@ export const BookshelfCardTitle: React.FC<BookshelfCardTitleProps> = ({ title, s
                 e.stopPropagation();
                 setIsExpanded(true);
               }}
-              className="shrink-0 text-[10px] px-1.5 py-0.2 rounded bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] cursor-pointer transition font-mono font-medium shadow-2xs hover:border-[#8B5A2B]"
+              className="shrink-0 text-[10px] px-1.5 py-0.2 rounded bg-[#FAF4E8] hover:bg-[#EFE6D5] text-[#8B5A2B] border border-[#DFCEB4] cursor-pointer transition font-mono font-medium shadow-2xs hover:border-[#8B5A2B] select-none"
               title="檔名過長，點擊可直接展開查看全部語音檔名"
             >
               完整
