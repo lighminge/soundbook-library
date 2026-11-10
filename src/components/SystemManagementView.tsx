@@ -41,6 +41,8 @@ import {
   Award,
   Smartphone,
   Laptop,
+  Calendar,
+  Sparkles,
 } from 'lucide-react';
 import { AppUser, AudioItem, Category, CloudConfig, LoginLogRecord, LoginScreenConfig } from '../types';
 import { PaginationBar, dateInputToEndMs, dateInputToStartMs } from './PaginationBar';
@@ -245,6 +247,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   const [logSortDir, setLogSortDir] = useState<'asc' | 'desc'>('desc');
   const [logPageSize, setLogPageSize] = useState<number>(10);
   const [logPage, setLogPage] = useState<number>(1);
+  // 24小時活躍時段分佈圖表之日期篩選（'all' 全部區間 | 'today' 僅今日 | 指定 YYYY-MM-DD）
+  const [hourlyFilterDate, setHourlyFilterDate] = useState<'all' | 'today' | string>('all');
 
   // 篩選條件變更時回到第一頁
   useEffect(() => {
@@ -1171,11 +1175,31 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                   const q = logSearchQuery.trim().toLowerCase();
                   const fromMs = dateInputToStartMs(logDateFrom);
                   const toMs = dateInputToEndMs(logDateTo);
+
+                  // 容錯解析各種格式之登入時間戳（ISO 字串、數值、物件時間戳等）
+                  const parseLogDate = (raw: any): Date | null => {
+                    if (!raw) return null;
+                    if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+                    if (typeof raw === 'object' && typeof raw.seconds === 'number') {
+                      return new Date(raw.seconds * 1000);
+                    }
+                    if (typeof raw === 'number') {
+                      const d = new Date(raw);
+                      return isNaN(d.getTime()) ? null : d;
+                    }
+                    if (typeof raw === 'string') {
+                      const d = new Date(raw);
+                      return isNaN(d.getTime()) ? null : d;
+                    }
+                    return null;
+                  };
+
                   const filteredLogs = loginLogs.filter((log) => {
                     if (logStatusFilter !== 'all' && log.status !== logStatusFilter) {
                       return false;
                     }
-                    const ts = new Date(log.loginAt || 0).getTime();
+                    const d = parseLogDate(log.loginAt);
+                    const ts = d ? d.getTime() : 0;
                     if (fromMs !== null && ts < fromMs) return false;
                     if (toMs !== null && ts > toMs) return false;
                     if (!q) return true;
@@ -1191,8 +1215,9 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                   filteredLogs.sort((a, b) => {
                     let cmp = 0;
                     if (logSortField === 'loginAt') {
-                      cmp =
-                        new Date(a.loginAt || 0).getTime() - new Date(b.loginAt || 0).getTime();
+                      const ta = parseLogDate(a.loginAt)?.getTime() || 0;
+                      const tb = parseLogDate(b.loginAt)?.getTime() || 0;
+                      cmp = ta - tb;
                     } else if (logSortField === 'username') {
                       cmp = (a.username || '').localeCompare(b.username || '', 'zh-Hant');
                     } else {
@@ -1200,9 +1225,9 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     }
                     if (cmp === 0 && logSortField !== 'loginAt') {
                       // 次要排序：登入時間由新到舊
-                      cmp =
-                        (new Date(b.loginAt || 0).getTime() - new Date(a.loginAt || 0).getTime()) *
-                        dirFactor;
+                      const ta = parseLogDate(a.loginAt)?.getTime() || 0;
+                      const tb = parseLogDate(b.loginAt)?.getTime() || 0;
+                      cmp = (tb - ta) * dirFactor;
                     }
                     return cmp * dirFactor;
                   });
@@ -1280,8 +1305,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     // 4. 每日登入趨勢
                     const dailyAggMap = new Map<string, { total: number; success: number; failed: number }>();
                     filteredLogs.forEach((log) => {
-                      if (!log.loginAt) return;
-                      const d = new Date(log.loginAt);
+                      const d = parseLogDate(log.loginAt);
+                      if (!d) return;
                       const y = d.getFullYear();
                       const m = String(d.getMonth() + 1).padStart(2, '0');
                       const day = String(d.getDate()).padStart(2, '0');
@@ -1302,16 +1327,27 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     const dailyTrend = Array.from(dailyAggMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
                     const maxDailyTotal = dailyTrend.reduce((max, [, d]) => Math.max(max, d.total), 1);
 
-                    // 5. 24小時時段分佈
+                    // 5. 24小時時段分佈（支援切換「全部區間彙總」或「今日活躍時段」）
+                    const now = new Date();
+                    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                    const targetLogsForHourly = filteredLogs.filter((log) => {
+                      if (hourlyFilterDate === 'all') return true;
+                      const d = parseLogDate(log.loginAt);
+                      if (!d) return false;
+                      const dKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                      if (hourlyFilterDate === 'today') return dKey === todayKey;
+                      return dKey === hourlyFilterDate;
+                    });
+
                     const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => ({
                       hour,
                       total: 0,
                       success: 0,
                       failed: 0,
                     }));
-                    filteredLogs.forEach((log) => {
-                      if (!log.loginAt) return;
-                      const d = new Date(log.loginAt);
+                    targetLogsForHourly.forEach((log) => {
+                      const d = parseLogDate(log.loginAt);
+                      if (!d) return;
                       const h = d.getHours();
                       if (h >= 0 && h < 24) {
                         hourlyDistribution[h].total += 1;
@@ -1340,7 +1376,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                       .slice(0, 5);
 
                     return (
-                      <div className="space-y-4">
+                      <div className="space-y-6">
                         {/* 摘要統計卡片 */}
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                           <div className="p-3.5 rounded-xl bg-white border border-[#E5D9C5] shadow-2xs">
@@ -1391,132 +1427,254 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                           </div>
                         </div>
 
-                        {/* 第一組圖表：每日登入趨勢柱狀圖 + 24小時活躍時段分佈 */}
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                          {/* 每日登入次數趨勢長條圖 */}
-                          <div className="lg:col-span-7 p-4 rounded-xl bg-white border border-[#E5D9C5] flex flex-col shadow-2xs">
-                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
-                                <TrendingUp className="w-4 h-4 text-[#8B5A2B]" />
-                                <span>每日登入次數趨勢（最近 {dailyTrend.length} 個有登入的日期）</span>
-                              </div>
-                              <div className="flex items-center gap-3 text-[11px] font-semibold text-[#5C3A1B]">
-                                <span className="inline-flex items-center gap-1">
-                                  <span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" />
-                                  <span>成功</span>
-                                </span>
-                                <span className="inline-flex items-center gap-1">
-                                  <span className="w-2.5 h-2.5 rounded-xs bg-rose-500" />
-                                  <span>失敗</span>
+                        {/* 圖表 1：每日登入次數趨勢長條圖（獨立全寬加大區塊，放大圖表與數據可視度） */}
+                        <div className="p-5 sm:p-6 rounded-2xl bg-white border border-[#E5D9C5] flex flex-col shadow-xs space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#F0E6D8]">
+                            <div>
+                              <div className="flex items-center gap-2 text-base font-bold text-[#3A2518]">
+                                <TrendingUp className="w-5 h-5 text-[#8B5A2B]" />
+                                <span>每日登入次數趨勢分析</span>
+                                <span className="text-xs font-normal px-2.5 py-0.5 rounded-full bg-[#EFE6D5] text-[#5C3A1B]">
+                                  共 {dailyTrend.length} 天紀錄
                                 </span>
                               </div>
+                              <p className="text-xs text-[#8C7A6B] mt-0.5">
+                                統計所選查詢區間內每日的登入成功與失敗次數分佈趨勢，柱狀圖上方即時標示登入次數。
+                              </p>
                             </div>
-
-                            {dailyTrend.length === 0 ? (
-                              <div className="flex-1 flex items-center justify-center text-xs text-[#8C7A6B] py-12">
-                                查詢區間內尚無登入紀錄
-                              </div>
-                            ) : (
-                              <div className="flex-1 flex items-end gap-1.5 sm:gap-2 h-56 pt-6 border-b border-l border-[#E5D9C5] px-2">
-                                {dailyTrend.map(([day, d]) => (
-                                  <div
-                                    key={day}
-                                    className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group relative cursor-pointer"
-                                  >
-                                    <div
-                                      className="w-full max-w-[28px] rounded-t flex flex-col justify-end overflow-hidden transition-all duration-200 shadow-2xs group-hover:brightness-110"
-                                      style={{ height: `${Math.max((d.total / maxDailyTotal) * 100, 4)}%` }}
-                                    >
-                                      {d.failed > 0 && (
-                                        <div
-                                          className="w-full bg-rose-500"
-                                          style={{ height: `${(d.failed / d.total) * 100}%` }}
-                                        />
-                                      )}
-                                      <div
-                                        className="w-full bg-gradient-to-t from-emerald-700 to-emerald-500"
-                                        style={{ height: `${(d.success / d.total) * 100}%` }}
-                                      />
-                                    </div>
-
-                                    {/* 浮動提示 */}
-                                    <div className="absolute -top-12 hidden group-hover:flex flex-col items-center whitespace-nowrap text-[10px] font-mono bg-[#2C221E] text-white px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
-                                      <span className="font-bold">{day}</span>
-                                      <span>
-                                        總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {dailyTrend.length > 0 && (
-                              <div className="flex justify-between text-[10px] font-mono text-[#8C7A6B] mt-1.5">
-                                <span>{dailyTrend[0][0]}</span>
-                                <span>{dailyTrend[dailyTrend.length - 1][0]}</span>
-                              </div>
-                            )}
+                            <div className="flex items-center gap-3 text-xs font-semibold text-[#5C3A1B] shrink-0">
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="w-3 h-3 rounded-xs bg-emerald-600 shadow-2xs" />
+                                <span>成功登入</span>
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="w-3 h-3 rounded-xs bg-rose-500 shadow-2xs" />
+                                <span>失敗嘗試</span>
+                              </span>
+                            </div>
                           </div>
 
-                          {/* 24 小時時段分佈圖 */}
-                          <div className="lg:col-span-5 p-4 rounded-xl bg-white border border-[#E5D9C5] flex flex-col shadow-2xs">
-                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                              <div className="flex items-center gap-2 text-sm font-bold text-[#3A2518]">
-                                <Clock className="w-4 h-4 text-[#8B5A2B]" />
-                                <span>24 小時登入活躍時段分佈</span>
+                          {dailyTrend.length === 0 ? (
+                            <div className="py-20 flex flex-col items-center justify-center text-xs text-[#8C7A6B] gap-2">
+                              <Calendar className="w-8 h-8 text-[#D5C5AE]" />
+                              <span>查詢區間內尚無登入紀錄</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {/* 長條圖本體：加大至 h-80 (320px)，提供充足垂直與水平可視空間 */}
+                              <div className="relative h-80 pt-8 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
+                                {/* 背景水平虛線參考線 */}
+                                <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
+                                  <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                  <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                  <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                  <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                </div>
+
+                                <div className="h-full flex items-end gap-3 sm:gap-4 min-w-full">
+                                  {dailyTrend.map(([day, d]) => {
+                                    const barHeightPx = Math.max(16, Math.round((d.total / maxDailyTotal) * 220));
+                                    const successPct = d.total > 0 ? (d.success / d.total) * 100 : 0;
+                                    const failedPct = d.total > 0 ? (d.failed / d.total) * 100 : 0;
+
+                                    return (
+                                      <div
+                                        key={day}
+                                        className="flex-1 min-w-[46px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
+                                      >
+                                        {/* 柱狀圖上方數值標籤（免 hover 直接清晰呈現） */}
+                                        <span className="text-[11px] font-mono font-bold text-[#5C3A1B] mb-1.5 group-hover:scale-110 transition-transform">
+                                          {d.total}
+                                        </span>
+
+                                        {/* 長條圖條體 */}
+                                        <div
+                                          className="w-full max-w-[36px] rounded-t-md flex flex-col justify-end overflow-hidden transition-all duration-200 shadow-xs group-hover:brightness-110 group-hover:shadow-md"
+                                          style={{ height: `${barHeightPx}px` }}
+                                        >
+                                          {d.failed > 0 && (
+                                            <div
+                                              className="w-full bg-rose-500"
+                                              style={{ height: `${failedPct}%` }}
+                                              title={`失敗 ${d.failed} 次`}
+                                            />
+                                          )}
+                                          <div
+                                            className="w-full bg-gradient-to-t from-emerald-700 to-emerald-500"
+                                            style={{ height: `${successPct}%` }}
+                                            title={`成功 ${d.success} 次`}
+                                          />
+                                        </div>
+
+                                        {/* 下方日期標籤 */}
+                                        <span className="text-[11px] font-mono text-[#5C3A1B] font-semibold mt-2.5 whitespace-nowrap">
+                                          {day.slice(5)}
+                                        </span>
+
+                                        {/* 懸停詳細資訊卡片 */}
+                                        <div className="absolute -top-16 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-20 pointer-events-none">
+                                          <span className="font-bold text-amber-300">{day}</span>
+                                          <span className="mt-0.5">
+                                            總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
-                              {peakHourCount > 0 && (
-                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                  尖峰：{String(peakHour).padStart(2, '0')}:00 ({peakHourCount} 次)
+
+                              <div className="flex justify-between text-xs font-mono text-[#8C7A6B] px-1 pt-1">
+                                <span>起始日期：{dailyTrend[0][0]}</span>
+                                <span>
+                                  單日最高：<strong className="text-[#8B5A2B]">{maxDailyTotal} 次</strong>
                                 </span>
-                              )}
+                                <span>結束日期：{dailyTrend[dailyTrend.length - 1][0]}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 圖表 2：24 小時時段分佈圖（獨立全寬加大區塊，支援今日與全部切換，確保今日登入完全呈現） */}
+                        <div className="p-5 sm:p-6 rounded-2xl bg-white border border-[#E5D9C5] flex flex-col shadow-xs space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#F0E6D8]">
+                            <div>
+                              <div className="flex items-center gap-2 text-base font-bold text-[#3A2518]">
+                                <Clock className="w-5 h-5 text-[#8B5A2B]" />
+                                <span>24 小時登入活躍時段分佈</span>
+                                {peakHourCount > 0 && (
+                                  <span className="text-xs font-semibold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                                    🔥 活躍尖峰：{String(peakHour).padStart(2, '0')}:00 ~ {String(peakHour).padStart(2, '0')}:59 ({peakHourCount} 次)
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[#8C7A6B] mt-0.5">
+                                橫跨 00:00 至 23:00 全日 24 個小時，可切換查看今日登入活躍情況或查詢區間總體彙總。
+                              </p>
                             </div>
 
-                            <div className="flex-1 flex items-end gap-0.5 sm:gap-1 h-56 pt-6 border-b border-l border-[#E5D9C5] px-1">
-                              {hourlyDistribution.map((h) => {
-                                const isPeak = h.total > 0 && h.total === peakHourCount;
-                                return (
-                                  <div
-                                    key={h.hour}
-                                    className="flex-1 min-w-0 h-full flex flex-col justify-end items-center group relative cursor-pointer"
-                                  >
+                            {/* 日期視圖切換器（提供全部彙總 vs 今日登入快捷切換） */}
+                            <div className="flex items-center gap-1.5 bg-[#FAF4E8] p-1 rounded-xl border border-[#D5C5AE] shrink-0 text-xs font-semibold">
+                              <button
+                                type="button"
+                                onClick={() => setHourlyFilterDate('all')}
+                                className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                                  hourlyFilterDate === 'all'
+                                    ? 'bg-[#3A2518] text-white shadow-xs'
+                                    : 'text-[#6E5D4F] hover:bg-[#EFE6D5]'
+                                }`}
+                              >
+                                全部區間彙總 ({filteredLogs.length} 筆)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setHourlyFilterDate('today')}
+                                className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                                  hourlyFilterDate === 'today'
+                                    ? 'bg-[#8B5A2B] text-white shadow-xs'
+                                    : 'text-[#6E5D4F] hover:bg-[#EFE6D5]'
+                                }`}
+                              >
+                                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                <span>僅看今日 ({todayKey})</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 24 小時全幅長條圖：加大至 h-80 (320px)，每小時獨立欄位並清楚標示次數 */}
+                          <div className="space-y-2">
+                            <div className="relative h-80 pt-8 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
+                              {/* 背景水平虛線參考線 */}
+                              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
+                                <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                <div className="border-b border-dashed border-[#8B735B] w-full" />
+                                <div className="border-b border-dashed border-[#8B735B] w-full" />
+                              </div>
+
+                              <div className="h-full flex items-end gap-1 sm:gap-2 min-w-[700px]">
+                                {hourlyDistribution.map((h) => {
+                                  const isPeak = h.total > 0 && h.total === peakHourCount;
+                                  const barHeightPx =
+                                    h.total > 0 ? Math.max(16, Math.round((h.total / maxHourlyTotal) * 210)) : 6;
+
+                                  return (
                                     <div
-                                      className={`w-full rounded-t transition-all duration-200 ${
-                                        h.total === 0
-                                          ? 'bg-[#EFE6D5]'
-                                          : isPeak
-                                          ? 'bg-gradient-to-t from-amber-600 to-amber-400 shadow-xs'
-                                          : 'bg-gradient-to-t from-[#8B5A2B] to-[#D4A373]'
-                                      } group-hover:brightness-110`}
-                                      style={{
-                                        height: `${
+                                      key={h.hour}
+                                      className="flex-1 min-w-[26px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
+                                    >
+                                      {/* 若該小時有登入，上方即時標示登入次數 */}
+                                      {h.total > 0 && (
+                                        <span
+                                          className={`text-[10px] font-mono font-bold px-1 rounded-sm mb-1 group-hover:scale-110 transition-transform ${
+                                            isPeak
+                                              ? 'bg-amber-400 text-amber-950 shadow-2xs'
+                                              : 'bg-[#FAF4E8] text-[#5C3A1B] border border-[#D5C5AE]'
+                                          }`}
+                                        >
+                                          {h.total}
+                                        </span>
+                                      )}
+
+                                      {/* 時段長條柱（有登入顯示溫暖琥珀/古木漸層，尖峰時段高亮呈現） */}
+                                      <div
+                                        className={`w-full rounded-t-md transition-all duration-200 ${
+                                          h.total === 0
+                                            ? 'bg-[#EFE6D5]/80 hover:bg-[#E5D9C5]'
+                                            : isPeak
+                                            ? 'bg-gradient-to-t from-amber-600 to-amber-400 shadow-md ring-2 ring-amber-300'
+                                            : 'bg-gradient-to-t from-[#8B5A2B] to-[#D4A373] shadow-xs'
+                                        } group-hover:brightness-110 group-hover:shadow-md`}
+                                        style={{ height: `${barHeightPx}px` }}
+                                      />
+
+                                      {/* 下方時段標籤：清晰標示 24 個小時 */}
+                                      <span
+                                        className={`text-[10px] font-mono mt-2.5 whitespace-nowrap ${
                                           h.total > 0
-                                            ? Math.max((h.total / maxHourlyTotal) * 100, 4)
-                                            : 2
-                                        }%`,
-                                      }}
-                                    />
-                                    {/* 浮動提示 */}
-                                    <div className="absolute -top-12 hidden group-hover:flex flex-col items-center whitespace-nowrap text-[10px] font-mono bg-[#2C221E] text-white px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
-                                      <span className="font-bold">
-                                        {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
+                                            ? 'text-[#3A2518] font-bold'
+                                            : 'text-[#8C7A6B]'
+                                        }`}
+                                      >
+                                        {String(h.hour).padStart(2, '0')}:00
                                       </span>
-                                      <span>
-                                        登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
-                                      </span>
+
+                                      {/* 懸停詳細提示 */}
+                                      <div className="absolute -top-16 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-20 pointer-events-none">
+                                        <span className="font-bold text-amber-300">
+                                          {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
+                                        </span>
+                                        <span className="mt-0.5">
+                                          登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
+                                        </span>
+                                      </div>
                                     </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
+                              </div>
                             </div>
 
-                            <div className="flex justify-between text-[10px] font-mono text-[#8C7A6B] mt-1.5 px-0.5">
-                              <span>00:00</span>
-                              <span>06:00</span>
-                              <span>12:00</span>
-                              <span>18:00</span>
-                              <span>23:00</span>
+                            <div className="flex flex-wrap items-center justify-between text-xs font-mono text-[#8C7A6B] px-1 pt-1">
+                              <span>
+                                目前視圖：
+                                <strong className="text-[#3A2518] ml-1">
+                                  {hourlyFilterDate === 'today'
+                                    ? `今日 (${todayKey})`
+                                    : hourlyFilterDate === 'all'
+                                    ? '全部區間彙總'
+                                    : hourlyFilterDate}
+                                </strong>
+                              </span>
+                              <span>
+                                本視圖登入總計：
+                                <strong className="text-[#8B5A2B] ml-1">
+                                  {targetLogsForHourly.length} 次
+                                </strong>
+                              </span>
+                              <span>
+                                最高時段登入量：
+                                <strong className="text-[#8B5A2B] ml-1">{maxHourlyTotal} 次</strong>
+                              </span>
                             </div>
                           </div>
                         </div>

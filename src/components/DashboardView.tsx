@@ -783,8 +783,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [audioItems, categories]
   );
 
-  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態（關鍵字、主講人、類別標籤下拉選單）
+  // 「聲書閣總覽 Dashboard」專屬快速檢索狀態（關鍵字、館藏分類、主講人、類別標籤下拉選單）
   const [quickSearchKeyword, setQuickSearchKeyword] = useState('');
+  const [quickSearchCategory, setQuickSearchCategory] = useState('');
   const [quickSearchTag, setQuickSearchTag] = useState('');
   const [quickSearchSpeaker, setQuickSearchSpeaker] = useState('');
 
@@ -793,6 +794,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [categoryPageSizeMap, setCategoryPageSizeMap] = useState<Record<string, number>>({});
   // 每個館藏主題書架之主講人篩選狀態（點擊標題列主講人統計標籤即可快速切換）
   const [categorySpeakerFilterMap, setCategorySpeakerFilterMap] = useState<Record<string, string>>({});
+  // 每個館藏主題書架之「查詢」關鍵字狀態與「類別標籤」下拉篩選狀態
+  const [categorySearchQueryMap, setCategorySearchQueryMap] = useState<Record<string, string>>({});
+  const [categoryTagFilterMap, setCategoryTagFilterMap] = useState<Record<string, string>>({});
 
   const handleToggleCategorySpeakerFilter = (catId: string, speaker: string) => {
     setCategorySpeakerFilterMap((prev) => {
@@ -816,11 +820,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setCategoryPageMap((prev) => ({ ...prev, [catId]: 1 }));
   };
 
-  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用主講人與筆數
+  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用主講人與筆數（若有選取館藏分類，則以該分類之語音為主）
   const availableDashboardSpeakers = useMemo(() => {
     const speakerCountMap: Record<string, number> = {};
     let unassignedCount = 0;
-    audioItems.forEach((item) => {
+    const targetItems = quickSearchCategory
+      ? audioItems.filter((item) => item.categoryId === quickSearchCategory)
+      : audioItems;
+
+    targetItems.forEach((item) => {
       const sp = item.speaker?.trim();
       if (sp) {
         speakerCountMap[sp] = (speakerCountMap[sp] || 0) + 1;
@@ -840,12 +848,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       speakers: list,
       unassignedCount,
     };
-  }, [audioItems]);
+  }, [audioItems, quickSearchCategory]);
 
-  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數（當選取主講人時，僅顯示該主講人語音檔案裡面有的標籤）
+  // 統計「聲書閣總覽 Dashboard」館藏語音快速檢索可用類別標籤與筆數（受所選館藏分類與主講人連動篩選）
   const availableDashboardTags = useMemo(() => {
     const tagCountMap: Record<string, number> = {};
     const targetItems = audioItems.filter((item) => {
+      if (quickSearchCategory && item.categoryId !== quickSearchCategory) {
+        return false;
+      }
       if (!quickSearchSpeaker) return true;
       if (quickSearchSpeaker === '__unassigned__') {
         return !item.speaker || !item.speaker.trim();
@@ -868,47 +879,65 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         tag,
         count: tagCountMap[tag],
       }));
-  }, [audioItems, quickSearchSpeaker]);
+  }, [audioItems, quickSearchCategory, quickSearchSpeaker]);
 
-  // 當選取的主講人變更時，若已選取的類別標籤不在該主講人的語音檔案中，自動重設標籤選取
+  // 當選取的館藏分類或主講人變更時，若已選取的類別標籤不在篩選範圍內，自動重設標籤選取
   useEffect(() => {
-    if (quickSearchSpeaker && quickSearchTag) {
+    if (quickSearchTag) {
       const tagExists = availableDashboardTags.some((t) => t.tag === quickSearchTag);
       if (!tagExists) {
         setQuickSearchTag('');
       }
     }
-  }, [quickSearchSpeaker, availableDashboardTags, quickSearchTag]);
+  }, [availableDashboardTags, quickSearchTag]);
+
+  // 當選取的館藏分類變更時，若已選取的主講人不在該館藏分類中，自動重設主講人選取
+  useEffect(() => {
+    if (quickSearchCategory && quickSearchSpeaker) {
+      if (quickSearchSpeaker === '__unassigned__') {
+        if (availableDashboardSpeakers.unassignedCount === 0) setQuickSearchSpeaker('');
+      } else {
+        const speakerExists = availableDashboardSpeakers.speakers.some((s) => s.speaker === quickSearchSpeaker);
+        if (!speakerExists) setQuickSearchSpeaker('');
+      }
+    }
+  }, [quickSearchCategory, availableDashboardSpeakers, quickSearchSpeaker]);
 
   // 快速檢索篩選：比對語音檔案名稱、館藏分類、主講人、類別標籤下拉選取與故事說明內容
   const matchedAudioItems = useMemo(() => {
     const q = quickSearchKeyword.trim().toLowerCase();
+    const c = quickSearchCategory.trim();
     const t = quickSearchTag.trim();
     const s = quickSearchSpeaker.trim();
-    if (!q && !t && !s) return [];
+    if (!q && !c && !t && !s) return [];
 
     return audioItems.filter((item) => {
-      // 1. 關鍵字比對 (若有輸入)
+      // 1. 館藏分類下拉比對 (若有選取)
+      if (c && item.categoryId !== c) {
+        return false;
+      }
+
+      // 2. 關鍵字比對 (若有輸入)
       let matchKw = true;
       if (q) {
         const matchTitle = (item.title || '').toLowerCase().includes(q);
         const matchDesc = (item.description || '').toLowerCase().includes(q);
         const matchTags = (item.tags || []).some((tag) => tag.toLowerCase().includes(q));
         const matchSpeaker = (item.speaker || '').toLowerCase().includes(q);
-        const cat = categories.find((c) => c.id === item.categoryId);
+        const cat = categories.find((catItem) => catItem.id === item.categoryId);
         const matchCat = cat
           ? cat.name.toLowerCase().includes(q) || cat.code.toLowerCase().includes(q)
           : false;
         matchKw = matchTitle || matchDesc || matchTags || matchSpeaker || matchCat;
       }
 
-      // 2. 類別標籤下拉選取比對 (若有選取)
+      // 3. 類別標籤下拉選取比對 (若有選取)
       let matchTag = true;
       if (t) {
         matchTag = (item.tags || []).includes(t);
       }
 
-      // 3. 主講人下拉選單比對 (若有選取)
+      // 4. 主講人下拉選單比對 (若有選取)
       let matchSpeaker = true;
       if (s === '__unassigned__') {
         matchSpeaker = !item.speaker || !item.speaker.trim();
@@ -918,7 +947,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       return matchKw && matchTag && matchSpeaker;
     });
-  }, [audioItems, categories, quickSearchKeyword, quickSearchTag, quickSearchSpeaker]);
+  }, [audioItems, categories, quickSearchKeyword, quickSearchCategory, quickSearchTag, quickSearchSpeaker]);
 
   const visibleCategories =
     selectedAisle === 'all'
@@ -1088,11 +1117,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>隨機播放 {matchedAudioItems.length > 0 ? `(${matchedAudioItems.length})` : ''}</span>
             </button>
 
-            {(quickSearchKeyword || quickSearchTag || quickSearchSpeaker) && (
+            {(quickSearchKeyword || quickSearchCategory || quickSearchTag || quickSearchSpeaker) && (
               <button
                 type="button"
                 onClick={() => {
                   setQuickSearchKeyword('');
+                  setQuickSearchCategory('');
                   setQuickSearchTag('');
                   setQuickSearchSpeaker('');
                 }}
@@ -1105,17 +1135,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* 檢索輸入與主講人、類別標籤下拉選取列 */}
+        {/* 檢索輸入與館藏分類、主講人、類別標籤下拉選取列 */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
           {/* 1. 關鍵字輸入 */}
-          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-6">
+          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-3">
             <Search className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
-              placeholder="請輸入關鍵字（例如：童話、生肖、歷史故事、主講人、標題關鍵字）..."
+              placeholder="輸入關鍵字（童話、歷史、標題）..."
               value={quickSearchKeyword}
               onChange={(e) => setQuickSearchKeyword(e.target.value)}
-              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
+              className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner"
             />
             {quickSearchKeyword && (
               <button
@@ -1129,7 +1159,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {/* 2. 主講人下拉選單 */}
+          {/* 2. 館藏分類下拉選單 */}
+          <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
+            <Layers className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={quickSearchCategory}
+              onChange={(e) => setQuickSearchCategory(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
+            >
+              <option value="">全部館藏分類 (不限)</option>
+              {categories.map((c) => {
+                const countInCat = audioItems.filter((i) => i.categoryId === c.id).length;
+                return (
+                  <option key={c.id} value={c.id}>
+                    🏛️ [{c.code}] {c.name} ({countInCat} 部)
+                  </option>
+                );
+              })}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {/* 3. 主講人下拉選單 */}
           <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <User className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
@@ -1154,7 +1205,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* 3. 類別標籤下拉選單 */}
+          {/* 4. 類別標籤下拉選單 */}
           <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <Tag className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
@@ -1178,34 +1229,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* 檢索結果展示 */}
-        {quickSearchKeyword.trim() || quickSearchTag || quickSearchSpeaker ? (
+        {quickSearchKeyword.trim() || quickSearchCategory || quickSearchTag || quickSearchSpeaker ? (
           matchedAudioItems.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
               <p className="font-semibold text-sm text-[#5C3A1B]">
                 找不到符合條件的語音檔
                 {quickSearchKeyword && `「${quickSearchKeyword}」`}
+                {quickSearchCategory && ` [分類: ${categories.find(c => c.id === quickSearchCategory)?.name || quickSearchCategory}]`}
                 {quickSearchSpeaker && ` [主講人: ${quickSearchSpeaker === '__unassigned__' ? '尚未指定' : quickSearchSpeaker}]`}
                 {quickSearchTag && ` [標籤: #${quickSearchTag}]`}
               </p>
-              <p>請嘗試其他關鍵字或切換主講人、類別標籤，或確認該館藏是否已在「語音檔案庫」中建立。</p>
+              <p>請嘗試其他關鍵字或切換館藏分類、主講人、類別標籤，或確認該館藏是否已在「語音檔案庫」中建立。</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
               {matchedAudioItems.map((item, idx) => {
                 const cat = categories.find((c) => c.id === item.categoryId);
+                const catColor = cat?.themeColor || '#8B5A2B';
                 const selectedOrder = selectedAudioIds.indexOf(item.id) + 1;
                 const isSelected = selectedOrder > 0;
                 return (
                   <div
                     key={item.id}
                     onClick={() => toggleSelectAudioItem(item.id)}
-                    className={`group flex items-start gap-3 p-3 rounded-xl transition cursor-pointer ${
+                    style={{
+                      borderLeftColor: catColor,
+                      borderLeftWidth: '5px',
+                      background: isSelected
+                        ? undefined
+                        : `linear-gradient(to right, ${catColor}12 0%, #FFFFFF 25%)`,
+                    }}
+                    className={`group relative flex items-start gap-3 p-3 rounded-xl transition-all duration-200 cursor-pointer shadow-xs hover:shadow-md ${
                       isSelected
-                        ? 'bg-[#F1F8F4] border-2 border-[#2E5A44] ring-2 ring-[#2E5A44]/20 shadow-md'
-                        : 'bg-white border border-[#E5D9C5] hover:border-[#2E5A44] hover:shadow-md'
+                        ? 'bg-[#F1F8F4] border-t-2 border-r-2 border-b-2 border-[#2E5A44] ring-2 ring-[#2E5A44]/25 shadow-md'
+                        : 'border-t border-r border-b border-[#E5D9C5] hover:-translate-y-0.5'
                     }`}
-                    title="點選卡片以選取或取消選取此語音檔（可選取多筆後一併到放映室播放）"
+                    title={`點選卡片以選取此語音檔（所屬館藏：[${cat?.code || ''}] ${cat?.name || '未分類'}）`}
                   >
+                    {/* 左側精裝書脊分類色彩標記條 */}
+                    <div
+                      className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-xl"
+                      style={{ backgroundColor: catColor }}
+                    />
                     <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
                       <img
                         src={item.coverImageUrl}
@@ -1545,14 +1610,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-TW'))
             .map(([speaker, count]) => ({ speaker, count }));
 
+          // 統計本主題館藏所有的類別標籤與筆數
+          const categoryTagCountMap: Record<string, number> = {};
+          itemsInCat.forEach((item) => {
+            (item.tags || []).forEach((t) => {
+              const trimmed = t.trim();
+              if (trimmed) {
+                categoryTagCountMap[trimmed] = (categoryTagCountMap[trimmed] || 0) + 1;
+              }
+            });
+          });
+          const categoryTags = Object.keys(categoryTagCountMap)
+            .sort((a, b) => a.localeCompare(b, 'zh-TW'))
+            .map((tag) => ({
+              tag,
+              count: categoryTagCountMap[tag],
+            }));
+
           const activeSpeakerFilter = categorySpeakerFilterMap[category.id] || '';
+          const activeTagFilter = categoryTagFilterMap[category.id] || '';
+          const activeSearchQuery = (categorySearchQueryMap[category.id] || '').trim().toLowerCase();
 
           const filteredCategoryItems = itemsInCat.filter((item) => {
-            if (!activeSpeakerFilter) return true;
-            if (activeSpeakerFilter === '__unassigned__') {
-              return !item.speaker || !item.speaker.trim();
+            // 1. 主講人篩選
+            if (activeSpeakerFilter) {
+              if (activeSpeakerFilter === '__unassigned__') {
+                if (item.speaker && item.speaker.trim()) return false;
+              } else if (item.speaker?.trim() !== activeSpeakerFilter) {
+                return false;
+              }
             }
-            return item.speaker?.trim() === activeSpeakerFilter;
+
+            // 2. 類別標籤篩選
+            if (activeTagFilter) {
+              if (!item.tags || !item.tags.includes(activeTagFilter)) {
+                return false;
+              }
+            }
+
+            // 3. 關鍵字查詢 (搜尋檔名、主講人、故事描述、標籤)
+            if (activeSearchQuery) {
+              const matchTitle = (item.title || '').toLowerCase().includes(activeSearchQuery);
+              const matchDesc = (item.description || '').toLowerCase().includes(activeSearchQuery);
+              const matchSpeaker = (item.speaker || '').toLowerCase().includes(activeSearchQuery);
+              const matchTags = (item.tags || []).some((tg) => tg.toLowerCase().includes(activeSearchQuery));
+              if (!matchTitle && !matchDesc && !matchSpeaker && !matchTags) {
+                return false;
+              }
+            }
+
+            return true;
           });
 
           // 本分類專屬分頁計算（預設每頁 8 部，亦可自選 4, 8, 12, 16 或全部）
@@ -1576,94 +1683,186 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   background: `linear-gradient(135deg, ${category.themeColor} 0%, #2B1B11 100%)`,
                 }}
               >
-                <div className="flex items-start md:items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/25 shrink-0">
-                    {getCategoryIcon(category.icon, 'w-6 h-6 text-white')}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <span className="px-2.5 py-0.5 rounded bg-black/30 text-xs font-mono tracking-wider text-amber-200 border border-amber-200/30">
-                        索書號 {category.code}
-                      </span>
-                      <h3 className="text-xl font-bold font-serif-tc tracking-wide">
-                        {category.name}
-                      </h3>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
-                        共 {itemsInCat.length} 部
-                      </span>
-                      {activeSpeakerFilter && (
-                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400 text-[#2B1B11] font-bold shadow-xs">
-                          主講人篩選：{activeSpeakerFilter === '__unassigned__' ? '未指定' : activeSpeakerFilter} ({totalCount} 部)
-                        </span>
-                      )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start md:items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/25 shrink-0">
+                      {getCategoryIcon(category.icon, 'w-6 h-6 text-white')}
                     </div>
-                    <p className="text-xs md:text-sm text-white/85 mt-1">{category.description}</p>
-
-                    {/* 主講人語音檔案數統計徽章列 */}
-                    {itemsInCat.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2 border-t border-white/15 text-xs">
-                        <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
-                          <User className="w-3.5 h-3.5 text-amber-300" />
-                          <span>主講人統計：</span>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="px-2.5 py-0.5 rounded bg-black/30 text-xs font-mono tracking-wider text-amber-200 border border-amber-200/30">
+                          索書號 {category.code}
                         </span>
-                        {sortedSpeakerStats.length > 0 ? (
-                          sortedSpeakerStats.map(({ speaker, count }) => {
-                            const isFilterActive = activeSpeakerFilter === speaker;
-                            return (
-                              <button
-                                key={speaker}
-                                type="button"
-                                onClick={() => handleToggleCategorySpeakerFilter(category.id, speaker)}
-                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
-                                  isFilterActive
-                                    ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
-                                    : 'bg-black/30 hover:bg-black/45 text-[#FAF5EC] border-white/20'
-                                }`}
-                                title={`主講人「${speaker}」在此主題共 ${count} 部語音（點擊可篩選）`}
-                              >
-                                <span>{speaker}</span>
-                                <span className={isFilterActive ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-300 font-mono font-bold'}>
-                                  ({count} 部)
-                                </span>
-                              </button>
-                            );
-                          })
-                        ) : (
-                          <span className="text-[11px] text-white/70 italic">尚無指定主講人</span>
-                        )}
-
-                        {unassignedSpeakerCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleCategorySpeakerFilter(category.id, '__unassigned__')}
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
-                              activeSpeakerFilter === '__unassigned__'
-                                ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
-                                : 'bg-black/25 hover:bg-black/40 text-white/80 border-white/15'
-                            }`}
-                            title={`尚未指定主講人的語音共 ${unassignedSpeakerCount} 部（點擊可篩選）`}
-                          >
-                            <span>未指定</span>
-                            <span className={activeSpeakerFilter === '__unassigned__' ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-200/90 font-mono font-bold'}>
-                              ({unassignedSpeakerCount} 部)
-                            </span>
-                          </button>
-                        )}
-
+                        <h3 className="text-xl font-bold font-serif-tc tracking-wide">
+                          {category.name}
+                        </h3>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
+                          共 {itemsInCat.length} 部
+                        </span>
                         {activeSpeakerFilter && (
-                          <button
-                            type="button"
-                            onClick={() => handleClearCategorySpeakerFilter(category.id)}
-                            className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/25 hover:bg-white/35 text-[11px] text-white border border-white/30 cursor-pointer transition font-medium ml-1"
-                            title="清除主講人篩選，顯示本主題全部語音"
-                          >
-                            <X className="w-3 h-3" />
-                            <span>清除篩選 (顯示全部 {itemsInCat.length} 部)</span>
-                          </button>
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400 text-[#2B1B11] font-bold shadow-xs">
+                            主講人：{activeSpeakerFilter === '__unassigned__' ? '未指定' : activeSpeakerFilter}
+                          </span>
+                        )}
+                        {activeTagFilter && (
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-300 text-[#2B1B11] font-bold shadow-xs">
+                            標籤：#{activeTagFilter}
+                          </span>
+                        )}
+                        {activeSearchQuery && (
+                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-white/30 text-white font-bold shadow-xs">
+                            關鍵字：「{activeSearchQuery}」
+                          </span>
                         )}
                       </div>
+                      <p className="text-xs md:text-sm text-white/85 mt-1">{category.description}</p>
+                    </div>
+                  </div>
+
+                  {/* 本館藏主題專屬「查詢」與「類別標籤」下拉選單篩選列 */}
+                  <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-2.5 border-t border-white/20 text-xs">
+                    {/* 關鍵字查詢輸入框 */}
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
+                      <Search className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder={`在「${category.name}」中查詢檔名、主講人、故事內容或標籤...`}
+                        value={categorySearchQueryMap[category.id] || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: val }));
+                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                        }}
+                        className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white placeholder-white/60 text-xs border border-white/25 focus:outline-none focus:border-amber-300 transition"
+                      />
+                      {categorySearchQueryMap[category.id] && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-0.5 cursor-pointer"
+                          title="清除查詢關鍵字"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 類別標籤下拉選取 */}
+                    <div className="relative min-w-[150px] max-w-[210px]">
+                      <Tag className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <select
+                        value={categoryTagFilterMap[category.id] || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: val }));
+                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                        }}
+                        className="w-full pl-7 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white text-xs border border-white/25 focus:outline-none focus:border-amber-300 cursor-pointer appearance-none font-medium truncate"
+                      >
+                        <option value="" className="bg-[#2B1B11] text-white">
+                          全部類別標籤 {categoryTags.length > 0 ? `(${categoryTags.length} 種)` : '(無標籤)'}
+                        </option>
+                        {categoryTags.map(({ tag, count }) => (
+                          <option key={tag} value={tag} className="bg-[#2B1B11] text-white">
+                            🏷️ #{tag} ({count} 部)
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-white/70 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+
+                    {/* 清除本館篩選條件 */}
+                    {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id])) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
+                          setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: '' }));
+                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-semibold cursor-pointer border border-white/30 transition shadow-2xs"
+                        title="清除本館查詢與標籤篩選"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>清除條件</span>
+                      </button>
+                    )}
+
+                    {/* 符合筆數即時指示 */}
+                    {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id]) || activeSpeakerFilter) && (
+                      <span className="text-[11px] text-amber-200/95 font-mono">
+                        符合篩選：<strong className="text-white font-bold">{filteredCategoryItems.length}</strong> 部 / 全廳 {itemsInCat.length} 部
+                      </span>
                     )}
                   </div>
+
+                  {/* 主講人語音檔案數統計徽章列 */}
+                  {itemsInCat.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2 border-t border-white/15 text-xs">
+                      <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
+                        <User className="w-3.5 h-3.5 text-amber-300" />
+                        <span>主講人統計：</span>
+                      </span>
+                      {sortedSpeakerStats.length > 0 ? (
+                        sortedSpeakerStats.map(({ speaker, count }) => {
+                          const isFilterActive = activeSpeakerFilter === speaker;
+                          return (
+                            <button
+                              key={speaker}
+                              type="button"
+                              onClick={() => handleToggleCategorySpeakerFilter(category.id, speaker)}
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                                isFilterActive
+                                  ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                                  : 'bg-black/30 hover:bg-black/45 text-[#FAF5EC] border-white/20'
+                              }`}
+                              title={`主講人「${speaker}」在此主題共 ${count} 部語音（點擊可篩選）`}
+                            >
+                              <span>{speaker}</span>
+                              <span className={isFilterActive ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-300 font-mono font-bold'}>
+                                ({count} 部)
+                              </span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <span className="text-[11px] text-white/70 italic">尚無指定主講人</span>
+                      )}
+
+                      {unassignedSpeakerCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCategorySpeakerFilter(category.id, '__unassigned__')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                            activeSpeakerFilter === '__unassigned__'
+                              ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                              : 'bg-black/25 hover:bg-black/40 text-white/80 border-white/15'
+                          }`}
+                          title={`尚未指定主講人的語音共 ${unassignedSpeakerCount} 部（點擊可篩選）`}
+                        >
+                          <span>未指定</span>
+                          <span className={activeSpeakerFilter === '__unassigned__' ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-200/90 font-mono font-bold'}>
+                            ({unassignedSpeakerCount} 部)
+                          </span>
+                        </button>
+                      )}
+
+                      {activeSpeakerFilter && (
+                        <button
+                          type="button"
+                          onClick={() => handleClearCategorySpeakerFilter(category.id)}
+                          className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/25 hover:bg-white/35 text-[11px] text-white border border-white/30 cursor-pointer transition font-medium ml-1"
+                          title="清除主講人篩選，顯示本主題全部語音"
+                        >
+                          <X className="w-3 h-3" />
+                          <span>清除主講人篩選</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
@@ -1796,18 +1995,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {filteredCategoryItems.length === 0 ? (
                   <div className="py-10 text-center border-2 border-dashed border-[#D5C5AE] rounded-xl bg-[#FAF6EE]">
                     <p className="text-[#7A6855] text-sm mb-3">
-                      {activeSpeakerFilter ? '目前篩選的主講人在此主題尚無符合的語音檔' : `「${category.name}」書架目前尚無語音館藏`}
+                      {activeSpeakerFilter || activeTagFilter || activeSearchQuery
+                        ? '目前在此主題館藏中查無符合查詢或標籤條件的語音檔'
+                        : `「${category.name}」書架目前尚無語音館藏`}
                     </p>
-                    {activeSpeakerFilter ? (
+                    {activeSpeakerFilter || activeTagFilter || activeSearchQuery ? (
                       <button
-                        onClick={() => handleClearCategorySpeakerFilter(category.id)}
+                        type="button"
+                        onClick={() => {
+                          setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
+                          setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: '' }));
+                          handleClearCategorySpeakerFilter(category.id);
+                        }}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
                       >
                         <X className="w-4 h-4" />
-                        <span>清除主講人篩選 (顯示全部)</span>
+                        <span>清除本館所有篩選 (顯示全部 {itemsInCat.length} 部)</span>
                       </button>
                     ) : !isGuest ? (
                       <button
+                        type="button"
                         onClick={() => onNavigateToUpload(category.id)}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#8B5A2B] text-white text-xs font-medium hover:bg-[#70461F] transition cursor-pointer"
                       >
