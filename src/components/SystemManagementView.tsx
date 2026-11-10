@@ -1483,8 +1483,8 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                 <span className="text-[#8C7A6B] hidden sm:inline">單日最高：<strong className="text-[#8B5A2B]">{maxDailyTotal} 次</strong></span>
                               </div>
 
-                              {/* 長條圖本體：加大至 h-88 (352px)，提供充足 pt-20 頂部空間，徹底解決懸停提示被裁切問題 */}
-                              <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-3 overflow-x-auto">
+                              {/* 長條圖本體：加大至 h-88 (352px)，提供充足 pt-20 頂部空間與 px-6 水平安全邊距，徹底解決提示裁切與未對齊長條圖問題 */}
+                              <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-6 sm:px-8 overflow-x-auto">
                                 {/* 背景水平虛線參考線 */}
                                 <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                   <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1494,22 +1494,10 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                 </div>
 
                                 <div className="h-full flex items-end gap-3 sm:gap-4 min-w-full">
-                                  {dailyTrend.map(([day, d], idx) => {
+                                  {dailyTrend.map(([day, d]) => {
                                     const barHeightPx = Math.max(16, Math.round((d.total / maxDailyTotal) * 190));
                                     const successPct = d.total > 0 ? (d.success / d.total) * 100 : 0;
                                     const failedPct = d.total > 0 ? (d.failed / d.total) * 100 : 0;
-                                    const isFirst = idx === 0;
-                                    const isLast = idx === dailyTrend.length - 1;
-                                    const alignClass = isFirst
-                                      ? 'left-0 items-start'
-                                      : isLast
-                                      ? 'right-0 items-end'
-                                      : 'left-1/2 -translate-x-1/2 items-center';
-                                    const arrowClass = isFirst
-                                      ? 'left-4'
-                                      : isLast
-                                      ? 'right-4'
-                                      : 'left-1/2 -translate-x-1/2';
 
                                     return (
                                       <div
@@ -1518,44 +1506,47 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                         onMouseLeave={() => setHoveredDaily(null)}
                                         className="flex-1 min-w-[46px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                       >
-                                        {/* 柱狀圖上方數值標籤（免 hover 直接清晰呈現） */}
-                                        <span className="text-[11px] font-mono font-bold text-[#5C3A1B] mb-1.5 group-hover:scale-110 transition-transform">
-                                          {d.total}
-                                        </span>
+                                        {/* 柱狀與數值包裝層：懸停提示直接以柱體為基準，箭頭 100% 精準指向長條圖與數值 */}
+                                        <div className="relative flex flex-col items-center">
+                                          {/* 懸停詳細資訊卡片（緊貼柱體頂部，向下箭頭精確置中指向長條圖） */}
+                                          <div className="absolute bottom-full mb-2 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none left-1/2 -translate-x-1/2">
+                                            <span className="font-bold text-amber-300">{day}</span>
+                                            <span className="mt-0.5 text-[11px]">
+                                              總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
+                                            </span>
+                                            {/* 向下小箭頭：精準置中指向長條圖 */}
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-[#2C221E] rotate-45" />
+                                          </div>
 
-                                        {/* 長條圖條體 */}
-                                        <div
-                                          className="w-full max-w-[36px] rounded-t-md flex flex-col justify-end overflow-hidden transition-all duration-200 shadow-xs group-hover:brightness-110 group-hover:shadow-md"
-                                          style={{ height: `${barHeightPx}px` }}
-                                        >
-                                          {d.failed > 0 && (
-                                            <div
-                                              className="w-full bg-rose-500"
-                                              style={{ height: `${failedPct}%` }}
-                                              title={`失敗 ${d.failed} 次`}
-                                            />
-                                          )}
+                                          {/* 柱狀圖上方數值標籤（免 hover 直接清晰呈現） */}
+                                          <span className="text-[11px] font-mono font-bold text-[#5C3A1B] mb-1.5 group-hover:scale-110 transition-transform">
+                                            {d.total}
+                                          </span>
+
+                                          {/* 長條圖條體 */}
                                           <div
-                                            className="w-full bg-gradient-to-t from-emerald-700 to-emerald-500"
-                                            style={{ height: `${successPct}%` }}
-                                            title={`成功 ${d.success} 次`}
-                                          />
+                                            className="w-full max-w-[36px] min-w-[28px] rounded-t-md flex flex-col justify-end overflow-hidden transition-all duration-200 shadow-xs group-hover:brightness-110 group-hover:shadow-md"
+                                            style={{ height: `${barHeightPx}px` }}
+                                          >
+                                            {d.failed > 0 && (
+                                              <div
+                                                className="w-full bg-rose-500"
+                                                style={{ height: `${failedPct}%` }}
+                                                title={`失敗 ${d.failed} 次`}
+                                              />
+                                            )}
+                                            <div
+                                              className="w-full bg-gradient-to-t from-emerald-700 to-emerald-500"
+                                              style={{ height: `${successPct}%` }}
+                                              title={`成功 ${d.success} 次`}
+                                            />
+                                          </div>
                                         </div>
 
                                         {/* 下方日期標籤 */}
                                         <span className="text-[11px] font-mono text-[#5C3A1B] font-semibold mt-2.5 whitespace-nowrap">
                                           {day.slice(5)}
                                         </span>
-
-                                        {/* 懸停詳細資訊卡片（精確內縮並置於 pt-20 安全區間內，杜絕任何文字被裁切） */}
-                                        <div className={`absolute -top-15 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none transition-all ${alignClass}`}>
-                                          <span className="font-bold text-amber-300">{day}</span>
-                                          <span className="mt-0.5 text-[11px]">
-                                            總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
-                                          </span>
-                                          {/* 向下小箭頭 */}
-                                          <div className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${arrowClass}`} />
-                                        </div>
                                       </div>
                                     );
                                   })}
@@ -1645,7 +1636,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               </span>
                             </div>
 
-                            <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
+                            <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-6 sm:px-8 overflow-x-auto">
                               {/* 背景水平虛線參考線 */}
                               <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                 <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1655,22 +1646,10 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               </div>
 
                               <div className="h-full flex items-end gap-1 sm:gap-2 min-w-[700px]">
-                                {hourlyDistribution.map((h, idx) => {
+                                {hourlyDistribution.map((h) => {
                                   const isPeak = h.total > 0 && h.total === peakHourCount;
                                   const barHeightPx =
                                     h.total > 0 ? Math.max(16, Math.round((h.total / maxHourlyTotal) * 190)) : 6;
-                                  const isLeftEdge = idx <= 1;
-                                  const isRightEdge = idx >= 22;
-                                  const alignClass = isLeftEdge
-                                    ? 'left-0 items-start'
-                                    : isRightEdge
-                                    ? 'right-0 items-end'
-                                    : 'left-1/2 -translate-x-1/2 items-center';
-                                  const arrowClass = isLeftEdge
-                                    ? 'left-4'
-                                    : isRightEdge
-                                    ? 'right-4'
-                                    : 'left-1/2 -translate-x-1/2';
 
                                   return (
                                     <div
@@ -1679,30 +1658,45 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                       onMouseLeave={() => setHoveredHourly(null)}
                                       className="flex-1 min-w-[26px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                     >
-                                      {/* 若該小時有登入，上方即時標示登入次數 */}
-                                      {h.total > 0 && (
-                                        <span
-                                          className={`text-[10px] font-mono font-bold px-1 rounded-sm mb-1 group-hover:scale-110 transition-transform ${
-                                            isPeak
-                                              ? 'bg-amber-400 text-amber-950 shadow-2xs'
-                                              : 'bg-[#FAF4E8] text-[#5C3A1B] border border-[#D5C5AE]'
-                                          }`}
-                                        >
-                                          {h.total}
-                                        </span>
-                                      )}
+                                      {/* 柱狀與數值包裝層：懸停提示直接以柱體為基準，箭頭 100% 精準指向時段長條圖 */}
+                                      <div className="relative flex flex-col items-center">
+                                        {/* 懸停詳細提示（緊貼柱體頂部，向下箭頭精確置中指向長條圖） */}
+                                        <div className="absolute bottom-full mb-2 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none left-1/2 -translate-x-1/2">
+                                          <span className="font-bold text-amber-300">
+                                            {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
+                                          </span>
+                                          <span className="mt-0.5 text-[11px]">
+                                            登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
+                                          </span>
+                                          {/* 向下小箭頭：精準置中指向長條圖 */}
+                                          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-[#2C221E] rotate-45" />
+                                        </div>
 
-                                      {/* 時段長條柱（有登入顯示溫暖琥珀/古木漸層，尖峰時段高亮呈現） */}
-                                      <div
-                                        className={`w-full rounded-t-md transition-all duration-200 ${
-                                          h.total === 0
-                                            ? 'bg-[#EFE6D5]/80 hover:bg-[#E5D9C5]'
-                                            : isPeak
-                                            ? 'bg-gradient-to-t from-amber-600 to-amber-400 shadow-md ring-2 ring-amber-300'
-                                            : 'bg-gradient-to-t from-[#8B5A2B] to-[#D4A373] shadow-xs'
-                                        } group-hover:brightness-110 group-hover:shadow-md`}
-                                        style={{ height: `${barHeightPx}px` }}
-                                      />
+                                        {/* 若該小時有登入，上方即時標示登入次數 */}
+                                        {h.total > 0 && (
+                                          <span
+                                            className={`text-[10px] font-mono font-bold px-1 rounded-sm mb-1 group-hover:scale-110 transition-transform ${
+                                              isPeak
+                                                ? 'bg-amber-400 text-amber-950 shadow-2xs'
+                                                : 'bg-[#FAF4E8] text-[#5C3A1B] border border-[#D5C5AE]'
+                                            }`}
+                                          >
+                                            {h.total}
+                                          </span>
+                                        )}
+
+                                        {/* 時段長條柱（有登入顯示溫暖琥珀/古木漸層，尖峰時段高亮呈現） */}
+                                        <div
+                                          className={`w-full rounded-t-md transition-all duration-200 ${
+                                            h.total === 0
+                                              ? 'bg-[#EFE6D5]/80 hover:bg-[#E5D9C5]'
+                                              : isPeak
+                                              ? 'bg-gradient-to-t from-amber-600 to-amber-400 shadow-md ring-2 ring-amber-300'
+                                              : 'bg-gradient-to-t from-[#8B5A2B] to-[#D4A373] shadow-xs'
+                                          } group-hover:brightness-110 group-hover:shadow-md`}
+                                          style={{ height: `${barHeightPx}px` }}
+                                        />
+                                      </div>
 
                                       {/* 下方時段標籤：清晰標示 24 個小時 */}
                                       <span
@@ -1714,18 +1708,6 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                       >
                                         {String(h.hour).padStart(2, '0')}:00
                                       </span>
-
-                                      {/* 懸停詳細提示（精確內縮並置於 pt-20 安全區間內，杜絕任何文字被裁切） */}
-                                      <div className={`absolute -top-15 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none transition-all ${alignClass}`}>
-                                        <span className="font-bold text-amber-300">
-                                          {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
-                                        </span>
-                                        <span className="mt-0.5 text-[11px]">
-                                          登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
-                                        </span>
-                                        {/* 向下小箭頭 */}
-                                        <div className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${arrowClass}`} />
-                                      </div>
                                     </div>
                                   );
                                 })}

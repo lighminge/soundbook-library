@@ -1909,11 +1909,11 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                   >
                     <option value="">
-                      全部類別標籤 {availableAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                      🏷️ 全部類別標籤 {availableAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}
                     </option>
                     {availableAudioTags.map(({ tag, count }) => (
                       <option key={tag} value={tag}>
-                        #{tag} ({count} 筆)
+                        🏷️ #{tag} ({count} 筆)
                       </option>
                     ))}
                   </select>

@@ -1991,11 +1991,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
               <option value="">
-                全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                🏷️ 全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
               </option>
               {availableShelfTags.map(({ tag, count }) => (
                 <option key={tag} value={tag}>
-                  #{tag} ({count} 部)
+                  🏷️ #{tag} ({count} 部)
                 </option>
               ))}
             </select>
@@ -2936,11 +2936,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                       >
                         <option value="">
-                          全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                          🏷️ 全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
                         </option>
                         {availableShelfTags.map(({ tag, count }) => (
                           <option key={tag} value={tag}>
-                            #{tag} ({count} 部)
+                            🏷️ #{tag} ({count} 部)
                           </option>
                         ))}
                       </select>
@@ -4488,10 +4488,10 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         onChange={(e) => setEditPickerTagFilter(e.target.value)}
                         className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                       >
-                        <option value="">全部類別標籤 {allAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}</option>
+                        <option value="">🏷️ 全部類別標籤 {allAudioTags.length === 0 ? '(尚無標籤)' : '(不限)'}</option>
                         {allAudioTags.map(({ tag, count }) => (
                           <option key={tag} value={tag}>
-                            #{tag} ({count} 部)
+                            🏷️ #{tag} ({count} 部)
                           </option>
                         ))}
                       </select>

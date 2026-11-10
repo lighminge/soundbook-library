@@ -1882,15 +1882,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   onChange={(e) => setFilterTag(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#2E5A44]"
                 >
-                  <option value="all">所有類別標籤 ({audioItems.length})</option>
+                  <option value="all">🏷️ 所有類別標籤 ({audioItems.length})</option>
                   {sortedTagStats.map(({ tag, count }) => (
                     <option key={tag} value={tag}>
-                      {tag} ({count} 筆)
+                      🏷️ #{tag} ({count} 筆)
                     </option>
                   ))}
                   {untaggedCount > 0 && (
                     <option value="__untagged__">
-                      尚未標記類別 ({untaggedCount} 筆)
+                      ❓ 尚未標記類別 ({untaggedCount} 筆)
                     </option>
                   )}
                 </select>
