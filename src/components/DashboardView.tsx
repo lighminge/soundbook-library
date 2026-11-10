@@ -1215,12 +1215,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <option value="">
                 {quickSearchSpeaker
-                  ? `該主講人所有標籤 (${availableDashboardTags.length > 0 ? `共 ${availableDashboardTags.length} 種` : '無標籤'})`
-                  : `全部類別標籤 ${availableDashboardTags.length === 0 ? '(尚無標籤)' : '(不限)'}`}
+                  ? `🏷️ 該主講人所有標籤 (${availableDashboardTags.length > 0 ? `共 ${availableDashboardTags.length} 種` : '無標籤'})`
+                  : `🏷️ 全部類別標籤 ${availableDashboardTags.length === 0 ? '(尚無標籤)' : '(不限)'}`}
               </option>
               {availableDashboardTags.map(({ tag, count }) => (
                 <option key={tag} value={tag}>
-                  #{tag} ({count} 部)
+                  🏷️ #{tag} ({count} 部)
                 </option>
               ))}
             </select>
@@ -1719,89 +1719,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   </div>
 
-                  {/* 本館藏主題專屬「查詢」與「類別標籤」下拉選單篩選列 */}
-                  <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-2.5 border-t border-white/20 text-xs">
-                    {/* 關鍵字查詢輸入框 */}
-                    <div className="relative flex-1 min-w-[200px] max-w-sm">
-                      <Search className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <input
-                        type="text"
-                        placeholder={`在「${category.name}」中查詢檔名、主講人、故事內容或標籤...`}
-                        value={categorySearchQueryMap[category.id] || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: val }));
-                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
-                        }}
-                        className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white placeholder-white/60 text-xs border border-white/25 focus:outline-none focus:border-amber-300 transition"
-                      />
-                      {categorySearchQueryMap[category.id] && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
-                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
-                          }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-0.5 cursor-pointer"
-                          title="清除查詢關鍵字"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    {/* 類別標籤下拉選取 */}
-                    <div className="relative min-w-[150px] max-w-[210px]">
-                      <Tag className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <select
-                        value={categoryTagFilterMap[category.id] || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: val }));
-                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
-                        }}
-                        className="w-full pl-7 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white text-xs border border-white/25 focus:outline-none focus:border-amber-300 cursor-pointer appearance-none font-medium truncate"
-                      >
-                        <option value="" className="bg-[#2B1B11] text-white">
-                          全部類別標籤 {categoryTags.length > 0 ? `(${categoryTags.length} 種)` : '(無標籤)'}
-                        </option>
-                        {categoryTags.map(({ tag, count }) => (
-                          <option key={tag} value={tag} className="bg-[#2B1B11] text-white">
-                            🏷️ #{tag} ({count} 部)
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-white/70 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-
-                    {/* 清除本館篩選條件 */}
-                    {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id])) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
-                          setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: '' }));
-                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-semibold cursor-pointer border border-white/30 transition shadow-2xs"
-                        title="清除本館查詢與標籤篩選"
-                      >
-                        <X className="w-3 h-3" />
-                        <span>清除條件</span>
-                      </button>
-                    )}
-
-                    {/* 符合筆數即時指示 */}
-                    {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id]) || activeSpeakerFilter) && (
-                      <span className="text-[11px] text-amber-200/95 font-mono">
-                        符合篩選：<strong className="text-white font-bold">{filteredCategoryItems.length}</strong> 部 / 全廳 {itemsInCat.length} 部
-                      </span>
-                    )}
-                  </div>
-
                   {/* 主講人語音檔案數統計徽章列 */}
                   {itemsInCat.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2 border-t border-white/15 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-white/20 text-xs">
                       <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
                         <User className="w-3.5 h-3.5 text-amber-300" />
                         <span>主講人統計：</span>
@@ -1865,128 +1785,214 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5 self-end md:self-center">
-                  {/* 標題列分頁控制項（依需求加入分頁，避免語音檔太多時畫面被拉太長） */}
-                  {totalCount > 0 && (
-                    <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-white/25 text-xs shadow-xs">
-                      {/* 每頁部數下拉選單 */}
-                      <select
-                        value={pageSize}
-                        onChange={(e) => {
-                          const newSize = Number(e.target.value);
-                          setCategoryPageSizeMap((prev) => ({ ...prev, [category.id]: newSize }));
-                          setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
-                        }}
-                        className="bg-black/50 text-white text-[11px] font-medium rounded px-1.5 py-0.5 border border-white/25 focus:outline-none cursor-pointer"
-                        title="切換每頁顯示館藏數量"
-                      >
-                        <option value={4} className="bg-[#2B1B11] text-white">每頁 4 部</option>
-                        <option value={8} className="bg-[#2B1B11] text-white">每頁 8 部</option>
-                        <option value={12} className="bg-[#2B1B11] text-white">每頁 12 部</option>
-                        <option value={16} className="bg-[#2B1B11] text-white">每頁 16 部</option>
-                        <option value={9999} className="bg-[#2B1B11] text-white">顯示全部</option>
-                      </select>
-
-                      {/* 翻頁按鈕與頁碼 */}
-                      <div className="flex items-center gap-0.5 pl-1 border-l border-white/20">
-                        <button
-                          type="button"
-                          disabled={safePage <= 1}
-                          onClick={() =>
-                            setCategoryPageMap((prev) => ({
-                              ...prev,
-                              [category.id]: Math.max(1, safePage - 1),
-                            }))
-                          }
-                          className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-                          title="上一頁"
-                        >
-                          <ChevronLeft className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="text-[11px] font-mono px-1 font-semibold whitespace-nowrap">
-                          {safePage} / {totalPages}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={safePage >= totalPages}
-                          onClick={() =>
-                            setCategoryPageMap((prev) => ({
-                              ...prev,
-                              [category.id]: Math.min(totalPages, safePage + 1),
-                            }))
-                          }
-                          className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-                          title="下一頁"
-                        >
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+                {/* 標頭右側控制區：(1) 上排置入查詢功能列與類別標籤選單（置於分頁功能的上方），(2) 類別標籤下拉選單置於查詢列右方 */}
+                <div className="flex flex-col items-start md:items-end gap-2.5 shrink-0 w-full md:w-auto">
+                  {/* (1) 查詢功能列 + (2) 右方類別標籤選單（置於分頁下拉功能的上方） */}
+                  {itemsInCat.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs w-full md:w-auto justify-start md:justify-end">
+                      {/* 關鍵字查詢輸入框 */}
+                      <div className="relative min-w-[180px] sm:min-w-[210px] flex-1 md:flex-initial">
+                        <Search className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder={`在「${category.name}」中查詢...`}
+                          value={categorySearchQueryMap[category.id] || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: val }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white placeholder-white/60 text-xs border border-white/25 focus:outline-none focus:border-amber-300 transition"
+                        />
+                        {categorySearchQueryMap[category.id] && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
+                              setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-0.5 cursor-pointer"
+                            title="清除查詢關鍵字"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
+
+                      {/* 類別標籤下拉選單（置於查詢功能列的右方） */}
+                      <div className="relative min-w-[150px] sm:min-w-[170px] flex-1 md:flex-initial">
+                        <Tag className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <select
+                          value={categoryTagFilterMap[category.id] || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: val }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="w-full pl-7 pr-7 py-1.5 rounded-lg bg-black/35 hover:bg-black/45 focus:bg-black/55 text-white text-xs border border-white/25 focus:outline-none focus:border-amber-300 cursor-pointer appearance-none font-medium truncate"
+                        >
+                          <option value="" className="bg-[#2B1B11] text-white">
+                            全部類別標籤 {categoryTags.length > 0 ? `(${categoryTags.length} 種)` : '(無標籤)'}
+                          </option>
+                          {categoryTags.map(({ tag, count }) => (
+                            <option key={tag} value={tag} className="bg-[#2B1B11] text-white">
+                              🏷️ #{tag} ({count} 部)
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-white/70 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+
+                      {/* 清除篩選條件按鈕 */}
+                      {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id])) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategorySearchQueryMap((prev) => ({ ...prev, [category.id]: '' }));
+                            setCategoryTagFilterMap((prev) => ({ ...prev, [category.id]: '' }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs font-semibold cursor-pointer border border-white/30 transition shadow-2xs shrink-0"
+                          title="清除本館查詢與標籤篩選"
+                        >
+                          <X className="w-3 h-3" />
+                          <span>清除</span>
+                        </button>
+                      )}
+
+                      {/* 符合筆數即時指示 */}
+                      {(Boolean(categorySearchQueryMap[category.id]) || Boolean(categoryTagFilterMap[category.id]) || activeSpeakerFilter) && (
+                        <span className="text-[11px] text-amber-200/95 font-mono whitespace-nowrap shrink-0">
+                          符合：<strong className="text-white font-bold">{filteredCategoryItems.length}</strong>/{itemsInCat.length}
+                        </span>
+                      )}
                     </div>
                   )}
 
-                  {/* 全選 / 取消全選本廳語音 */}
-                  {filteredCategoryItems.length > 0 && (
+                  {/* 下排：分頁控制項與各項操作按鈕（置於查詢與標籤列的下方） */}
+                  <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-start md:justify-end">
+                    {/* 標題列分頁控制項 */}
+                    {totalCount > 0 && (
+                      <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-white/25 text-xs shadow-xs">
+                        {/* 每頁部數下拉選單 */}
+                        <select
+                          value={pageSize}
+                          onChange={(e) => {
+                            const newSize = Number(e.target.value);
+                            setCategoryPageSizeMap((prev) => ({ ...prev, [category.id]: newSize }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="bg-black/50 text-white text-[11px] font-medium rounded px-1.5 py-0.5 border border-white/25 focus:outline-none cursor-pointer"
+                          title="切換每頁顯示館藏數量"
+                        >
+                          <option value={4} className="bg-[#2B1B11] text-white">每頁 4 部</option>
+                          <option value={8} className="bg-[#2B1B11] text-white">每頁 8 部</option>
+                          <option value={12} className="bg-[#2B1B11] text-white">每頁 12 部</option>
+                          <option value={16} className="bg-[#2B1B11] text-white">每頁 16 部</option>
+                          <option value={9999} className="bg-[#2B1B11] text-white">顯示全部</option>
+                        </select>
+
+                        {/* 翻頁按鈕與頁碼 */}
+                        <div className="flex items-center gap-0.5 pl-1 border-l border-white/20">
+                          <button
+                            type="button"
+                            disabled={safePage <= 1}
+                            onClick={() =>
+                              setCategoryPageMap((prev) => ({
+                                ...prev,
+                                [category.id]: Math.max(1, safePage - 1),
+                              }))
+                            }
+                            className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="上一頁"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="text-[11px] font-mono px-1 font-semibold whitespace-nowrap">
+                            {safePage} / {totalPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages}
+                            onClick={() =>
+                              setCategoryPageMap((prev) => ({
+                                ...prev,
+                                [category.id]: Math.min(totalPages, safePage + 1),
+                              }))
+                            }
+                            className="p-1 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="下一頁"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 全選 / 取消全選本廳語音 */}
+                    {filteredCategoryItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSelectBatch(filteredCategoryItems)}
+                        className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25"
+                        title={`全選或取消全選「${category.name}」主題館藏語音`}
+                      >
+                        {filteredCategoryItems.every((item) => selectedAudioIds.includes(item.id)) ? (
+                          <>
+                            <CheckSquare className="w-3.5 h-3.5 text-amber-300" />
+                            <span>取消本廳全選</span>
+                          </>
+                        ) : (
+                          <>
+                            <Square className="w-3.5 h-3.5" />
+                            <span>全選本廳 ({filteredCategoryItems.length})</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {/* 將已選取的多筆語音檔一併到放映室播放 */}
+                    {selectedAudioItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handlePlaySelectedInScreeningRoom(category.id)}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer border border-emerald-300/40"
+                        title="將目前已選取的多筆語音檔當作播放清單，一併到放映室播放"
+                      >
+                        <ListMusic className="w-3.5 h-3.5" />
+                        <span>播放已選 ({selectedAudioItems.length} 部)</span>
+                      </button>
+                    )}
+
+                    {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
                     <button
                       type="button"
-                      onClick={() => handleToggleSelectBatch(filteredCategoryItems)}
-                      className="px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25"
-                      title={`全選或取消全選「${category.name}」主題館藏語音`}
+                      disabled={filteredCategoryItems.length === 0}
+                      onClick={() => onStartShufflePlayback(filteredCategoryItems, category.id)}
+                      className="px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
+                      title={`隨機排列並播放「${category.name}」主題館藏語音`}
                     >
-                      {filteredCategoryItems.every((item) => selectedAudioIds.includes(item.id)) ? (
-                        <>
-                          <CheckSquare className="w-3.5 h-3.5 text-amber-300" />
-                          <span>取消本廳全選</span>
-                        </>
-                      ) : (
-                        <>
-                          <Square className="w-3.5 h-3.5" />
-                          <span>全選本廳 ({filteredCategoryItems.length})</span>
-                        </>
-                      )}
+                      <Shuffle className="w-3.5 h-3.5" />
+                      <span>隨機播放 {filteredCategoryItems.length > 0 ? `(${filteredCategoryItems.length})` : ''}</span>
                     </button>
-                  )}
 
-                  {/* 將已選取的多筆語音檔一併到放映室播放 */}
-                  {selectedAudioItems.length > 0 && (
                     <button
-                      type="button"
-                      onClick={() => handlePlaySelectedInScreeningRoom(category.id)}
-                      className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer border border-emerald-300/40"
-                      title="將目前已選取的多筆語音檔當作播放清單，一併到放映室播放"
+                      onClick={() => onNavigateToScreeningCategory(category.id)}
+                      className="px-3.5 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer"
                     >
-                      <ListMusic className="w-3.5 h-3.5" />
-                      <span>播放已選 ({selectedAudioItems.length} 部)</span>
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>進入本廳放映室</span>
                     </button>
-                  )}
-
-                  {/* 隨機播放本主題館藏語音（位於進入本廳放映室左方） */}
-                  <button
-                    type="button"
-                    disabled={filteredCategoryItems.length === 0}
-                    onClick={() => onStartShufflePlayback(filteredCategoryItems, category.id)}
-                    className="px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
-                    title={`隨機排列並播放「${category.name}」主題館藏語音`}
-                  >
-                    <Shuffle className="w-3.5 h-3.5" />
-                    <span>隨機播放 {filteredCategoryItems.length > 0 ? `(${filteredCategoryItems.length})` : ''}</span>
-                  </button>
-
-                  <button
-                    onClick={() => onNavigateToScreeningCategory(category.id)}
-                    className="px-3.5 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>進入本廳放映室</span>
-                  </button>
-                  {!isGuest && (
-                    <button
-                      onClick={() => onNavigateToUpload(category.id)}
-                      className="px-3.5 py-2 rounded-lg bg-[#FAF5EC] hover:bg-white text-[#2B1B11] text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>在此分類上傳語音</span>
-                    </button>
-                  )}
+                    {!isGuest && (
+                      <button
+                        onClick={() => onNavigateToUpload(category.id)}
+                        className="px-3.5 py-2 rounded-lg bg-[#FAF5EC] hover:bg-white text-[#2B1B11] text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>在此分類上傳語音</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 

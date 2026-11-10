@@ -249,6 +249,9 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
   const [logPage, setLogPage] = useState<number>(1);
   // 24小時活躍時段分佈圖表之日期篩選（'all' 全部區間 | 'today' 僅今日 | 指定 YYYY-MM-DD）
   const [hourlyFilterDate, setHourlyFilterDate] = useState<'all' | 'today' | string>('all');
+  // 圖表懸停即時分析提示（確保每日趨勢與 24 小時時段數據 100% 完整無裁切呈現）
+  const [hoveredDaily, setHoveredDaily] = useState<{ day: string; total: number; success: number; failed: number } | null>(null);
+  const [hoveredHourly, setHoveredHourly] = useState<{ hour: number; total: number; success: number; failed: number } | null>(null);
 
   // 篩選條件變更時回到第一頁
   useEffect(() => {
@@ -1460,9 +1463,28 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               <span>查詢區間內尚無登入紀錄</span>
                             </div>
                           ) : (
-                            <div className="space-y-2">
-                              {/* 長條圖本體：加大至 h-80 (320px)，提供充足垂直與水平可視空間 */}
-                              <div className="relative h-80 pt-8 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
+                            <div className="space-y-2.5">
+                              {/* 頂部即時懸停分析列（即便螢幕縮放或捲動，亦能 100% 完整無裁切呈現目前焦點數據） */}
+                              <div className="flex flex-wrap items-center justify-between text-xs font-mono px-3 py-1.5 rounded-lg bg-[#FAF4E8] border border-[#D5C5AE] transition-colors">
+                                {hoveredDaily ? (
+                                  <div className="flex flex-wrap items-center gap-3 text-[#3A2518]">
+                                    <span className="font-bold text-[#8B5A2B]">📅 {hoveredDaily.day}</span>
+                                    <span>總登入：<strong>{hoveredDaily.total} 次</strong></span>
+                                    <span className="text-emerald-700 font-semibold">✓ 成功：{hoveredDaily.success} 次</span>
+                                    {hoveredDaily.failed > 0 && <span className="text-rose-600 font-semibold">✗ 失敗：{hoveredDaily.failed} 次</span>}
+                                    <span className="text-[#8C7A6B]">（成功率 {hoveredDaily.total > 0 ? ((hoveredDaily.success / hoveredDaily.total) * 100).toFixed(1) : 0}%）</span>
+                                  </div>
+                                ) : (
+                                  <div className="text-[#8C7A6B] flex items-center gap-2">
+                                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                    <span>滑鼠懸停於各日期長條柱上，即可查看該日登入詳細成功與失敗次數</span>
+                                  </div>
+                                )}
+                                <span className="text-[#8C7A6B] hidden sm:inline">單日最高：<strong className="text-[#8B5A2B]">{maxDailyTotal} 次</strong></span>
+                              </div>
+
+                              {/* 長條圖本體：加大至 h-88 (352px)，提供充足 pt-20 頂部空間，徹底解決懸停提示被裁切問題 */}
+                              <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-3 overflow-x-auto">
                                 {/* 背景水平虛線參考線 */}
                                 <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                   <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1472,14 +1494,28 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                 </div>
 
                                 <div className="h-full flex items-end gap-3 sm:gap-4 min-w-full">
-                                  {dailyTrend.map(([day, d]) => {
-                                    const barHeightPx = Math.max(16, Math.round((d.total / maxDailyTotal) * 220));
+                                  {dailyTrend.map(([day, d], idx) => {
+                                    const barHeightPx = Math.max(16, Math.round((d.total / maxDailyTotal) * 190));
                                     const successPct = d.total > 0 ? (d.success / d.total) * 100 : 0;
                                     const failedPct = d.total > 0 ? (d.failed / d.total) * 100 : 0;
+                                    const isFirst = idx === 0;
+                                    const isLast = idx === dailyTrend.length - 1;
+                                    const alignClass = isFirst
+                                      ? 'left-0 items-start'
+                                      : isLast
+                                      ? 'right-0 items-end'
+                                      : 'left-1/2 -translate-x-1/2 items-center';
+                                    const arrowClass = isFirst
+                                      ? 'left-4'
+                                      : isLast
+                                      ? 'right-4'
+                                      : 'left-1/2 -translate-x-1/2';
 
                                     return (
                                       <div
                                         key={day}
+                                        onMouseEnter={() => setHoveredDaily({ day, total: d.total, success: d.success, failed: d.failed })}
+                                        onMouseLeave={() => setHoveredDaily(null)}
                                         className="flex-1 min-w-[46px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                       >
                                         {/* 柱狀圖上方數值標籤（免 hover 直接清晰呈現） */}
@@ -1511,12 +1547,14 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                           {day.slice(5)}
                                         </span>
 
-                                        {/* 懸停詳細資訊卡片 */}
-                                        <div className="absolute -top-16 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-20 pointer-events-none">
+                                        {/* 懸停詳細資訊卡片（精確內縮並置於 pt-20 安全區間內，杜絕任何文字被裁切） */}
+                                        <div className={`absolute -top-15 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none transition-all ${alignClass}`}>
                                           <span className="font-bold text-amber-300">{day}</span>
-                                          <span className="mt-0.5">
+                                          <span className="mt-0.5 text-[11px]">
                                             總計 {d.total} 次（成功 {d.success} / 失敗 {d.failed}）
                                           </span>
+                                          {/* 向下小箭頭 */}
+                                          <div className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${arrowClass}`} />
                                         </div>
                                       </div>
                                     );
@@ -1581,9 +1619,33 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                             </div>
                           </div>
 
-                          {/* 24 小時全幅長條圖：加大至 h-80 (320px)，每小時獨立欄位並清楚標示次數 */}
-                          <div className="space-y-2">
-                            <div className="relative h-80 pt-8 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
+                          {/* 24 小時全幅長條圖：加大至 h-88 (352px)，每小時獨立欄位並清楚標示次數，提供充足 pt-20 頂部空間避免被裁切 */}
+                          <div className="space-y-2.5">
+                            {/* 頂部即時懸停分析列（即便螢幕縮放或捲動，亦能 100% 完整無裁切呈現目前焦點數據） */}
+                            <div className="flex flex-wrap items-center justify-between text-xs font-mono px-3 py-1.5 rounded-lg bg-[#FAF4E8] border border-[#D5C5AE] transition-colors">
+                              {hoveredHourly ? (
+                                <div className="flex flex-wrap items-center gap-3 text-[#3A2518]">
+                                  <span className="font-bold text-[#8B5A2B]">⏰ {String(hoveredHourly.hour).padStart(2, '0')}:00 ~ {String(hoveredHourly.hour).padStart(2, '0')}:59</span>
+                                  <span>時段登入：<strong>{hoveredHourly.total} 次</strong></span>
+                                  <span className="text-emerald-700 font-semibold">✓ 成功：{hoveredHourly.success} 次</span>
+                                  {hoveredHourly.failed > 0 && <span className="text-rose-600 font-semibold">✗ 失敗：{hoveredHourly.failed} 次</span>}
+                                  <span className="text-[#8C7A6B]">（本視圖佔比 {targetLogsForHourly.length > 0 ? ((hoveredHourly.total / targetLogsForHourly.length) * 100).toFixed(1) : 0}%）</span>
+                                </div>
+                              ) : (
+                                <div className="text-[#8C7A6B] flex items-center gap-2">
+                                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                                  <span>滑鼠懸停於 24 小時任一時段長條柱上，即可查看該時段登入詳細數據</span>
+                                </div>
+                              )}
+                              <span className="text-[#8C7A6B] hidden sm:inline">
+                                活躍尖峰：
+                                <strong className="text-[#8B5A2B] ml-1">
+                                  {peakHourCount > 0 ? `${String(peakHour).padStart(2, '0')}:00 (${peakHourCount} 次)` : '尚無'}
+                                </strong>
+                              </span>
+                            </div>
+
+                            <div className="relative h-88 pt-20 pb-8 border-b-2 border-l-2 border-[#D5C5AE] px-2 overflow-x-auto">
                               {/* 背景水平虛線參考線 */}
                               <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-25 px-2">
                                 <div className="border-b border-dashed border-[#8B735B] w-full" />
@@ -1593,14 +1655,28 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                               </div>
 
                               <div className="h-full flex items-end gap-1 sm:gap-2 min-w-[700px]">
-                                {hourlyDistribution.map((h) => {
+                                {hourlyDistribution.map((h, idx) => {
                                   const isPeak = h.total > 0 && h.total === peakHourCount;
                                   const barHeightPx =
-                                    h.total > 0 ? Math.max(16, Math.round((h.total / maxHourlyTotal) * 210)) : 6;
+                                    h.total > 0 ? Math.max(16, Math.round((h.total / maxHourlyTotal) * 190)) : 6;
+                                  const isLeftEdge = idx <= 1;
+                                  const isRightEdge = idx >= 22;
+                                  const alignClass = isLeftEdge
+                                    ? 'left-0 items-start'
+                                    : isRightEdge
+                                    ? 'right-0 items-end'
+                                    : 'left-1/2 -translate-x-1/2 items-center';
+                                  const arrowClass = isLeftEdge
+                                    ? 'left-4'
+                                    : isRightEdge
+                                    ? 'right-4'
+                                    : 'left-1/2 -translate-x-1/2';
 
                                   return (
                                     <div
                                       key={h.hour}
+                                      onMouseEnter={() => setHoveredHourly({ hour: h.hour, total: h.total, success: h.success, failed: h.failed })}
+                                      onMouseLeave={() => setHoveredHourly(null)}
                                       className="flex-1 min-w-[26px] h-full flex flex-col justify-end items-center group relative cursor-pointer"
                                     >
                                       {/* 若該小時有登入，上方即時標示登入次數 */}
@@ -1639,14 +1715,16 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                                         {String(h.hour).padStart(2, '0')}:00
                                       </span>
 
-                                      {/* 懸停詳細提示 */}
-                                      <div className="absolute -top-16 hidden group-hover:flex flex-col items-center whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3 py-1.5 rounded-lg shadow-xl z-20 pointer-events-none">
+                                      {/* 懸停詳細提示（精確內縮並置於 pt-20 安全區間內，杜絕任何文字被裁切） */}
+                                      <div className={`absolute -top-15 hidden group-hover:flex flex-col whitespace-nowrap text-xs font-mono bg-[#2C221E] text-white px-3.5 py-1.5 rounded-lg shadow-xl z-30 pointer-events-none transition-all ${alignClass}`}>
                                         <span className="font-bold text-amber-300">
                                           {String(h.hour).padStart(2, '0')}:00 ~ {String(h.hour).padStart(2, '0')}:59
                                         </span>
-                                        <span className="mt-0.5">
+                                        <span className="mt-0.5 text-[11px]">
                                           登入 {h.total} 次（成功 {h.success} / 失敗 {h.failed}）
                                         </span>
+                                        {/* 向下小箭頭 */}
+                                        <div className={`absolute -bottom-1 w-2 h-2 bg-[#2C221E] rotate-45 ${arrowClass}`} />
                                       </div>
                                     </div>
                                   );
