@@ -217,6 +217,7 @@ export function App() {
           // 已登入的人員/管理員：擁有存取權限，正常播放
           setActiveAudioForPlayback(target);
           setActiveTab('screening');
+          setScreeningInitialAutoPlay(true);
           setSharedRestrictedNotice(null);
         }
         setIsVerifyingShareAccess(false);
@@ -234,6 +235,9 @@ export function App() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tabFromUrl = urlParams.get('tab');
+    if (urlParams.get('autoplay') === '1' || urlParams.get('shared') === '1') {
+      setScreeningInitialAutoPlay(true);
+    }
     if (!urlParams.has('audioId')) {
       if (
         tabFromUrl === 'screening' ||

@@ -385,7 +385,99 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const pendingAutoPlayRef = useRef<boolean>(Boolean(initialAutoPlay));
+  const [showAutoplayPrompt, setShowAutoplayPrompt] = useState<boolean>(false);
+  const [isPresentationConnected, setIsPresentationConnected] = useState<boolean>(false);
+  const presentationConnectionRef = useRef<any>(null);
+
+  const shouldAutoPlayFromUrl = useMemo(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get('autoplay') === '1' || p.get('shared') === '1';
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const pendingAutoPlayRef = useRef<boolean>(Boolean(initialAutoPlay || shouldAutoPlayFromUrl));
+
+  useEffect(() => {
+    if (initialAutoPlay || shouldAutoPlayFromUrl) {
+      pendingAutoPlayRef.current = true;
+    }
+  }, [initialAutoPlay, shouldAutoPlayFromUrl]);
+
+  // 嘗試啟動自動播放；若遭遇現代瀏覽器 Autoplay 規範擋下 (NotAllowedError)，
+  // 顯示醒目操作橫幅並綁定全域單次手勢（點選螢幕任意處立即解鎖並播放）
+  const attemptAutoPlay = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setShowAutoplayPrompt(false);
+        pendingAutoPlayRef.current = false;
+      })
+      .catch((err) => {
+        console.warn('瀏覽器自動播放受限 (Autoplay policy):', err);
+        setShowAutoplayPrompt(true);
+        const handleUserGesture = () => {
+          if (audioRef.current) {
+            audioRef.current
+              .play()
+              .then(() => {
+                setIsPlaying(true);
+                setShowAutoplayPrompt(false);
+                pendingAutoPlayRef.current = false;
+              })
+              .catch(console.warn);
+          }
+          window.removeEventListener('click', handleUserGesture, true);
+          window.removeEventListener('touchstart', handleUserGesture, true);
+          window.removeEventListener('keydown', handleUserGesture, true);
+        };
+        window.addEventListener('click', handleUserGesture, true);
+        window.addEventListener('touchstart', handleUserGesture, true);
+        window.addEventListener('keydown', handleUserGesture, true);
+      });
+  };
+
+  // 透過 Presentation API 發送雙向同步訊息至 Android TV / 客廳電視
+  const sendPresentationMessage = (msg: any) => {
+    const conn = presentationConnectionRef.current;
+    if (conn && (conn.state === 'connected' || conn.state === 'connecting')) {
+      try {
+        conn.send(JSON.stringify(msg));
+      } catch (e) {
+        console.warn('發送投放同步訊息失敗:', e);
+      }
+    }
+  };
+
+  const setupPresentationConnection = (conn: any) => {
+    if (!conn) return;
+    conn.onconnect = () => {
+      setIsPresentationConnected(true);
+      sendPresentationMessage({
+        type: 'INIT_SYNC',
+        audioId: currentItem?.id,
+        currentTime: audioRef.current?.currentTime || currentTime,
+        isPlaying: isPlaying,
+        playbackRate: playbackRate,
+        muted: isMuted,
+      });
+    };
+    conn.onclose = () => {
+      setIsPresentationConnected(false);
+      presentationConnectionRef.current = null;
+      showToast('📺 已中斷客廳電視投放連線');
+    };
+    conn.onterminate = () => {
+      setIsPresentationConnected(false);
+      presentationConnectionRef.current = null;
+      showToast('📺 客廳電視投放已結束');
+    };
+  };
 
   useEffect(() => {
     if (initialCategoryFilter) {
@@ -479,22 +571,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   }, [currentItem?.id]);
 
-  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源；若使用者已按下播放則自動開始播放
+  // 當 playableScreeningUrl 解析完成或更新時，讓 audio 元件重新載入來源；若有待執行之自動播放則調用 attemptAutoPlay()
   useEffect(() => {
     const audio = audioRef.current;
     if (audio && playableScreeningUrl) {
       audio.load();
       if (pendingAutoPlayRef.current) {
-        audio
-          .play()
-          .then(() => {
-            setIsPlaying(true);
-            pendingAutoPlayRef.current = false;
-          })
-          .catch((err) => {
-            console.warn('自動開始播放待 canplay:', err);
-            // 保留 pendingAutoPlayRef.current = true，交由 onCanPlay 事件觸發播放
-          });
+        attemptAutoPlay();
       }
     }
   }, [playableScreeningUrl, currentItem?.id]);
@@ -632,6 +715,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 點選書架上的語音檔時，切換曲目；手機版自動平滑捲動至下方的播放舞台，電腦版則平滑定位至頂部播放視角
   const handleSelectShelfAudio = (item: AudioItem) => {
     onSelectAudio(item);
+    sendPresentationMessage({ type: 'SET_AUDIO', audioId: item.id });
     if (window.innerWidth < 1024) {
       if (playerStageRef.current) {
         playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -881,6 +965,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       audio.pause();
       setIsPlaying(false);
       pendingAutoPlayRef.current = false;
+      sendPresentationMessage({ type: 'PAUSE' });
     } else {
       setManualSlideIndex(null);
       setManualSegmentIndex(null); // 播放時恢復依時間軸自動切換區段
@@ -890,7 +975,10 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       }
       audio
         .play()
-        .then(() => setIsPlaying(true))
+        .then(() => {
+          setIsPlaying(true);
+          sendPresentationMessage({ type: 'PLAY' });
+        })
         .catch((err) => {
           console.warn('播放失敗:', err);
           setIsPlaying(false);
@@ -911,6 +999,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     } else {
       setManualSegmentIndex(null);
     }
+
+    sendPresentationMessage({ type: 'SEEK', currentTime: clamped });
 
     const audio = audioRef.current;
     if (audio) {
@@ -943,6 +1033,8 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setManualSegmentIndex(null);
     }
 
+    sendPresentationMessage({ type: 'SLIDE', slideIndex: index, currentTime: clamped });
+
     const audio = audioRef.current;
     if (audio) {
       try {
@@ -957,6 +1049,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     const rates = [0.75, 1, 1.25, 1.5, 2];
     const nextRate = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
     setPlaybackRate(nextRate);
+    sendPresentationMessage({ type: 'RATE', playbackRate: nextRate });
     if (audioRef.current) {
       audioRef.current.playbackRate = nextRate;
     }
@@ -964,8 +1057,10 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   const toggleMute = () => {
     if (!audioRef.current) return;
-    audioRef.current.muted = !isMuted;
-    setIsMuted(!isMuted);
+    const nextMuted = !isMuted;
+    audioRef.current.muted = nextMuted;
+    setIsMuted(nextMuted);
+    sendPresentationMessage({ type: 'MUTE', muted: nextMuted });
   };
 
   // 切換放映循環/順序模式：循序播放 -> 清單循環 -> 單曲循環 -> 循序播放
@@ -984,6 +1079,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 播放下一首
   const playNextTrack = (autoPlay = true) => {
+    sendPresentationMessage({ type: 'NEXT_TRACK' });
     if (playbackLoopMode === 'single') {
       const audio = audioRef.current;
       if (audio) {
@@ -1041,6 +1137,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 播放上一首
   const playPrevTrack = (autoPlay = true) => {
+    sendPresentationMessage({ type: 'PREV_TRACK' });
     if (currentTime > 3) {
       handleSeek(0);
       return;
@@ -1633,7 +1730,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
-  // 鍵盤快速鍵支援：全螢幕下 Esc 退出、F 切換全螢幕、Space 播放/暫停、左右鍵快轉/倒退、[ 上一首、] 下一首
+  // 鍵盤與 Android TV 遙控器快速鍵支援：全螢幕下 Esc 退出、F 切換全螢幕、Space/Enter/OK 播放/暫停、左右鍵快轉/倒退、上下鍵調音量、[ / ] 上下首
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
@@ -1643,19 +1740,41 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         toggleFullscreen();
       } else if (e.key === 'Escape' && isFullscreen) {
         exitFullscreen();
-      } else if (e.code === 'Space') {
+      } else if (
+        e.code === 'Space' ||
+        e.key === ' ' ||
+        e.key === 'Enter' ||
+        e.key === 'Select' ||
+        e.key === 'MediaPlayPause' ||
+        e.key === 'MediaPlay' ||
+        e.key === 'MediaPause'
+      ) {
         e.preventDefault();
         togglePlay();
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === 'ArrowLeft' || e.key === 'MediaRewind') {
         e.preventDefault();
         handleSeek(currentTime - 5);
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.key === 'ArrowRight' || e.key === 'MediaFastForward') {
         e.preventDefault();
         handleSeek(currentTime + 5);
-      } else if (e.key === '[' || e.key === 'PageUp') {
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (audioRef.current) {
+          const newVol = Math.min(1, (audioRef.current.volume || 1) + 0.1);
+          audioRef.current.volume = newVol;
+          showToast(`🔊 音量: ${Math.round(newVol * 100)}%`);
+        }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (audioRef.current) {
+          const newVol = Math.max(0, (audioRef.current.volume || 1) - 0.1);
+          audioRef.current.volume = newVol;
+          showToast(`🔉 音量: ${Math.round(newVol * 100)}%`);
+        }
+      } else if (e.key === '[' || e.key === 'PageUp' || e.key === 'MediaTrackPrevious') {
         e.preventDefault();
         playPrevTrack(true);
-      } else if (e.key === ']' || e.key === 'PageDown') {
+      } else if (e.key === ']' || e.key === 'PageDown' || e.key === 'MediaTrackNext') {
         e.preventDefault();
         playNextTrack(true);
       }
@@ -1664,6 +1783,116 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isFullscreen, currentTime, isPlaying, playlistItems, playbackLoopMode, currentItem, shelfFilteredItems]);
+
+  // 監聽來自控制端（如電腦）透過 W3C Presentation API 傳入的投放同步指令（於 Android TV / 電視端接收處理）
+  useEffect(() => {
+    const navPres = (navigator as any)?.presentation;
+    if (!navPres?.receiver) return;
+
+    let activeConnections: any[] = [];
+
+    const handleMessage = (event: any) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (!msg || !msg.type) return;
+        const audio = audioRef.current;
+
+        switch (msg.type) {
+          case 'INIT_SYNC':
+            if (msg.currentTime !== undefined && audio) {
+              audio.currentTime = msg.currentTime;
+              setCurrentTime(msg.currentTime);
+            }
+            if (msg.playbackRate && audio) {
+              audio.playbackRate = msg.playbackRate;
+              setPlaybackRate(msg.playbackRate);
+            }
+            if (msg.muted !== undefined && audio) {
+              audio.muted = Boolean(msg.muted);
+              setIsMuted(Boolean(msg.muted));
+            }
+            if (msg.isPlaying) {
+              audio?.play().then(() => setIsPlaying(true)).catch(console.warn);
+            }
+            break;
+          case 'PLAY':
+            audio?.play().then(() => setIsPlaying(true)).catch(console.warn);
+            break;
+          case 'PAUSE':
+            audio?.pause();
+            setIsPlaying(false);
+            break;
+          case 'SEEK':
+            if (msg.currentTime !== undefined && audio) {
+              audio.currentTime = msg.currentTime;
+              setCurrentTime(msg.currentTime);
+            }
+            break;
+          case 'RATE':
+            if (msg.playbackRate && audio) {
+              audio.playbackRate = msg.playbackRate;
+              setPlaybackRate(msg.playbackRate);
+            }
+            break;
+          case 'MUTE':
+            if (audio) {
+              audio.muted = Boolean(msg.muted);
+              setIsMuted(Boolean(msg.muted));
+            }
+            break;
+          case 'SLIDE':
+            if (msg.slideIndex !== undefined) {
+              setManualSlideIndex(msg.slideIndex);
+            }
+            if (msg.currentTime !== undefined && audio) {
+              audio.currentTime = msg.currentTime;
+              setCurrentTime(msg.currentTime);
+            }
+            break;
+          case 'NEXT_TRACK':
+            playNextTrack(true);
+            break;
+          case 'PREV_TRACK':
+            playPrevTrack(true);
+            break;
+          case 'SET_AUDIO':
+            if (msg.audioId) {
+              const target = audioItems.find((a) => a.id === msg.audioId);
+              if (target) {
+                onSelectAudio(target);
+              }
+            }
+            break;
+        }
+      } catch (e) {
+        console.warn('處理電視接收投放指令失敗:', e);
+      }
+    };
+
+    navPres.receiver.connectionList
+      .then((list: any) => {
+        const registerConn = (conn: any) => {
+          activeConnections.push(conn);
+          conn.addEventListener('message', handleMessage);
+        };
+
+        list.connections.forEach(registerConn);
+        list.addEventListener('connectionavailable', (event: any) => {
+          registerConn(event.connection);
+        });
+      })
+      .catch((err: any) => {
+        console.warn('Presentation Receiver 初始化失敗:', err);
+      });
+
+    return () => {
+      activeConnections.forEach((conn) => {
+        try {
+          conn.removeEventListener('message', handleMessage);
+        } catch {}
+      });
+    };
+  }, [audioItems, onSelectAudio]);
 
   // 判斷是否為行動裝置 (iPhone / iPad / Android) 與 iOS 裝置 (iPhone / iPad / iPod)
   const isMobileDevice = useMemo(() => {
@@ -1739,8 +1968,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         const pres = new (window as any).PresentationRequest([currentShareUrl]);
         pres
           .start()
-          .then(() => {
-            showToast('📺 已連線至客廳電視 / 外接投放顯示器');
+          .then((conn: any) => {
+            presentationConnectionRef.current = conn;
+            setIsPresentationConnected(true);
+            setupPresentationConnection(conn);
+            showToast('📺 已連線至客廳電視 / 外接投放顯示器！您可由電腦控制台或電視遙控器同步操控。');
           })
           .catch((e: any) => {
             if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
@@ -1799,7 +2031,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (!currentItem) return window.location.href;
     const origin = window.location.origin;
     const pathname = window.location.pathname;
-    return `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&t=${Math.floor(currentTime)}&shared=1`;
+    return `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&t=${Math.floor(currentTime)}&shared=1&autoplay=1`;
   }, [currentItem, currentTime]);
 
   // 複製跨裝置播放連結
@@ -1836,7 +2068,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (!currentItem) return window.location.href;
     const origin = window.location.origin;
     const pathname = window.location.pathname;
-    let url = `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&shared=1`;
+    let url = `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&shared=1&autoplay=1`;
     if (shareIncludeTime && currentTime > 0) {
       url += `&t=${Math.floor(currentTime)}`;
     }
@@ -2001,11 +2233,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             }
           }
           if (pendingAutoPlayRef.current && audioRef.current) {
-            pendingAutoPlayRef.current = false;
-            audioRef.current
-              .play()
-              .then(() => setIsPlaying(true))
-              .catch((err) => console.warn('onCanPlay 自動開始播放失敗:', err));
+            attemptAutoPlay();
           }
         }}
         onTimeUpdate={() => {
@@ -3997,11 +4225,51 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 )}
               </button>
 
-              {/* 電腦版輔助提示 */}
+              {/* 電腦版輔助提示與 Android TV 操控指南 */}
               {!isIOSDevice && (
-                <p className="text-[11px] text-[#7A6855] text-center leading-relaxed -mt-2">
-                  💡 電腦版點擊上方按鈕將透過標準 Presentation API 搜尋客廳 Chromecast 與智慧電視；亦可在網頁按右鍵點選「投放...」或點選瀏覽器右上角選單「儲存與分享 ➔ 投放...」。
-                </p>
+                <div className="p-3.5 rounded-xl bg-emerald-50/90 border border-emerald-300/80 text-xs space-y-2.5">
+                  <div className="flex items-center gap-2 font-bold text-emerald-900">
+                    <Tv className="w-4 h-4 shrink-0 text-emerald-700" />
+                    <span className="text-[13px]">電腦投放到 Android TV / 智慧電視操控指南</span>
+                  </div>
+                  <div className="space-y-2 text-[#4A3222]">
+                    <div className="p-2 rounded-lg bg-white/95 border border-emerald-200/60 flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-emerald-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                      <div>
+                        <p className="font-bold text-[#2C221E] text-[11px]">
+                          電腦專屬「電視同步控制台」
+                        </p>
+                        <p className="text-[#6E5D4F] text-[11px] leading-relaxed">
+                          透過上方按鈕連線電視後，電腦畫面右下方會自動顯示懸浮控制台，可直接在電腦按暫停、播放、快轉倒退與切換曲目，電視同步響應！
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded-lg bg-white/95 border border-emerald-200/60 flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-emerald-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                      <div>
+                        <p className="font-bold text-[#2C221E] text-[11px]">
+                          Android TV 實體遙控器直接操作
+                        </p>
+                        <p className="text-[#6E5D4F] text-[11px] leading-relaxed">
+                          按電視遙控器 <strong>OK / 確定鍵</strong> 可播放或暫停；按 <strong>左右方向鍵 ◀ / ▶</strong> 可快轉或倒退 5 秒；按 <strong>上下鍵 ▲ / ▼</strong> 可調整音量。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded-lg bg-white/95 border border-emerald-200/60 flex items-start gap-2">
+                      <span className="w-4 h-4 rounded-full bg-emerald-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+                      <div>
+                        <p className="font-bold text-[#2C221E] text-[11px]">
+                          Chrome「投放分頁 (Cast Tab)」鏡像投影
+                        </p>
+                        <p className="text-[#6E5D4F] text-[11px] leading-relaxed">
+                          在 Chrome 瀏覽器右上角選單點選「儲存與分享 ➔ 投放」，將來源選取「投放分頁 (Cast Tab)」，電腦網頁畫面與音訊 100% 鏡像投射至電視，電腦上任何滑鼠滾動與點擊完全即時同步！
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* iPhone / iPad 投放核心說明卡片（解答為什麼電腦看得到 Chromecast，iPhone 卻沒看到） */}
@@ -5277,6 +5545,131 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 瀏覽器自動播放受限時之友善點擊解鎖橫幅 (點選螢幕任意處或此橫幅即可立即放映) */}
+      {showAutoplayPrompt && (
+        <aside
+          aria-label="點選立即播放導覽"
+          onClick={() => {
+            if (audioRef.current) {
+              audioRef.current
+                .play()
+                .then(() => {
+                  setIsPlaying(true);
+                  setShowAutoplayPrompt(false);
+                  pendingAutoPlayRef.current = false;
+                })
+                .catch(console.warn);
+            }
+          }}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[150] max-w-md w-[92%] p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-[#2A1E18] to-[#4A301E] text-[#FAF5EC] border-2 border-amber-400 shadow-2xl flex items-center justify-between gap-3 cursor-pointer animate-bounce hover:scale-102 transition"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-full bg-amber-400 text-stone-900 flex items-center justify-center shrink-0 font-bold shadow-md">
+              <Play className="w-5 h-5 fill-current ml-0.5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-amber-300 font-semibold">點選螢幕任意處立即播放</p>
+              <h4 className="font-bold text-sm text-white truncate">
+                {currentItem?.title || '語音導覽作品'}
+              </h4>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-stone-900 font-bold text-xs shrink-0 shadow-sm transition"
+          >
+            立即聆聽
+          </button>
+        </aside>
+      )}
+
+      {/* 客廳電視 (Android TV / Chromecast) 連線投放中專屬懸浮同步控制台 */}
+      {isPresentationConnected && (
+        <aside
+          aria-label="客廳電視連線控制台"
+          className="fixed bottom-6 right-6 z-[130] bg-[#1F2D24]/95 text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl border-2 border-emerald-400/90 backdrop-blur-md max-w-xs sm:max-w-sm w-[90%] sm:w-auto animate-in fade-in slide-in-from-bottom-4 duration-200"
+        >
+          <div className="flex items-center justify-between gap-3 pb-2.5 mb-2.5 border-b border-emerald-500/30">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <span className="text-xs font-bold text-emerald-200 flex items-center gap-1">
+                <Tv className="w-3.5 h-3.5" /> 客廳電視連線投放中
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  presentationConnectionRef.current?.terminate();
+                  presentationConnectionRef.current?.close();
+                } catch {}
+                presentationConnectionRef.current = null;
+                setIsPresentationConnected(false);
+                showToast('📺 已中斷客廳電視投放');
+              }}
+              className="text-[11px] px-2 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-400/30 transition cursor-pointer"
+              title="中斷電視連線"
+            >
+              斷開投放
+            </button>
+          </div>
+
+          <div className="text-xs text-stone-200 truncate font-semibold mb-2.5">
+            {currentItem?.title}
+          </div>
+
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => playPrevTrack(true)}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              title="上一首"
+            >
+              <SkipBack className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSeek(currentTime - 5)}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              title="倒退 5 秒"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="p-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-900 font-bold transition cursor-pointer shadow-md"
+              title={isPlaying ? '暫停電視播放' : '開始電視播放'}
+            >
+              {isPlaying ? (
+                <Pause className="w-5 h-5 fill-current" />
+              ) : (
+                <Play className="w-5 h-5 fill-current ml-0.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSeek(currentTime + 5)}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              title="快轉 5 秒"
+            >
+              <RotateCw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => playNextTrack(true)}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              title="下一首"
+            >
+              <SkipForward className="w-4 h-4" />
+            </button>
+          </div>
+        </aside>
       )}
     </div>
   );

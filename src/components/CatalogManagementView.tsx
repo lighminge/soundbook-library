@@ -272,7 +272,7 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
     if (!shareModalItem) return '';
     const origin = window.location.origin;
     const pathname = window.location.pathname;
-    return `${origin}${pathname}?tab=screening&audioId=${shareModalItem.item.id}&shared=1`;
+    return `${origin}${pathname}?tab=screening&audioId=${shareModalItem.item.id}&shared=1&autoplay=1`;
   }, [shareModalItem]);
 
   // 判斷是否為行動裝置 (iPhone / iPad / Android)
