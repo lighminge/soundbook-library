@@ -49,6 +49,7 @@ import {
   BookmarkPlus,
   Music2,
   User,
+  Mail,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -351,6 +352,29 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 投放到其他裝置 Modal 狀態與複製成功標記
   const [showCastModal, setShowCastModal] = useState<boolean>(false);
   const [castCopied, setCastCopied] = useState<boolean>(false);
+
+  // 分享功能 Modal 狀態與複製標記
+  const [showShareModal, setShowShareModal] = useState<boolean>(false);
+  const [shareIncludeTime, setShareIncludeTime] = useState<boolean>(false);
+  const [shareCopied, setShareCopied] = useState<boolean>(false);
+
+  // 初次載入若網址帶有 ?t=秒數，於音訊載入時自動跳轉定位
+  const initialSeekTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tParam = urlParams.get('t');
+      if (tParam) {
+        const parsed = parseFloat(tParam);
+        if (!isNaN(parsed) && parsed > 0) {
+          initialSeekTimeRef.current = parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -1724,6 +1748,53 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
+  // 生成「分享功能」專屬 URL（可自選是否包含當前播放秒數）
+  const shareTargetUrl = useMemo(() => {
+    if (!currentItem) return window.location.href;
+    const origin = window.location.origin;
+    const pathname = window.location.pathname;
+    let url = `${origin}${pathname}?tab=screening&audioId=${currentItem.id}`;
+    if (shareIncludeTime && currentTime > 0) {
+      url += `&t=${Math.floor(currentTime)}`;
+    }
+    return url;
+  }, [currentItem, currentTime, shareIncludeTime]);
+
+  // 複製分享連結
+  const handleCopyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareTargetUrl);
+      setShareCopied(true);
+      showToast('📋 已複製分享連結！可直接分享給好友觀看此語音檔。');
+      setTimeout(() => setShareCopied(false), 3000);
+    } catch {
+      showToast('⚠️ 複製失敗，請手動複製連結');
+    }
+  };
+
+  // 透過系統原生管道分享 (AirDrop / 手機通訊軟體 / 訊息)
+  const handleNativeShare = async () => {
+    if (!currentItem) return;
+    const shareTitle = `聲書閣放映室 - ${currentItem.title}`;
+    const shareText = `邀請您一同在「聲書閣」觀賞聆聽：《${currentItem.title}》${
+      currentItem.speaker ? ` (主講：${currentItem.speaker})` : ''
+    }${shareIncludeTime && currentTime > 0 ? `，進度於 ${formatDuration(currentTime)}` : ''}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareTargetUrl,
+        });
+      } catch {
+        // 使用者取消分享不報錯
+      }
+    } else {
+      handleCopyShareLink();
+    }
+  };
+
   /**
    * 啟動當前顯示 SRT 時間區段的「修改」模式
    */
@@ -1821,6 +1892,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           flushPlayStats();
         }}
         onCanPlay={() => {
+          if (initialSeekTimeRef.current !== null && audioRef.current) {
+            const seekT = initialSeekTimeRef.current;
+            initialSeekTimeRef.current = null;
+            if (seekT > 0 && seekT < (audioRef.current.duration || 999999)) {
+              audioRef.current.currentTime = seekT;
+              setCurrentTime(seekT);
+            }
+          }
           if (pendingAutoPlayRef.current && audioRef.current) {
             pendingAutoPlayRef.current = false;
             audioRef.current
@@ -1849,6 +1928,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         onLoadedMetadata={() => {
           if (audioRef.current && Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
             setDuration(audioRef.current.duration);
+          }
+          if (initialSeekTimeRef.current !== null && audioRef.current) {
+            const seekT = initialSeekTimeRef.current;
+            initialSeekTimeRef.current = null;
+            if (seekT > 0 && seekT < (audioRef.current.duration || 999999)) {
+              audioRef.current.currentTime = seekT;
+              setCurrentTime(seekT);
+            }
           }
         }}
         onEnded={() => {
@@ -2067,6 +2154,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   <span className="hidden sm:inline">投放到其他裝置</span>
                 </button>
 
+                {/* 分享此語音檔 */}
+                <button
+                  type="button"
+                  onClick={() => setShowShareModal(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                  title="分享此語音檔給他人觀看"
+                >
+                  <Share2 className="w-3.5 h-3.5 text-amber-300" />
+                  <span>分享</span>
+                </button>
+
                 {isFullscreen ? (
                   <button
                     type="button"
@@ -2112,9 +2210,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 </>
               )}
 
-              {/* 右上角浮動快捷功能按鈕（一般模式下便捷放大或投放） */}
+              {/* 右上角浮動快捷功能按鈕（一般模式下便捷分享、放大或投放） */}
               {!isFullscreen && (
                 <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowShareModal(true)}
+                    className="p-2 rounded-xl bg-black/60 hover:bg-black/85 text-white/90 hover:text-white border border-white/20 backdrop-blur-md shadow-lg transition cursor-pointer"
+                    title="分享此語音檔給他人觀看"
+                  >
+                    <Share2 className="w-4 h-4 text-amber-300" />
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setShowCastModal(true)}
@@ -2464,6 +2571,16 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                     title="投放到其他裝置 (AirPlay / Chromecast / 智慧電視)"
                   >
                     <Cast className="w-4 h-4" />
+                  </button>
+
+                  {/* 分享此語音檔 */}
+                  <button
+                    type="button"
+                    onClick={() => setShowShareModal(true)}
+                    className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-[#FAF5EC] hover:text-amber-300 transition cursor-pointer"
+                    title="分享此語音檔給他人觀看"
+                  >
+                    <Share2 className="w-4 h-4" />
                   </button>
 
                   {/* 放大全螢幕 */}
@@ -3869,6 +3986,240 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 type="button"
                 onClick={() => setShowCastModal(false)}
                 className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition"
+              >
+                關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 語音檔案分享 (Share Modal) 彈出視窗 */}
+      {showShareModal && currentItem && (
+        <div className="fixed inset-0 z-[125] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border-2 border-[#8B5A2B] animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal 頂部標題列 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base">分享此語音檔案</h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    分享給朋友、社群或跨裝置一同觀看聆聽
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShareModal(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+                title="關閉"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal 內容區 */}
+            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+              {/* 目前欲分享的語音檔案資訊預覽 */}
+              <div className="p-3.5 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex items-center gap-3.5">
+                <img
+                  src={currentItem.coverImageUrl}
+                  alt={currentItem.title}
+                  className="w-14 h-14 rounded-lg object-cover border border-[#C8B598] shrink-0 shadow-xs"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                    {currentCategory && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded text-white font-medium flex items-center gap-1 shrink-0"
+                        style={{ backgroundColor: currentCategory.themeColor }}
+                      >
+                        {getCategoryIcon(currentCategory.icon, 'w-3 h-3')}
+                        <span>{currentCategory.name}</span>
+                      </span>
+                    )}
+                    {currentItem.speaker && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#EAE0D0] text-[#5C3A1B] font-medium flex items-center gap-1">
+                        <User className="w-3 h-3 text-[#8B5A2B]" />
+                        <span>{currentItem.speaker}</span>
+                      </span>
+                    )}
+                  </div>
+                  <h4 className="font-bold text-sm text-[#2C221E] truncate" title={currentItem.title}>
+                    {currentItem.title}
+                  </h4>
+                  <p className="text-[11px] text-[#7A6855] font-mono mt-0.5">
+                    時長：{formatDuration(currentItem.duration || duration)}
+                  </p>
+                </div>
+              </div>
+
+              {/* 是否包含當前播放進度核取方塊 */}
+              <div className="p-3 rounded-xl bg-white border border-[#E2D5C1] flex items-center justify-between gap-3">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-medium text-[#2C221E] select-none">
+                  <input
+                    type="checkbox"
+                    checked={shareIncludeTime}
+                    onChange={(e) => setShareIncludeTime(e.target.checked)}
+                    className="w-4 h-4 rounded text-[#8B5A2B] focus:ring-[#8B5A2B] cursor-pointer"
+                  />
+                  <span>包含當前播放進度（從 <span className="font-mono font-bold text-[#8B5A2B]">{formatDuration(currentTime)}</span> 開始播放）</span>
+                </label>
+                {shareIncludeTime && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-mono font-bold border border-amber-300 shrink-0">
+                    + {Math.floor(currentTime)}s
+                  </span>
+                )}
+              </div>
+
+              {/* 複製專屬連結列 */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#5C3A1B] flex items-center justify-between">
+                  <span>分享連結：</span>
+                  <span className="text-[11px] text-[#8B5A2B] font-normal">點擊複製即可傳送給他人</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareTargetUrl}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 px-3 py-2 text-xs rounded-xl border border-[#D5C5AE] bg-white text-[#2C221E] font-mono select-all focus:outline-none focus:ring-2 focus:ring-[#8B5A2B]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyShareLink}
+                    className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-xs ${
+                      shareCopied
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-[#3A2518] hover:bg-[#523522] text-white'
+                    }`}
+                  >
+                    {shareCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-white" />
+                        <span>已複製</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-amber-300" />
+                        <span>複製連結</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* 快速社群分享按鈕 */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-[#5C3A1B]">一鍵快速分享至：</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {/* LINE */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareTargetUrl)}`;
+                      window.open(lineUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="p-2.5 rounded-xl bg-[#06C755]/10 hover:bg-[#06C755]/20 border border-[#06C755]/30 text-[#06C755] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="分享至 LINE"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-[#06C755] text-white text-[10px] font-bold flex items-center justify-center leading-none">L</span>
+                    <span>LINE</span>
+                  </button>
+
+                  {/* Facebook */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareTargetUrl)}`;
+                      window.open(fbUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="p-2.5 rounded-xl bg-[#1877F2]/10 hover:bg-[#1877F2]/20 border border-[#1877F2]/30 text-[#1877F2] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="分享至 Facebook"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-[#1877F2] text-white text-[11px] font-bold flex items-center justify-center leading-none">f</span>
+                    <span>Facebook</span>
+                  </button>
+
+                  {/* X (Twitter) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tweetText = `邀請您在聲書閣觀賞聆聽：《${currentItem.title}》`;
+                      const xUrl = `https://twitter.com/intent/tweet?url=${encodeURIComponent(shareTargetUrl)}&text=${encodeURIComponent(tweetText)}`;
+                      window.open(xUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="p-2.5 rounded-xl bg-black/10 hover:bg-black/20 border border-black/30 text-black font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="分享至 X (Twitter)"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-bold flex items-center justify-center leading-none">𝕏</span>
+                    <span>X</span>
+                  </button>
+
+                  {/* Email */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emailSubject = `聲書閣語音檔分享：《${currentItem.title}》`;
+                      const emailBody = `邀請您在「聲書閣」觀賞聆聽此部作品：《${currentItem.title}》${
+                        currentItem.speaker ? ` (主講：${currentItem.speaker})` : ''
+                      }\n\n立即開啟放映室觀賞：\n${shareTargetUrl}`;
+                      window.location.href = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+                    }}
+                    className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-600/30 text-[#8B5A2B] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="透過電子郵件分享"
+                  >
+                    <Mail className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>Email</span>
+                  </button>
+                </div>
+
+                {/* 系統原生分享 (若支援 navigator.share) */}
+                {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+                  <button
+                    type="button"
+                    onClick={handleNativeShare}
+                    className="w-full mt-2 py-2.5 px-4 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] border border-[#D5C5AE] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
+                  >
+                    <Share2 className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>更多分享管道（AirDrop、手機通訊軟體、訊息等）</span>
+                  </button>
+                )}
+              </div>
+
+              {/* QR Code 掃描區 */}
+              <div className="p-4 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex flex-col sm:flex-row items-center gap-4">
+                <div className="p-2 bg-white rounded-xl border border-[#D5C5AE] shadow-xs shrink-0">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                      shareTargetUrl
+                    )}&margin=4`}
+                    alt="掃描分享 QR Code"
+                    className="w-24 h-24 object-contain"
+                  />
+                </div>
+                <div className="text-left space-y-1 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-[#2C221E]">
+                    <QrCode className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>行動裝置相機掃描</span>
+                  </div>
+                  <p className="text-[#6E5D4F] leading-relaxed">
+                    直接以手機或平板相機掃描此 QR Code，即可在行動裝置上開啟此語音檔案觀賞聆聽。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal 底部按鈕 */}
+            <div className="px-6 py-3 bg-[#F4ECE0] border-t border-[#E5D9C5] flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowShareModal(false)}
+                className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition shadow-xs"
               >
                 關閉
               </button>

@@ -122,6 +122,7 @@ import {
   X,
   Tag,
   ChevronDown,
+  ChevronUp,
   Layers,
   Shuffle,
   User,
@@ -797,6 +798,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 每個館藏主題書架之「查詢」關鍵字狀態與「類別標籤」下拉篩選狀態
   const [categorySearchQueryMap, setCategorySearchQueryMap] = useState<Record<string, string>>({});
   const [categoryTagFilterMap, setCategoryTagFilterMap] = useState<Record<string, string>>({});
+  // 每個館藏主題書架之「收合」狀態（支援一鍵收合/展開各分類書架）
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Record<string, boolean>>({});
+
+  const toggleCategoryCollapse = (catId: string) => {
+    setCollapsedCategoryIds((prev) => ({
+      ...prev,
+      [catId]: !prev[catId],
+    }));
+  };
 
   const handleToggleCategorySpeakerFilter = (catId: string, speaker: string) => {
     setCategorySpeakerFilterMap((prev) => {
@@ -1525,6 +1535,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span>清空已選</span>
               </button>
             )}
+
+            {/* 一鍵全部收合 / 全部展開所有分類書架 */}
+            {visibleCategories.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const allCollapsed = visibleCategories.every((cat) => Boolean(collapsedCategoryIds[cat.id]));
+                  const nextState: Record<string, boolean> = {};
+                  visibleCategories.forEach((cat) => {
+                    nextState[cat.id] = !allCollapsed;
+                  });
+                  setCollapsedCategoryIds(nextState);
+                }}
+                className="px-3 py-2 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D5C1] text-[#5C3A1B] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                title="一鍵全部收合或全部展開各分類主題書架"
+              >
+                {visibleCategories.every((cat) => Boolean(collapsedCategoryIds[cat.id])) ? (
+                  <>
+                    <ChevronDown className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                    <span>全部展開</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronUp className="w-3.5 h-3.5 text-[#8B5A2B]" />
+                    <span>全部收合</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -1669,6 +1708,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           const currentPage = categoryPageMap[category.id] || 1;
           const safePage = Math.min(currentPage, totalPages);
           const paginatedItems = filteredCategoryItems.slice((safePage - 1) * pageSize, safePage * pageSize);
+          const isCollapsed = Boolean(collapsedCategoryIds[category.id]);
 
           return (
             <section
@@ -1678,7 +1718,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               {/* 分類廳館木牌標頭 */}
               <div
-                className="p-5 md:px-7 flex flex-col md:flex-row md:items-center justify-between gap-4 text-white"
+                className={`p-5 md:px-7 flex flex-col md:flex-row md:items-center justify-between gap-4 text-white transition-all ${
+                  isCollapsed ? 'rounded-2xl' : ''
+                }`}
                 style={{
                   background: `linear-gradient(135deg, ${category.themeColor} 0%, #2B1B11 100%)`,
                 }}
@@ -1699,6 +1741,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
                           共 {itemsInCat.length} 部
                         </span>
+                        {/* 一鍵收合 / 展開該分類標籤按鈕 */}
+                        <button
+                          type="button"
+                          onClick={() => toggleCategoryCollapse(category.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-black/30 hover:bg-black/50 text-amber-200 text-xs border border-white/20 transition cursor-pointer"
+                          title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
+                        >
+                          {isCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-amber-300" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-300" />}
+                          <span>{isCollapsed ? '已收合 (點此展開)' : '收合'}</span>
+                        </button>
                         {activeSpeakerFilter && (
                           <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400 text-[#2B1B11] font-bold shadow-xs">
                             主講人：{activeSpeakerFilter === '__unassigned__' ? '未指定' : activeSpeakerFilter}
@@ -1992,12 +2044,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span>在此分類上傳語音</span>
                       </button>
                     )}
+
+                    {/* 一鍵收合 / 展開本主題館藏書架 */}
+                    <button
+                      type="button"
+                      onClick={() => toggleCategoryCollapse(category.id)}
+                      className="px-3.5 py-2 rounded-lg bg-black/35 hover:bg-black/50 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
+                      title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
+                    >
+                      {isCollapsed ? (
+                        <>
+                          <ChevronDown className="w-3.5 h-3.5 text-amber-300" />
+                          <span>展開本廳</span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp className="w-3.5 h-3.5 text-amber-300" />
+                          <span>收合本廳</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* 書架展示層 */}
-              <div className="p-6 pb-4 bg-gradient-to-b from-[#F8F3E8] to-[#EFE6D5]">
+              {/* 書架展示層（支援一鍵收合，收合時隱藏書架與底座橫樑） */}
+              {!isCollapsed && (
+                <>
+                  <div className="p-6 pb-4 bg-gradient-to-b from-[#F8F3E8] to-[#EFE6D5]">
                 {filteredCategoryItems.length === 0 ? (
                   <div className="py-10 text-center border-2 border-dashed border-[#D5C5AE] rounded-xl bg-[#FAF6EE]">
                     <p className="text-[#7A6855] text-sm mb-3">
@@ -2257,7 +2331,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               {/* 實體木質書架底座橫樑視覺 */}
               <div className="h-4 wood-shelf" />
-            </section>
+            </>
+          )}
+        </section>
           );
         })}
       </div>
