@@ -50,6 +50,7 @@ import {
   Music2,
   User,
   Mail,
+  Lock,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -4056,6 +4057,26 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                   </p>
                 </div>
               </div>
+
+              {/* 訪客瀏覽權限狀態說明 */}
+              {Boolean(currentCategory?.allowGuest) ? (
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] leading-relaxed">
+                    此分類已勾選「開放訪客瀏覽」。收到分享連結之人員<strong>無需帳號密碼，點擊即可直接觀看放映</strong>！
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5">
+                  <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 leading-relaxed">
+                    <p className="font-bold">此作品所屬分類「未開放訪客瀏覽」</p>
+                    <p className="text-[11px] text-amber-800">
+                      收到此分享網址的人員，<strong>必須登入具備權限之系統帳號</strong>方可觀看放映；訪客將無法存取此作品。若欲允許其他人免密直接觀看，請至「館藏資料管理」開啟該分類之「開放訪客瀏覽」。
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* 是否包含當前播放進度核取方塊 */}
               <div className="p-3 rounded-xl bg-white border border-[#E2D5C1] flex items-center justify-between gap-3">

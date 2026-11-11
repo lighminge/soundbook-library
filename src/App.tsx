@@ -16,6 +16,9 @@ import {
   Compass,
   LayoutTemplate,
   ArrowUp,
+  Loader2,
+  Lock,
+  X,
 } from 'lucide-react';
 import { AudioItem, Category, CurrentUser, LoginScreenConfig } from './types';
 import {
@@ -87,20 +90,19 @@ const ScrollToTopButton: React.FC = () => {
 };
 
 export function App() {
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => {
-    const existing = getCurrentSessionUser();
-    if (existing) return existing;
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
+  const [sharedRestrictedNotice, setSharedRestrictedNotice] = useState<string | null>(null);
+
+  // 初次載入若有帶 audioId 且尚未登入，先進行驗證以確認該分類是否開放訪客瀏覽
+  const [isVerifyingShareAccess, setIsVerifyingShareAccess] = useState<boolean>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      // 若是透過分享連結進來（帶有 audioId 或 shared 標記），自動視為訪客免密登入
-      if (urlParams.has('audioId') || urlParams.get('shared') === '1') {
-        return loginAsGuest();
-      }
+      return Boolean(urlParams.get('audioId') && !getCurrentSessionUser());
     } catch {
-      // ignore
+      return false;
     }
-    return null;
   });
+
   const [loginScreenConfig, setLoginScreenConfig] = useState<LoginScreenConfig>(() =>
     getLocalLoginScreenConfig()
   );
@@ -108,11 +110,10 @@ export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.has('audioId') || urlParams.get('tab') === 'screening') {
-        return 'screening';
-      }
       const tabFromUrl = urlParams.get('tab');
-      if (tabFromUrl === 'dashboard') return 'dashboard';
+      if (tabFromUrl === 'screening' || tabFromUrl === 'dashboard') {
+        return tabFromUrl;
+      }
     } catch {
       // ignore
     }
@@ -132,15 +133,7 @@ export function App() {
   const [screeningCategoryFilter, setScreeningCategoryFilter] = useState<string>('all');
   // 放映室啟動隨機播放時帶入的自訂播放佇列與自動播放標記
   const [screeningInitialPlaylistIds, setScreeningInitialPlaylistIds] = useState<string[]>([]);
-  const [screeningInitialAutoPlay, setScreeningInitialAutoPlay] = useState<boolean>(() => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.has('audioId')) return true;
-    } catch {
-      // ignore
-    }
-    return false;
-  });
+  const [screeningInitialAutoPlay, setScreeningInitialAutoPlay] = useState<boolean>(false);
 
   const handleStartShufflePlayback = (items: AudioItem[], categoryId?: string) => {
     if (!items || items.length === 0) return;
@@ -192,11 +185,46 @@ export function App() {
     const audioIdFromUrl = urlParams.get('audioId');
     if (audioIdFromUrl) {
       const target = res.audioItems.find((i) => i.id === audioIdFromUrl);
-      if (target) {
+      const targetCat = target ? res.categories.find((c) => c.id === target.categoryId) : null;
+      const isAllowedForGuest = Boolean(targetCat?.allowGuest);
+
+      if (target && isAllowedForGuest) {
+        // 該作品所屬分類已勾選「開放訪客瀏覽」：若尚未登入，自動為其以訪客登入，直接觀看放映
+        if (!getCurrentSessionUser()) {
+          const guest = loginAsGuest();
+          setCurrentUser(guest);
+        }
         setActiveAudioForPlayback(target);
+        setActiveTab('screening');
+        setScreeningInitialAutoPlay(true);
+        setSharedRestrictedNotice(null);
+        setIsVerifyingShareAccess(false);
+        return;
+      } else if (target && !isAllowedForGuest) {
+        // 該作品所屬分類「未開放訪客瀏覽」！嚴格禁止訪客直接存取
+        const sessionUser = getCurrentSessionUser();
+        if (!sessionUser) {
+          // 未登入者：維持未登入狀態，顯示登入驗證畫面要求登入授權人員帳號
+          setSharedRestrictedNotice(
+            `您透過分享連結存取的作品《${target.title}》所屬分類「${targetCat?.name || '未指定'}」未開放訪客瀏覽，請先登入具備權限之人員帳號後觀看放映。`
+          );
+        } else if (sessionUser.isGuest) {
+          // 目前為訪客身分：提示未開放訪客瀏覽
+          setSharedRestrictedNotice(
+            `此語音作品《${target.title}》所屬分類「${targetCat?.name || '未指定'}」未開放訪客瀏覽，請登出訪客並使用授權人員帳號登入。`
+          );
+        } else {
+          // 已登入的人員/管理員：擁有存取權限，正常播放
+          setActiveAudioForPlayback(target);
+          setActiveTab('screening');
+          setSharedRestrictedNotice(null);
+        }
+        setIsVerifyingShareAccess(false);
         return;
       }
     }
+
+    setIsVerifyingShareAccess(false);
 
     if (!activeAudioForPlayback && res.audioItems.length > 0) {
       setActiveAudioForPlayback(res.audioItems[0]);
@@ -206,20 +234,15 @@ export function App() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tabFromUrl = urlParams.get('tab');
-    if (urlParams.has('audioId') || urlParams.get('shared') === '1') {
-      if (!getCurrentSessionUser()) {
-        const guest = loginAsGuest();
-        setCurrentUser(guest);
+    if (!urlParams.has('audioId')) {
+      if (
+        tabFromUrl === 'screening' ||
+        tabFromUrl === 'dashboard' ||
+        (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog')) ||
+        (isAdmin && tabFromUrl === 'system')
+      ) {
+        setActiveTab(tabFromUrl as any);
       }
-      setActiveTab('screening');
-      setScreeningInitialAutoPlay(true);
-    } else if (
-      tabFromUrl === 'screening' ||
-      tabFromUrl === 'dashboard' ||
-      (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog')) ||
-      (isAdmin && tabFromUrl === 'system')
-    ) {
-      setActiveTab(tabFromUrl as any);
     }
     reloadAllData();
   }, []);
@@ -233,44 +256,20 @@ export function App() {
     }
   }, [isGuest, isAdmin, activeTab]);
 
-  // 依「是否開啟訪客瀏覽 (allowGuest)」過濾訪客可見的館藏分類與語音檔
-  // 若是透過分享連結進來，確保被分享的語音檔案與其所屬分類一定可以由訪客觀看放映
-  const visibleCategoriesForUser = React.useMemo(() => {
-    if (!isGuest) return categories;
-    const allowed = categories.filter((c) => Boolean(c.allowGuest));
-    const urlParams = new URLSearchParams(window.location.search);
-    const sharedAudioId = urlParams.get('audioId');
-    if (sharedAudioId) {
-      const targetAudio = audioItems.find((a) => a.id === sharedAudioId);
-      if (targetAudio && !allowed.some((c) => c.id === targetAudio.categoryId)) {
-        const targetCat = categories.find((c) => c.id === targetAudio.categoryId);
-        if (targetCat) allowed.push(targetCat);
-      }
-    }
-    return allowed;
-  }, [isGuest, categories, audioItems]);
+  // 依「是否開啟訪客瀏覽 (allowGuest)」嚴格過濾訪客可見的館藏分類與語音檔
+  const visibleCategoriesForUser = React.useMemo(
+    () => (isGuest ? categories.filter((c) => Boolean(c.allowGuest)) : categories),
+    [isGuest, categories]
+  );
 
   const visibleAudioItemsForUser = React.useMemo(() => {
     if (!isGuest) return audioItems;
     const allowedCatIds = new Set(visibleCategoriesForUser.map((c) => c.id));
-    const items = audioItems.filter((a) => allowedCatIds.has(a.categoryId));
-    const urlParams = new URLSearchParams(window.location.search);
-    const sharedAudioId = urlParams.get('audioId');
-    if (sharedAudioId && !items.some((a) => a.id === sharedAudioId)) {
-      const targetAudio = audioItems.find((a) => a.id === sharedAudioId);
-      if (targetAudio) items.push(targetAudio);
-    }
-    return items;
+    return audioItems.filter((a) => allowedCatIds.has(a.categoryId));
   }, [isGuest, audioItems, visibleCategoriesForUser]);
 
   useEffect(() => {
     if (!isGuest) return;
-    const urlParams = new URLSearchParams(window.location.search);
-    const sharedAudioId = urlParams.get('audioId');
-    // 若目前放映的語音檔是分享網址中指定的曲目，保留其放映狀態，不予覆蓋
-    if (sharedAudioId && activeAudioForPlayback?.id === sharedAudioId) {
-      return;
-    }
     if (
       activeAudioForPlayback &&
       !visibleAudioItemsForUser.some((a) => a.id === activeAudioForPlayback.id)
@@ -555,10 +554,28 @@ export function App() {
     return await removeAudioItem(itemId, nextItems, targetItem);
   };
 
+  // 驗證分享觀看權限中提示畫面（初次載入帶有 audioId 且尚未登入時）
+  if (isVerifyingShareAccess) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F6F1E7] text-[#2C221E] p-4">
+        <div className="parchment-card p-8 rounded-2xl shadow-xl max-w-sm w-full text-center space-y-4 border border-[#D5C5AE]">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-[#8B5A2B] mx-auto flex items-center justify-center">
+            <Loader2 className="w-7 h-7 animate-spin text-[#8B5A2B]" />
+          </div>
+          <div>
+            <h3 className="font-bold font-serif-tc text-lg text-[#2C221E]">聲書閣放映室</h3>
+            <p className="text-xs text-[#7A6855] mt-1">正在確認分享作品與觀看權限...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // 登入驗證防護：若尚未登入，顯示系統登入驗證畫面
   if (!currentUser) {
     return (
       <LoginView
+        noticeMessage={sharedRestrictedNotice}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
           reloadAllData();
@@ -774,6 +791,26 @@ export function App() {
 
       {/* 主內容區 */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        {/* 訪客存取未開放作品之權限提示橫幅 */}
+        {sharedRestrictedNotice && isGuest && (
+          <div className="mb-6 p-4 rounded-2xl bg-[#3E2C22] text-[#FAF5EC] border-2 border-amber-400/50 shadow-xl flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-start gap-2.5">
+              <Lock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-amber-200">館藏權限提醒</p>
+                <p className="text-white/85 leading-relaxed">{sharedRestrictedNotice}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSharedRestrictedNotice(null)}
+              className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-white cursor-pointer"
+              title="關閉"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         {activeTab === 'dashboard' && (
           <DashboardView
             categories={visibleCategoriesForUser}

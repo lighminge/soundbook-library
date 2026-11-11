@@ -8,9 +8,10 @@ import { getCategoryIcon } from './DashboardView';
 interface LoginViewProps {
   onLoginSuccess: (user: CurrentUser) => void;
   onGuestLogin: () => void;
+  noticeMessage?: string | null;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLogin }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLogin, noticeMessage }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -85,6 +86,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onGuestLog
             SOUNDBOOK PAVILION • 安全存取驗證
           </p>
         </div>
+
+        {/* 存取限制/分享提醒訊息 */}
+        {noticeMessage && (
+          <div className="mb-5 p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn">
+            <Lock className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="flex-1 font-medium leading-relaxed">{noticeMessage}</div>
+          </div>
+        )}
 
         {/* 錯誤警示訊息 */}
         {errorMessage && (
