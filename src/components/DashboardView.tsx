@@ -827,6 +827,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return `${origin}${pathname}?tab=screening&audioId=${shareModalItem.item.id}&shared=1`;
   }, [shareModalItem]);
 
+  // 判斷是否為行動裝置 (iPhone / iPad / Android)
+  const isMobileDevice = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  }, []);
+
+  // LINE 分享專屬網址：手機端使用 Universal Link (https://line.me/R/share?text=...) 直接喚起 LINE App 並進入「選擇好友 / 群組」畫面；電腦端使用官方 Web 外掛
+  const currentDashboardLineUrl = useMemo(() => {
+    if (!shareModalItem) return '';
+    const item = shareModalItem.item;
+    if (isMobileDevice) {
+      const shareMessage = `邀請您在「聲書閣」觀賞聆聽：《${item.title}》${
+        item.speaker ? ` (主講：${item.speaker})` : ''
+      }\n${currentDashboardShareUrl}`;
+      return `https://line.me/R/share?text=${encodeURIComponent(shareMessage)}`;
+    }
+    return `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(currentDashboardShareUrl)}`;
+  }, [shareModalItem, currentDashboardShareUrl, isMobileDevice]);
+
   const handleCopyDashboardShareUrl = async () => {
     if (!currentDashboardShareUrl) return;
     try {
@@ -2777,18 +2796,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="text-xs font-bold text-[#5C3A1B]">一鍵快速分享至：</span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {/* LINE */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(currentDashboardShareUrl)}`;
-                      window.open(lineUrl, '_blank', 'noopener,noreferrer');
-                    }}
+                  <a
+                    href={currentDashboardLineUrl}
+                    target={isMobileDevice ? '_self' : '_blank'}
+                    rel="noopener noreferrer"
                     className="p-2.5 rounded-xl bg-[#06C755]/10 hover:bg-[#06C755]/20 border border-[#06C755]/30 text-[#06C755] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
-                    title="分享至 LINE"
+                    title={
+                      isMobileDevice
+                        ? '開啟 LINE App 選擇好友或群組分享'
+                        : '開啟 LINE 網頁版分享'
+                    }
                   >
                     <span className="w-5 h-5 rounded-full bg-[#06C755] text-white text-[10px] font-bold flex items-center justify-center leading-none">L</span>
                     <span>LINE</span>
-                  </button>
+                  </a>
 
                   {/* Facebook */}
                   <button

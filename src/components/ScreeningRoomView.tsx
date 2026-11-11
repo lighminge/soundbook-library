@@ -51,6 +51,8 @@ import {
   User,
   Mail,
   Lock,
+  Info,
+  Smartphone,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
 import { formatDuration, getCategoryIcon } from './DashboardView';
@@ -1663,8 +1665,59 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isFullscreen, currentTime, isPlaying, playlistItems, playbackLoopMode, currentItem, shelfFilteredItems]);
 
+  // 判斷是否為行動裝置 (iPhone / iPad / Android) 與 iOS 裝置 (iPhone / iPad / iPod)
+  const isMobileDevice = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  }, []);
+
+  const isIOSDevice = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    );
+  }, []);
+
+  // 監聽 Apple AirPlay 裝置狀態 (WebKit / iOS Safari 必要監聽，WebKit 需註冊此監聽才會啟動區域網路 AirPlay 搜尋)
+  const [airPlayAvailability, setAirPlayAvailability] = useState<'available' | 'not-available' | 'unsupported'>('unsupported');
+  const [isWirelessAirPlay, setIsWirelessAirPlay] = useState<boolean>(false);
+
+  useEffect(() => {
+    const audioEl = audioRef.current as any;
+    if (!audioEl) return;
+
+    try {
+      audioEl.setAttribute('x-webkit-airplay', 'allow');
+      audioEl.setAttribute('airplay', 'allow');
+    } catch {
+      // ignore
+    }
+
+    const handleAvailabilityChanged = (event: any) => {
+      setAirPlayAvailability(event.availability === 'available' ? 'available' : 'not-available');
+    };
+
+    const handleWirelessTargetChanged = () => {
+      setIsWirelessAirPlay(Boolean(audioEl.webkitCurrentPlaybackTargetIsWireless));
+    };
+
+    if ((window as any).WebKitPlaybackTargetAvailabilityEvent) {
+      audioEl.addEventListener('webkitplaybacktargetavailabilitychanged', handleAvailabilityChanged);
+      audioEl.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', handleWirelessTargetChanged);
+    }
+
+    return () => {
+      if ((window as any).WebKitPlaybackTargetAvailabilityEvent) {
+        audioEl.removeEventListener('webkitplaybacktargetavailabilitychanged', handleAvailabilityChanged);
+        audioEl.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', handleWirelessTargetChanged);
+      }
+    };
+  }, [playableScreeningUrl]);
+
   // 觸發原生系統投放 (Apple AirPlay / Google Remote Playback / Presentation API)
-  const handleTriggerNativeCast = async () => {
+  // 注意：在 iOS Safari 必須保持同步呼叫 (非 async)，避免丟失使用者的直接點擊授權
+  const handleTriggerNativeCast = () => {
     const audioEl = audioRef.current as any;
     if (!audioEl) {
       showToast('⚠️ 播放音訊元件未就緒');
@@ -1677,7 +1730,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (typeof audioEl.webkitShowPlaybackTargetPicker === 'function') {
       try {
         audioEl.webkitShowPlaybackTargetPicker();
-        showToast('📺 已開啟 Apple AirPlay 裝置選單');
+        showToast('📺 已開啟 Apple AirPlay 裝置選單 (支援 Apple TV / AirPlay 智慧電視)');
         success = true;
       } catch (e) {
         console.warn('AirPlay 呼叫失敗:', e);
@@ -1686,21 +1739,29 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
     // 2. 嘗試 W3C Remote Playback API (Google Cast on Chrome / Edge)
     if (!success && audioEl.remote && typeof audioEl.remote.prompt === 'function') {
-      try {
-        await audioEl.remote.prompt();
-        showToast('📻 已開啟 Google Cast / 遠端裝置投放選單');
-        success = true;
-      } catch (e: any) {
-        console.warn('Remote Playback 呼叫失敗:', e);
-      }
+      audioEl.remote
+        .prompt()
+        .then(() => {
+          showToast('📻 已開啟 Google Cast / 遠端裝置投放選單');
+        })
+        .catch((e: any) => {
+          console.warn('Remote Playback 呼叫失敗:', e);
+        });
+      success = true;
     }
 
     // 3. 嘗試 Presentation API (Google Cast / 投射至外接螢幕或智慧電視)
     if (!success && (window as any).PresentationRequest) {
       try {
         const pres = new (window as any).PresentationRequest([window.location.href]);
-        await pres.start();
-        showToast('📺 已啟動外接顯示器 / 智慧電視投放連線');
+        pres
+          .start()
+          .then(() => {
+            showToast('📺 已啟動外接顯示器 / 智慧電視投放連線');
+          })
+          .catch((e: any) => {
+            console.warn('Presentation API 呼叫失敗:', e);
+          });
         success = true;
       } catch (e) {
         console.warn('Presentation API 呼叫失敗:', e);
@@ -1708,7 +1769,11 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
 
     if (!success) {
-      showToast('💡 瀏覽器尚未偵測到即時投放裝置，請參考彈出的投放指南與跨裝置同步連結！');
+      if (isIOSDevice) {
+        showToast('💡 iPhone 請使用 Safari 瀏覽器以支援 AirPlay，或從右上角滑開「控制中心」點選 AirPlay / 螢幕鏡像輸出！');
+      } else {
+        showToast('💡 瀏覽器尚未偵測到即時投放裝置，請參考彈出的投放指南與跨裝置同步連結！');
+      }
     }
   };
 
@@ -1760,6 +1825,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
     return url;
   }, [currentItem, currentTime, shareIncludeTime]);
+
+  // LINE 分享專屬網址：手機端使用 Universal Link (https://line.me/R/share?text=...) 直接喚起 LINE App 選擇好友；電腦端使用官方 Web 外掛
+  const currentScreeningLineUrl = useMemo(() => {
+    if (!currentItem) return '';
+    if (isMobileDevice) {
+      const shareMessage = `邀請您在「聲書閣」觀賞聆聽：《${currentItem.title}》${
+        currentItem.speaker ? ` (主講：${currentItem.speaker})` : ''
+      }${shareIncludeTime && currentTime > 0 ? ` (進度於 ${formatDuration(currentTime)})` : ''}\n${shareTargetUrl}`;
+      return `https://line.me/R/share?text=${encodeURIComponent(shareMessage)}`;
+    }
+    return `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareTargetUrl)}`;
+  }, [currentItem, currentTime, shareIncludeTime, shareTargetUrl, isMobileDevice]);
 
   // 複製分享連結
   const handleCopyShareLink = async () => {
@@ -1876,13 +1953,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         </div>
       )}
 
-      {/* 隱藏的 HTML5 Audio 元件（加入 playsInline 與 preload 支援手機 iOS/Android 播放） */}
+      {/* 隱藏的 HTML5 Audio 元件（加入 playsInline、preload 與 AirPlay 支援手機 iOS/Android 播放） */}
       <audio
         ref={audioRef}
         src={playableScreeningUrl || undefined}
         playsInline
         preload="auto"
         loop={playbackLoopMode === 'single'}
+        {...{
+          'x-webkit-airplay': 'allow',
+          airplay: 'allow',
+          'webkit-playsinline': 'true',
+        }}
         onPlay={() => {
           setIsPlaying(true);
           if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, true);
@@ -3885,9 +3967,62 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 onClick={handleTriggerNativeCast}
                 className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#2E5A44] to-[#1F3D2E] hover:from-[#234735] hover:to-[#172D22] text-white font-semibold text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
               >
-                <Tv className="w-4 h-4 text-emerald-300" />
-                <span>一鍵喚起系統投放 (AirPlay / Chromecast)</span>
+                {isIOSDevice ? (
+                  <>
+                    <Airplay className="w-4 h-4 text-emerald-300" />
+                    <span>一鍵喚起 Apple AirPlay 投放 (Apple TV / 智慧電視)</span>
+                  </>
+                ) : (
+                  <>
+                    <Tv className="w-4 h-4 text-emerald-300" />
+                    <span>一鍵喚起系統投放 (AirPlay / Chromecast)</span>
+                  </>
+                )}
               </button>
+
+              {/* iPhone / iPad 投放核心說明卡片（解答為什麼電腦看得到 Chromecast，iPhone 卻沒看到） */}
+              {isIOSDevice && (
+                <div className="p-3.5 rounded-xl bg-amber-50/95 border border-amber-300/80 text-xs space-y-2.5">
+                  <div className="flex items-center gap-2 font-bold text-[#8B5A2B]">
+                    <Info className="w-4 h-4 shrink-0 text-amber-700" />
+                    <span className="text-[13px]">為什麼電腦看得到投放裝置，iPhone 卻沒看到？</span>
+                  </div>
+                  <p className="text-[#6E5D4F] leading-relaxed">
+                    <strong>電腦版 Chrome / Edge</strong> 內建 Google 專屬 Cast 協定，因此能跨網段搜尋 <strong>Google Chromecast / Android TV</strong>；而 <strong>iPhone / iOS</strong> 依 Apple 系統安全規範，網頁原生僅支援 <strong>Apple AirPlay</strong>（Apple TV、HomePod 或 AirPlay 認證電視），<strong>無法由網頁直接搜尋 Google Chromecast 裝置</strong>。
+                  </p>
+                  <div className="pt-2 border-t border-amber-200/80 space-y-2 text-[#4A3222]">
+                    <div className="font-bold text-emerald-800 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>iPhone 投放至客廳電視 / Chromecast 的 2 大推薦方案：</span>
+                    </div>
+                    <div className="space-y-1.5 pl-1">
+                      <div className="p-2 rounded-lg bg-white/90 border border-amber-200/60 flex items-start gap-2">
+                        <span className="w-4 h-4 rounded-full bg-emerald-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                        <div>
+                          <p className="font-bold text-[#2C221E] text-[11px]">
+                            客廳電視直接掃描（最推薦，原音質全螢幕呈現）
+                          </p>
+                          <p className="text-[#6E5D4F] text-[11px] leading-relaxed">
+                            使用電視遙控器開啟電視內建瀏覽器，或用手機相機掃描下方<strong>「QR Code」</strong>，客廳電視將直接開啟聲書閣放映室並同步當前秒數播放！
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="p-2 rounded-lg bg-white/90 border border-amber-200/60 flex items-start gap-2">
+                        <span className="w-4 h-4 rounded-full bg-emerald-700 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                        <div>
+                          <p className="font-bold text-[#2C221E] text-[11px]">
+                            iPhone「螢幕鏡像輸出」（影音完整同步）
+                          </p>
+                          <p className="text-[#6E5D4F] text-[11px] leading-relaxed">
+                            從 iPhone 螢幕右上角向下滑開<strong>「iOS 控制中心」</strong>，點選<strong>「螢幕鏡像輸出」（雙矩形圖示）</strong>，選取客廳電視即可將聲書閣展演畫面與聲音完整投射至大螢幕！
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 投放管道說明卡片 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -4139,18 +4274,20 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 <span className="text-xs font-bold text-[#5C3A1B]">一鍵快速分享至：</span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {/* LINE */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareTargetUrl)}`;
-                      window.open(lineUrl, '_blank', 'noopener,noreferrer');
-                    }}
+                  <a
+                    href={currentScreeningLineUrl}
+                    target={isMobileDevice ? '_self' : '_blank'}
+                    rel="noopener noreferrer"
                     className="p-2.5 rounded-xl bg-[#06C755]/10 hover:bg-[#06C755]/20 border border-[#06C755]/30 text-[#06C755] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
-                    title="分享至 LINE"
+                    title={
+                      isMobileDevice
+                        ? '開啟 LINE App 選擇好友或群組分享'
+                        : '開啟 LINE 網頁版分享'
+                    }
                   >
                     <span className="w-5 h-5 rounded-full bg-[#06C755] text-white text-[10px] font-bold flex items-center justify-center leading-none">L</span>
                     <span>LINE</span>
-                  </button>
+                  </a>
 
                   {/* Facebook */}
                   <button
