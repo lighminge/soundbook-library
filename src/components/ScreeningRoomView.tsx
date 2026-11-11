@@ -1716,7 +1716,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (!currentItem) return window.location.href;
     const origin = window.location.origin;
     const pathname = window.location.pathname;
-    return `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&t=${Math.floor(currentTime)}`;
+    return `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&t=${Math.floor(currentTime)}&shared=1`;
   }, [currentItem, currentTime]);
 
   // 複製跨裝置播放連結
@@ -1753,7 +1753,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     if (!currentItem) return window.location.href;
     const origin = window.location.origin;
     const pathname = window.location.pathname;
-    let url = `${origin}${pathname}?tab=screening&audioId=${currentItem.id}`;
+    let url = `${origin}${pathname}?tab=screening&audioId=${currentItem.id}&shared=1`;
     if (shareIncludeTime && currentTime > 0) {
       url += `&t=${Math.floor(currentTime)}`;
     }

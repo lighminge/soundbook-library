@@ -1726,10 +1726,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 }}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-start md:items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/25 shrink-0">
-                      {getCategoryIcon(category.icon, 'w-6 h-6 text-white')}
+                  <div className="flex items-start gap-3.5 sm:gap-4">
+                    {/* (2) 館藏分類圖示與其正下方的「收合」功能 */}
+                    <div className="flex flex-col items-center gap-1.5 shrink-0">
+                      <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center border border-white/25 shadow-xs">
+                        {getCategoryIcon(category.icon, 'w-6 h-6 text-white')}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategoryCollapse(category.id)}
+                        className="inline-flex items-center justify-center gap-0.5 px-2 py-0.5 rounded-full bg-black/35 hover:bg-black/55 text-amber-200 text-[11px] font-medium border border-white/20 transition cursor-pointer shadow-2xs whitespace-nowrap"
+                        title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
+                      >
+                        {isCollapsed ? (
+                          <>
+                            <ChevronDown className="w-3 h-3 text-amber-300" />
+                            <span>展開</span>
+                          </>
+                        ) : (
+                          <>
+                            <ChevronUp className="w-3 h-3 text-amber-300" />
+                            <span>收合</span>
+                          </>
+                        )}
+                      </button>
                     </div>
+
                     <div>
                       <div className="flex flex-wrap items-center gap-2.5">
                         <span className="px-2.5 py-0.5 rounded bg-black/30 text-xs font-mono tracking-wider text-amber-200 border border-amber-200/30">
@@ -1741,16 +1763,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-mono">
                           共 {itemsInCat.length} 部
                         </span>
-                        {/* 一鍵收合 / 展開該分類標籤按鈕 */}
-                        <button
-                          type="button"
-                          onClick={() => toggleCategoryCollapse(category.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-black/30 hover:bg-black/50 text-amber-200 text-xs border border-white/20 transition cursor-pointer"
-                          title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
-                        >
-                          {isCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-amber-300" /> : <ChevronUp className="w-3.5 h-3.5 text-amber-300" />}
-                          <span>{isCollapsed ? '已收合 (點此展開)' : '收合'}</span>
-                        </button>
                         {activeSpeakerFilter && (
                           <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400 text-[#2B1B11] font-bold shadow-xs">
                             主講人：{activeSpeakerFilter === '__unassigned__' ? '未指定' : activeSpeakerFilter}
@@ -1837,9 +1849,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   )}
                 </div>
 
-                {/* 標頭右側控制區：(1) 上排置入查詢功能列與類別標籤選單（置於分頁功能的上方），(2) 類別標籤下拉選單置於查詢列右方 */}
-                <div className="flex flex-col items-start md:items-end gap-2.5 shrink-0 w-full md:w-auto">
-                  {/* (1) 查詢功能列 + (2) 右方類別標籤選單（置於分頁下拉功能的上方） */}
+                {/* 標頭右側控制區：(1) 右上方置入「收合本廳」功能（位於類別標籤下拉選單上方），(2) 查詢功能列與類別標籤選單，(3) 下排分頁與各項操作按鈕 */}
+                <div className="flex flex-col items-start md:items-end gap-2 shrink-0 w-full md:w-auto">
+                  {/* (1) 收合本廳功能（移動到「類別標籤」下拉選單的上方） */}
+                  <div className="w-full flex justify-start md:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => toggleCategoryCollapse(category.id)}
+                      className="px-3.5 py-1.5 rounded-lg bg-black/35 hover:bg-black/55 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
+                      title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
+                    >
+                      {isCollapsed ? (
+                        <>
+                          <ChevronDown className="w-3.5 h-3.5 text-amber-300" />
+                          <span>展開本廳</span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp className="w-3.5 h-3.5 text-amber-300" />
+                          <span>收合本廳</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* (2) 查詢功能列 + (3) 右方類別標籤選單（置於分頁下拉功能的上方） */}
                   {itemsInCat.length > 0 && (
                     <div className="flex flex-wrap items-center gap-2 text-xs w-full md:w-auto justify-start md:justify-end">
                       {/* 關鍵字查詢輸入框 */}
@@ -2044,26 +2078,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span>在此分類上傳語音</span>
                       </button>
                     )}
-
-                    {/* 一鍵收合 / 展開本主題館藏書架 */}
-                    <button
-                      type="button"
-                      onClick={() => toggleCategoryCollapse(category.id)}
-                      className="px-3.5 py-2 rounded-lg bg-black/35 hover:bg-black/50 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-sm transition cursor-pointer border border-white/25 shadow-xs"
-                      title={isCollapsed ? `展開「${category.name}」主題館藏書架` : `收合「${category.name}」主題館藏書架`}
-                    >
-                      {isCollapsed ? (
-                        <>
-                          <ChevronDown className="w-3.5 h-3.5 text-amber-300" />
-                          <span>展開本廳</span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronUp className="w-3.5 h-3.5 text-amber-300" />
-                          <span>收合本廳</span>
-                        </>
-                      )}
-                    </button>
                   </div>
                 </div>
               </div>

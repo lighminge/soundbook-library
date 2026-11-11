@@ -28,7 +28,7 @@ import {
   saveAudioItem,
   saveCategoryItem,
 } from './services/storageService';
-import { getCurrentSessionUser, loadSystemUsers, logout, GUEST_USER } from './services/authService';
+import { getCurrentSessionUser, loadSystemUsers, logout, GUEST_USER, loginAsGuest } from './services/authService';
 import { LoginView } from './components/LoginView';
 import { SystemManagementView, SystemSubTab } from './components/SystemManagementView';
 import { DashboardView } from './components/DashboardView';
@@ -87,12 +87,37 @@ const ScrollToTopButton: React.FC = () => {
 };
 
 export function App() {
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => getCurrentSessionUser());
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(() => {
+    const existing = getCurrentSessionUser();
+    if (existing) return existing;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      // 若是透過分享連結進來（帶有 audioId 或 shared 標記），自動視為訪客免密登入
+      if (urlParams.has('audioId') || urlParams.get('shared') === '1') {
+        return loginAsGuest();
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
   const [loginScreenConfig, setLoginScreenConfig] = useState<LoginScreenConfig>(() =>
     getLocalLoginScreenConfig()
   );
 
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('audioId') || urlParams.get('tab') === 'screening') {
+        return 'screening';
+      }
+      const tabFromUrl = urlParams.get('tab');
+      if (tabFromUrl === 'dashboard') return 'dashboard';
+    } catch {
+      // ignore
+    }
+    return 'dashboard';
+  });
   const [systemInitialSubTab, setSystemInitialSubTab] = useState<SystemSubTab>('accounts');
   const [categories, setCategories] = useState<Category[]>([]);
   const [audioItems, setAudioItems] = useState<AudioItem[]>([]);
@@ -107,7 +132,15 @@ export function App() {
   const [screeningCategoryFilter, setScreeningCategoryFilter] = useState<string>('all');
   // 放映室啟動隨機播放時帶入的自訂播放佇列與自動播放標記
   const [screeningInitialPlaylistIds, setScreeningInitialPlaylistIds] = useState<string[]>([]);
-  const [screeningInitialAutoPlay, setScreeningInitialAutoPlay] = useState<boolean>(false);
+  const [screeningInitialAutoPlay, setScreeningInitialAutoPlay] = useState<boolean>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('audioId')) return true;
+    } catch {
+      // ignore
+    }
+    return false;
+  });
 
   const handleStartShufflePlayback = (items: AudioItem[], categoryId?: string) => {
     if (!items || items.length === 0) return;
@@ -173,7 +206,14 @@ export function App() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const tabFromUrl = urlParams.get('tab');
-    if (
+    if (urlParams.has('audioId') || urlParams.get('shared') === '1') {
+      if (!getCurrentSessionUser()) {
+        const guest = loginAsGuest();
+        setCurrentUser(guest);
+      }
+      setActiveTab('screening');
+      setScreeningInitialAutoPlay(true);
+    } else if (
       tabFromUrl === 'screening' ||
       tabFromUrl === 'dashboard' ||
       (!isGuest && (tabFromUrl === 'library' || tabFromUrl === 'catalog')) ||
@@ -194,19 +234,43 @@ export function App() {
   }, [isGuest, isAdmin, activeTab]);
 
   // 依「是否開啟訪客瀏覽 (allowGuest)」過濾訪客可見的館藏分類與語音檔
-  const visibleCategoriesForUser = React.useMemo(
-    () => (isGuest ? categories.filter((c) => Boolean(c.allowGuest)) : categories),
-    [isGuest, categories]
-  );
+  // 若是透過分享連結進來，確保被分享的語音檔案與其所屬分類一定可以由訪客觀看放映
+  const visibleCategoriesForUser = React.useMemo(() => {
+    if (!isGuest) return categories;
+    const allowed = categories.filter((c) => Boolean(c.allowGuest));
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedAudioId = urlParams.get('audioId');
+    if (sharedAudioId) {
+      const targetAudio = audioItems.find((a) => a.id === sharedAudioId);
+      if (targetAudio && !allowed.some((c) => c.id === targetAudio.categoryId)) {
+        const targetCat = categories.find((c) => c.id === targetAudio.categoryId);
+        if (targetCat) allowed.push(targetCat);
+      }
+    }
+    return allowed;
+  }, [isGuest, categories, audioItems]);
 
   const visibleAudioItemsForUser = React.useMemo(() => {
     if (!isGuest) return audioItems;
     const allowedCatIds = new Set(visibleCategoriesForUser.map((c) => c.id));
-    return audioItems.filter((a) => allowedCatIds.has(a.categoryId));
+    const items = audioItems.filter((a) => allowedCatIds.has(a.categoryId));
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedAudioId = urlParams.get('audioId');
+    if (sharedAudioId && !items.some((a) => a.id === sharedAudioId)) {
+      const targetAudio = audioItems.find((a) => a.id === sharedAudioId);
+      if (targetAudio) items.push(targetAudio);
+    }
+    return items;
   }, [isGuest, audioItems, visibleCategoriesForUser]);
 
   useEffect(() => {
     if (!isGuest) return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedAudioId = urlParams.get('audioId');
+    // 若目前放映的語音檔是分享網址中指定的曲目，保留其放映狀態，不予覆蓋
+    if (sharedAudioId && activeAudioForPlayback?.id === sharedAudioId) {
+      return;
+    }
     if (
       activeAudioForPlayback &&
       !visibleAudioItemsForUser.some((a) => a.id === activeAudioForPlayback.id)
