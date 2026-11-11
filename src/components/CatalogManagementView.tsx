@@ -30,6 +30,11 @@ import {
   User,
   Users,
   Edit2,
+  Share2,
+  Copy,
+  QrCode,
+  Lock,
+  Mail,
 } from 'lucide-react';
 import { AudioItem, AudioTag, Category, Speaker } from '../types';
 import { PaginationBar } from './PaginationBar';
@@ -252,6 +257,76 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  // 語音檔案「分享」功能狀態
+  const [shareModalItem, setShareModalItem] = useState<{ item: AudioItem; category: Category | null } | null>(null);
+  const [shareCopied, setShareCopied] = useState<boolean>(false);
+
+  const handleOpenShareModal = (item: AudioItem, category: Category | null) => {
+    setShareModalItem({ item, category });
+    setShareCopied(false);
+  };
+
+  const currentCatalogShareUrl = useMemo(() => {
+    if (!shareModalItem) return '';
+    const origin = window.location.origin;
+    const pathname = window.location.pathname;
+    return `${origin}${pathname}?tab=screening&audioId=${shareModalItem.item.id}&shared=1`;
+  }, [shareModalItem]);
+
+  // 判斷是否為行動裝置 (iPhone / iPad / Android)
+  const isMobileDevice = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  }, []);
+
+  // LINE 分享專屬網址：手機端使用 Universal Link (https://line.me/R/share?text=...) 直接喚起 LINE App 並進入「選擇好友 / 群組」畫面；電腦端使用官方 Web 外掛
+  const currentCatalogLineUrl = useMemo(() => {
+    if (!shareModalItem) return '';
+    const item = shareModalItem.item;
+    if (isMobileDevice) {
+      const shareMessage = `邀請您在「聲書閣」觀賞聆聽：《${item.title}》${
+        item.speaker ? ` (主講：${item.speaker})` : ''
+      }\n${currentCatalogShareUrl}`;
+      return `https://line.me/R/share?text=${encodeURIComponent(shareMessage)}`;
+    }
+    return `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(currentCatalogShareUrl)}`;
+  }, [shareModalItem, currentCatalogShareUrl, isMobileDevice]);
+
+  const handleCopyCatalogShareUrl = async () => {
+    if (!currentCatalogShareUrl) return;
+    try {
+      await navigator.clipboard.writeText(currentCatalogShareUrl);
+      setShareCopied(true);
+      showToast('📋 已複製分享連結！可直接傳送給好友觀看此語音檔。');
+      setTimeout(() => setShareCopied(false), 3000);
+    } catch {
+      showToast('⚠️ 複製失敗，請手動複製連結');
+    }
+  };
+
+  const handleCatalogNativeShare = async () => {
+    if (!shareModalItem || !currentCatalogShareUrl) return;
+    const item = shareModalItem.item;
+    const shareTitle = `聲書閣放映室 - ${item.title}`;
+    const shareText = `邀請您一同在「聲書閣」觀賞聆聽：《${item.title}》${
+      item.speaker ? ` (主講：${item.speaker})` : ''
+    }`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: currentCatalogShareUrl,
+        });
+      } catch {
+        // 使用者取消分享不報錯
+      }
+    } else {
+      handleCopyCatalogShareUrl();
+    }
   };
 
   // 平滑捲動跳至下方「語音檔案館藏資料管理」清單
@@ -2253,6 +2328,16 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                           <Edit3 className="w-3.5 h-3.5" />
                           <span>SRT 與圖片編輯</span>
                         </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenShareModal(item, currentCat || null)}
+                          className="px-3 py-1.5 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-[#FAF5EC] text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                          title="分享此語音檔案（專屬放映網址、LINE、社群、QR Code）"
+                        >
+                          <Share2 className="w-3.5 h-3.5 text-amber-300" />
+                          <span>分享</span>
+                        </button>
                       </div>
                     </div>
 
@@ -3881,6 +3966,243 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   <span>確認刪除主講人</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 語音作品分享視窗 */}
+      {shareModalItem && (
+        <div className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="parchment-card rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border-2 border-[#8B5A2B] animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal 頂部標題列 */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#2A1E18] to-[#3E2C22] text-[#FAF5EC] border-b border-[#4A3427] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold font-serif-tc text-base">分享此語音檔案</h3>
+                  <p className="text-[11px] text-[#C8B5A0]">
+                    複製專屬放映室網址或一鍵分享至社群平台
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalItem(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal 內容區 */}
+            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+              {/* 目前欲分享的語音檔案資訊預覽 */}
+              <div className="p-3.5 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex items-center gap-3.5">
+                <img
+                  src={shareModalItem.item.coverImageUrl}
+                  alt={shareModalItem.item.title}
+                  className="w-14 h-14 rounded-lg object-cover border border-[#C8B598] shrink-0 shadow-xs"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                    {shareModalItem.category && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded text-white font-medium flex items-center gap-1 shrink-0"
+                        style={{ backgroundColor: shareModalItem.category.themeColor }}
+                      >
+                        {getCategoryIcon(shareModalItem.category.icon, 'w-3 h-3')}
+                        <span>{shareModalItem.category.name}</span>
+                      </span>
+                    )}
+                    {shareModalItem.item.speaker && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#EAE0D0] text-[#5C3A1B] font-medium flex items-center gap-1">
+                        <User className="w-3 h-3 text-[#8B5A2B]" />
+                        <span>{shareModalItem.item.speaker}</span>
+                      </span>
+                    )}
+                  </div>
+                  <h4 className="font-bold text-sm text-[#2C221E] truncate" title={shareModalItem.item.title}>
+                    {shareModalItem.item.title}
+                  </h4>
+                  <p className="text-[11px] text-[#7A6855] font-mono mt-0.5">
+                    索書號：{audioCallNumberMap.get(shareModalItem.item.id) || `${shareModalItem.category?.code || 'LIB'}-1`} · 時長：{formatDuration(shareModalItem.item.duration)}
+                  </p>
+                </div>
+              </div>
+
+              {/* 訪客瀏覽權限狀態說明 */}
+              {Boolean(shareModalItem.category?.allowGuest) ? (
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] leading-relaxed">
+                    此分類已勾選「開放訪客瀏覽」。收到分享連結之人員<strong>無需帳號密碼，點擊即可直接觀看放映</strong>！
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5">
+                  <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 leading-relaxed">
+                    <p className="font-bold">此作品所屬分類「未開放訪客瀏覽」</p>
+                    <p className="text-[11px] text-amber-800">
+                      收到此分享網址的人員，<strong>必須登入具備權限之系統帳號</strong>方可觀看放映；訪客將無法存取此作品。若欲允許其他人免密直接觀看，請開啟該分類之「開放訪客瀏覽」。
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 複製專屬連結列 */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#5C3A1B] flex items-center justify-between">
+                  <span>分享連結：</span>
+                  <span className="text-[11px] text-[#8B5A2B] font-normal">點擊複製即可傳送給他人</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={currentCatalogShareUrl}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 px-3 py-2 text-xs rounded-xl border border-[#D5C5AE] bg-white text-[#2C221E] font-mono select-all focus:outline-none focus:ring-2 focus:ring-[#8B5A2B]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyCatalogShareUrl}
+                    className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-xs ${
+                      shareCopied
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-[#3A2518] hover:bg-[#523522] text-white'
+                    }`}
+                  >
+                    {shareCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-white" />
+                        <span>已複製</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-amber-300" />
+                        <span>複製連結</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* 快速社群分享按鈕 */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-[#5C3A1B]">一鍵快速分享至：</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {/* LINE */}
+                  <a
+                    href={currentCatalogLineUrl}
+                    target={isMobileDevice ? '_self' : '_blank'}
+                    rel="noopener noreferrer"
+                    className="p-2.5 rounded-xl bg-[#06C755]/10 hover:bg-[#06C755]/20 border border-[#06C755]/30 text-[#06C755] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title={
+                      isMobileDevice
+                        ? '開啟 LINE App 選擇好友或群組分享'
+                        : '開啟 LINE 網頁版分享'
+                    }
+                  >
+                    <span className="w-5 h-5 rounded-full bg-[#06C755] text-white text-[10px] font-bold flex items-center justify-center leading-none">L</span>
+                    <span>LINE</span>
+                  </a>
+
+                  {/* Facebook */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(currentCatalogShareUrl)}`;
+                      window.open(fbUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="p-2.5 rounded-xl bg-[#1877F2]/10 hover:bg-[#1877F2]/20 border border-[#1877F2]/30 text-[#1877F2] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="分享至 Facebook"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-[#1877F2] text-white text-[11px] font-bold flex items-center justify-center leading-none">f</span>
+                    <span>Facebook</span>
+                  </button>
+
+                  {/* X (Twitter) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tweetText = `邀請您在聲書閣觀賞聆聽：《${shareModalItem.item.title}》`;
+                      const xUrl = `https://twitter.com/intent/tweet?url=${encodeURIComponent(currentCatalogShareUrl)}&text=${encodeURIComponent(tweetText)}`;
+                      window.open(xUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="p-2.5 rounded-xl bg-black/10 hover:bg-black/20 border border-black/30 text-black font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="分享至 X (Twitter)"
+                  >
+                    <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-bold flex items-center justify-center leading-none">𝕏</span>
+                    <span>X</span>
+                  </button>
+
+                  {/* Email */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emailSubject = `聲書閣語音檔分享：《${shareModalItem.item.title}》`;
+                      const emailBody = `邀請您在「聲書閣」觀賞聆聽此部作品：《${shareModalItem.item.title}》${
+                        shareModalItem.item.speaker ? ` (主講：${shareModalItem.item.speaker})` : ''
+                      }\n\n立即開啟放映室觀賞：\n${currentCatalogShareUrl}`;
+                      window.location.href = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+                    }}
+                    className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-600/30 text-[#8B5A2B] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                    title="透過電子郵件分享"
+                  >
+                    <Mail className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>Email</span>
+                  </button>
+                </div>
+
+                {/* 系統原生分享 (若支援 navigator.share) */}
+                {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+                  <button
+                    type="button"
+                    onClick={handleCatalogNativeShare}
+                    className="w-full mt-2 py-2.5 px-4 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] border border-[#D5C5AE] font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
+                  >
+                    <Share2 className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>更多分享管道（AirDrop、手機通訊軟體、訊息等）</span>
+                  </button>
+                )}
+              </div>
+
+              {/* QR Code 掃描區 */}
+              <div className="p-4 rounded-xl bg-[#FAF4E8] border border-[#D5C5AE] flex flex-col sm:flex-row items-center gap-4">
+                <div className="p-2 bg-white rounded-xl border border-[#D5C5AE] shadow-xs shrink-0">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                      currentCatalogShareUrl
+                    )}&margin=4`}
+                    alt="掃描分享 QR Code"
+                    className="w-24 h-24 object-contain"
+                  />
+                </div>
+                <div className="text-left space-y-1 text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-[#2C221E]">
+                    <QrCode className="w-4 h-4 text-[#8B5A2B]" />
+                    <span>行動裝置相機掃描</span>
+                  </div>
+                  <p className="text-[#6E5D4F] leading-relaxed">
+                    直接以手機或平板相機掃描此 QR Code，即可在行動裝置上開啟此語音檔案觀賞聆聽。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal 底部按鈕 */}
+            <div className="px-6 py-3 bg-[#F4ECE0] border-t border-[#E5D9C5] flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShareModalItem(null)}
+                className="px-4 py-2 rounded-xl bg-[#3A2518] hover:bg-[#523522] text-white text-xs font-semibold cursor-pointer transition shadow-xs"
+              >
+                關閉
+              </button>
             </div>
           </div>
         </div>

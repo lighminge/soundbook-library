@@ -1715,64 +1715,81 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     };
   }, [playableScreeningUrl]);
 
-  // 觸發原生系統投放 (Apple AirPlay / Google Remote Playback / Presentation API)
-  // 注意：在 iOS Safari 必須保持同步呼叫 (非 async)，避免丟失使用者的直接點擊授權
+  // 觸發原生系統投放 (Google Presentation API / Chrome Cast / Apple AirPlay / Remote Playback)
+  // 注意：在各大瀏覽器中，喚起系統投放皆必須在原生的使用者點擊事件調用棧中執行，不可有非同步延遲
   const handleTriggerNativeCast = () => {
     const audioEl = audioRef.current as any;
-    if (!audioEl) {
-      showToast('⚠️ 播放音訊元件未就緒');
-      return;
-    }
+    let invoked = false;
 
-    let success = false;
-
-    // 1. 嘗試 Apple AirPlay (Safari on iOS / iPadOS / macOS)
-    if (typeof audioEl.webkitShowPlaybackTargetPicker === 'function') {
+    // 1. 若為 Apple 行動裝置 (iOS / iPadOS)：優先喚起 Apple AirPlay
+    if (isIOSDevice && audioEl && typeof audioEl.webkitShowPlaybackTargetPicker === 'function') {
       try {
         audioEl.webkitShowPlaybackTargetPicker();
         showToast('📺 已開啟 Apple AirPlay 裝置選單 (支援 Apple TV / AirPlay 智慧電視)');
-        success = true;
+        invoked = true;
       } catch (e) {
         console.warn('AirPlay 呼叫失敗:', e);
       }
     }
 
-    // 2. 嘗試 W3C Remote Playback API (Google Cast on Chrome / Edge)
-    if (!success && audioEl.remote && typeof audioEl.remote.prompt === 'function') {
-      audioEl.remote
-        .prompt()
-        .then(() => {
-          showToast('📻 已開啟 Google Cast / 遠端裝置投放選單');
-        })
-        .catch((e: any) => {
-          console.warn('Remote Playback 呼叫失敗:', e);
-        });
-      success = true;
-    }
-
-    // 3. 嘗試 Presentation API (Google Cast / 投射至外接螢幕或智慧電視)
-    if (!success && (window as any).PresentationRequest) {
+    // 2. 電腦版 Chrome / Edge / 支援 Presentation API 之瀏覽器：優先喚起 Presentation API 投放！
+    // 這是 Chrome / Edge 電腦版最核心、能完整搜尋區域網路中所有 Google Chromecast、Google TV、Android TV 與客廳智慧電視的標準 API！
+    if (!invoked && typeof (window as any).PresentationRequest === 'function') {
       try {
-        const pres = new (window as any).PresentationRequest([window.location.href]);
+        const pres = new (window as any).PresentationRequest([currentShareUrl]);
         pres
           .start()
           .then(() => {
-            showToast('📺 已啟動外接顯示器 / 智慧電視投放連線');
+            showToast('📺 已連線至客廳電視 / 外接投放顯示器');
           })
           .catch((e: any) => {
-            console.warn('Presentation API 呼叫失敗:', e);
+            if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
+              console.warn('Presentation API 投放取消或失敗:', e);
+            }
           });
-        success = true;
+        showToast('📻 已開啟系統投放選單 (正在搜尋 Chromecast / 智慧電視...)');
+        invoked = true;
       } catch (e) {
-        console.warn('Presentation API 呼叫失敗:', e);
+        console.warn('Presentation API 啟動失敗:', e);
       }
     }
 
-    if (!success) {
+    // 3. 次選：Apple AirPlay (若電腦為 Mac Safari 且未支援 Presentation API)
+    if (!invoked && audioEl && typeof audioEl.webkitShowPlaybackTargetPicker === 'function') {
+      try {
+        audioEl.webkitShowPlaybackTargetPicker();
+        showToast('📺 已開啟 Apple AirPlay 裝置選單');
+        invoked = true;
+      } catch (e) {
+        console.warn('AirPlay 呼叫失敗:', e);
+      }
+    }
+
+    // 4. 次選：W3C Remote Playback API
+    if (!invoked && audioEl?.remote && typeof audioEl.remote.prompt === 'function') {
+      try {
+        audioEl.remote
+          .prompt()
+          .then(() => {
+            showToast('📻 已開啟遠端裝置投放選單');
+          })
+          .catch((e: any) => {
+            if (e?.name !== 'AbortError') {
+              console.warn('Remote Playback 呼叫失敗:', e);
+            }
+          });
+        showToast('📻 已開啟投放選單');
+        invoked = true;
+      } catch (e) {
+        console.warn('Remote Playback 呼叫失敗:', e);
+      }
+    }
+
+    if (!invoked) {
       if (isIOSDevice) {
         showToast('💡 iPhone 請使用 Safari 瀏覽器以支援 AirPlay，或從右上角滑開「控制中心」點選 AirPlay / 螢幕鏡像輸出！');
       } else {
-        showToast('💡 瀏覽器尚未偵測到即時投放裝置，請參考彈出的投放指南與跨裝置同步連結！');
+        showToast('💡 瀏覽器尚未偵測到即時投放裝置，您亦可使用 Chrome 右上角選單「儲存與分享 ➔ 投放」，或使用電視掃描下方 QR Code 接續播放！');
       }
     }
   };
@@ -3975,10 +3992,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 ) : (
                   <>
                     <Tv className="w-4 h-4 text-emerald-300" />
-                    <span>一鍵喚起系統投放 (AirPlay / Chromecast)</span>
+                    <span>一鍵喚起系統投放 (Chromecast / 智慧電視 / AirPlay)</span>
                   </>
                 )}
               </button>
+
+              {/* 電腦版輔助提示 */}
+              {!isIOSDevice && (
+                <p className="text-[11px] text-[#7A6855] text-center leading-relaxed -mt-2">
+                  💡 電腦版點擊上方按鈕將透過標準 Presentation API 搜尋客廳 Chromecast 與智慧電視；亦可在網頁按右鍵點選「投放...」或點選瀏覽器右上角選單「儲存與分享 ➔ 投放...」。
+                </p>
+              )}
 
               {/* iPhone / iPad 投放核心說明卡片（解答為什麼電腦看得到 Chromecast，iPhone 卻沒看到） */}
               {isIOSDevice && (
