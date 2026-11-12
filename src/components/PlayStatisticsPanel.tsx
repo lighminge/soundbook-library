@@ -415,10 +415,10 @@ export const PlayStatisticsPanel: React.FC<PlayStatisticsPanelProps> = ({
                   onChange={(e) => setTagFilter(e.target.value)}
                   className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
                 >
-                  <option value="all">全部標籤</option>
+                  <option value="all">🏷️ 全部標籤</option>
                   {allTags.map((t) => (
                     <option key={t} value={t}>
-                      {t}
+                      🏷️ #{t}
                     </option>
                   ))}
                 </select>
@@ -434,10 +434,10 @@ export const PlayStatisticsPanel: React.FC<PlayStatisticsPanelProps> = ({
                   onChange={(e) => setSpeakerFilter(e.target.value)}
                   className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
                 >
-                  <option value="all">全部主講人</option>
+                  <option value="all">🎙️ 全部主講人</option>
                   {allSpeakers.map((s) => (
                     <option key={s} value={s}>
-                      {s}
+                      🎙️ {s}
                     </option>
                   ))}
                 </select>

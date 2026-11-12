@@ -1916,15 +1916,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   onChange={(e) => setFilterSpeaker(e.target.value)}
                   className="w-full pl-8 pr-7 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                 >
-                  <option value="all">全部主講人 (不限) ({audioItems.length})</option>
+                  <option value="all">🎙️ 全部主講人 (不限) ({audioItems.length})</option>
                   {speakerStats.unassigned > 0 && (
                     <option value="__unassigned__">
-                      尚未指定主講人 ({speakerStats.unassigned} 筆)
+                      ❓ 尚未指定主講人 ({speakerStats.unassigned} 筆)
                     </option>
                   )}
                   {speakerStats.list.map(({ name, count }) => (
                     <option key={name} value={name}>
-                      {name} ({count} 筆)
+                      🎙️ {name} ({count} 筆)
                     </option>
                   ))}
                 </select>
