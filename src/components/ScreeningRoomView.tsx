@@ -2447,13 +2447,14 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             </div>
           </div>
 
-          {(searchQuery || shelfSearchTag || shelfSearchSpeaker) && (
+          {(searchQuery || shelfSearchTag || shelfSearchSpeaker || selectedCategoryId !== 'all') && (
             <button
               type="button"
               onClick={() => {
                 setSearchQuery('');
                 setShelfSearchTag('');
                 setShelfSearchSpeaker('');
+                setSelectedCategoryId('all');
                 setShelfTab('shelf');
               }}
               className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
@@ -2466,7 +2467,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
           {/* 1. 關鍵字搜尋 */}
-          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-6">
+          <div className="relative sm:col-span-12 md:col-span-6 lg:col-span-3">
             <Search className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
@@ -2486,7 +2487,41 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             )}
           </div>
 
-          {/* 2. 主講人下拉選單查詢 */}
+          {/* 2. 館藏分類下拉選單查詢 */}
+          <div className="relative sm:col-span-6 md:col-span-6 lg:col-span-3">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+              {categories.find((c) => c.id === selectedCategoryId) ? (
+                <span style={{ color: categories.find((c) => c.id === selectedCategoryId)!.themeColor }}>
+                  {getCategoryIcon(categories.find((c) => c.id === selectedCategoryId)!.icon, 'w-4 h-4')}
+                </span>
+              ) : (
+                <Sparkles className="w-4 h-4 text-[#8B735B]" />
+              )}
+            </div>
+            <select
+              value={selectedCategoryId}
+              onChange={(e) => {
+                setSelectedCategoryId(e.target.value);
+                setShelfTab('shelf');
+              }}
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
+            >
+              <option value="all">
+                ✨ 全部分類 ({audioItems.length} 部)
+              </option>
+              {categories.map((cat) => {
+                const count = audioItems.filter((i) => i.categoryId === cat.id).length;
+                return (
+                  <option key={cat.id} value={cat.id}>
+                    [{cat.code}] {cat.name} ({count} 部)
+                  </option>
+                );
+              })}
+            </select>
+            <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          {/* 3. 主講人下拉選單查詢 */}
           <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <User className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select
@@ -2511,7 +2546,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* 3. 類別標籤下拉選取查詢 */}
+          {/* 4. 類別標籤下拉選取查詢 */}
           <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
             <Tag className="w-4 h-4 text-[#8B735B] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <select

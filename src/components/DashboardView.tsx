@@ -1251,18 +1251,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           {/* 2. 館藏分類下拉選單 */}
           <div className="relative sm:col-span-6 md:col-span-3 lg:col-span-3">
-            <Layers className="w-4 h-4 text-[#8B735B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+              {categories.find((c) => c.id === quickSearchCategory) ? (
+                <span style={{ color: categories.find((c) => c.id === quickSearchCategory)!.themeColor }}>
+                  {getCategoryIcon(categories.find((c) => c.id === quickSearchCategory)!.icon, 'w-4 h-4')}
+                </span>
+              ) : (
+                <Sparkles className="w-4 h-4 text-[#8B735B]" />
+              )}
+            </div>
             <select
               value={quickSearchCategory}
               onChange={(e) => setQuickSearchCategory(e.target.value)}
               className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
-              <option value="">全部館藏分類 (不限)</option>
+              <option value="">✨ 全部館藏分類 (不限)</option>
               {categories.map((c) => {
                 const countInCat = audioItems.filter((i) => i.categoryId === c.id).length;
                 return (
                   <option key={c.id} value={c.id}>
-                    🏛️ [{c.code}] {c.name} ({countInCat} 部)
+                    [{c.code}] {c.name} ({countInCat} 部)
                   </option>
                 );
               })}

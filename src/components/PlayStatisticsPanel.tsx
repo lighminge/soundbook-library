@@ -15,10 +15,15 @@ import {
   FileAudio,
   ArrowUpDown,
   TrendingUp,
+  Tag,
+  User,
+  Sparkles,
+  ChevronDown,
 } from 'lucide-react';
 import { AudioItem, Category, PlayLogRecord } from '../types';
 import { loadPlayLogs, clearAllPlayLogs } from '../services/playStatsService';
 import { PaginationBar, dateInputToEndMs, dateInputToStartMs } from './PaginationBar';
+import { getCategoryIcon } from './DashboardView';
 
 interface PlayStatisticsPanelProps {
   audioItems: AudioItem[];
@@ -376,37 +381,69 @@ export const PlayStatisticsPanel: React.FC<PlayStatisticsPanelProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">館藏分類</label>
-              <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={selectCls}>
-                <option value="all">全部分類</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.code ? `${c.code} · ` : ''}
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+                  {categoryMap.get(categoryFilter) ? (
+                    <span style={{ color: categoryMap.get(categoryFilter)!.themeColor }}>
+                      {getCategoryIcon(categoryMap.get(categoryFilter)!.icon, 'w-4 h-4')}
+                    </span>
+                  ) : (
+                    <Sparkles className="w-4 h-4 text-[#8B5A2B]" />
+                  )}
+                </div>
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
+                >
+                  <option value="all">全部分類</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code ? `${c.code} · ` : ''}
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-[#8B5A2B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">標籤類別</label>
-              <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className={selectCls}>
-                <option value="all">全部標籤</option>
-                {allTags.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <Tag className="w-4 h-4 text-[#8B5A2B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                  className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
+                >
+                  <option value="all">全部標籤</option>
+                  {allTags.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-[#8B5A2B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">主講人</label>
-              <select value={speakerFilter} onChange={(e) => setSpeakerFilter(e.target.value)} className={selectCls}>
-                <option value="all">全部主講人</option>
-                {allSpeakers.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <User className="w-4 h-4 text-[#8B5A2B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={speakerFilter}
+                  onChange={(e) => setSpeakerFilter(e.target.value)}
+                  className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
+                >
+                  <option value="all">全部主講人</option>
+                  {allSpeakers.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-[#8B5A2B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-[#5C3A1B] mb-1">語音檔標題關鍵字</label>

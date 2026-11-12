@@ -1865,19 +1865,31 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               <label className="block text-[11px] font-semibold text-[#5C3A1B] mb-1">
                 2. 館藏分類
               </label>
-              <select
-                value={filterCategoryId}
-                onChange={(e) => setFilterCategoryId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
-              >
-                <option value="all">所有館藏分類 ({audioItems.length})</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    [{cat.code}] {cat.name} (
-                    {audioItems.filter((a) => a.categoryId === cat.id).length})
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+                  {categories.find((c) => c.id === filterCategoryId) ? (
+                    <span style={{ color: categories.find((c) => c.id === filterCategoryId)!.themeColor }}>
+                      {getCategoryIcon(categories.find((c) => c.id === filterCategoryId)!.icon, 'w-3.5 h-3.5')}
+                    </span>
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 text-[#8B735B]" />
+                  )}
+                </div>
+                <select
+                  value={filterCategoryId}
+                  onChange={(e) => setFilterCategoryId(e.target.value)}
+                  className="w-full pl-8 pr-7 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                >
+                  <option value="all">所有館藏分類 ({audioItems.length})</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      [{cat.code}] {cat.name} (
+                      {audioItems.filter((a) => a.categoryId === cat.id).length})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
             {/* 欄位 3：主講人（下拉選單查詢） */}
@@ -1896,23 +1908,27 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   <span>名冊維護</span>
                 </button>
               </div>
-              <select
-                value={filterSpeaker}
-                onChange={(e) => setFilterSpeaker(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B]"
-              >
-                <option value="all">全部主講人 (不限) ({audioItems.length})</option>
-                {speakerStats.unassigned > 0 && (
-                  <option value="__unassigned__">
-                    尚未指定主講人 ({speakerStats.unassigned} 筆)
-                  </option>
-                )}
-                {speakerStats.list.map(({ name, count }) => (
-                  <option key={name} value={name}>
-                    {name} ({count} 筆)
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <User className="w-3.5 h-3.5 text-[#8B735B] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={filterSpeaker}
+                  onChange={(e) => setFilterSpeaker(e.target.value)}
+                  className="w-full pl-8 pr-7 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
+                >
+                  <option value="all">全部主講人 (不限) ({audioItems.length})</option>
+                  {speakerStats.unassigned > 0 && (
+                    <option value="__unassigned__">
+                      尚未指定主講人 ({speakerStats.unassigned} 筆)
+                    </option>
+                  )}
+                  {speakerStats.list.map(({ name, count }) => (
+                    <option key={name} value={name}>
+                      {name} ({count} 筆)
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-[#8B735B] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
             {/* 欄位 4：說明內容 */}
@@ -2215,11 +2231,15 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
               return (
                 <div
                   key={item.id}
-                  className={`rounded-2xl border p-5 transition-all space-y-4 ${
+                  className={`rounded-2xl border p-5 transition-all duration-200 space-y-4 hover:-translate-y-1 hover:shadow-lg ${
                     isChecked
-                      ? 'bg-[#FFFDF7] border-2 border-[#8B5A2B] shadow-md'
+                      ? 'bg-[#FFFDF7] border-[#8B5A2B] shadow-md ring-2 ring-[#8B5A2B]/20'
                       : 'bg-white border-[#E2D5C1] hover:border-[#8B5A2B]'
                   }`}
+                  style={{
+                    borderLeftWidth: '6px',
+                    borderLeftColor: currentCat?.themeColor || '#8B5A2B',
+                  }}
                 >
                   {/* 卡片頂部：標題資訊、語音檔名修改、操作按鈕群與所屬分類切換 */}
                   <div className="space-y-3 pb-3 border-b border-[#EFE6D5]">
