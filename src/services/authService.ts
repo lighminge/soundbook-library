@@ -60,8 +60,17 @@ export async function recordLoginLog(params: {
   role: UserRole;
   status: 'success' | 'failed';
   message?: string;
+  isSharedLink?: boolean;
+  sharedAudioId?: string;
+  sharedAudioTitle?: string;
 }): Promise<LoginLogRecord> {
   const now = new Date().toISOString();
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const isSharedFromUrl = urlParams ? (urlParams.get('shared') === '1' || urlParams.has('audioId')) : false;
+  const isSharedLink = params.isSharedLink !== undefined ? params.isSharedLink : isSharedFromUrl;
+  const sharedAudioId = (params.sharedAudioId || (urlParams?.get('audioId') || undefined))?.slice(0, 180);
+  const sharedAudioTitle = params.sharedAudioTitle?.trim().slice(0, 280);
+
   const logEntry: LoginLogRecord = {
     id: `login_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     userId: (params.userId || 'unknown').slice(0, 120),
@@ -72,6 +81,9 @@ export async function recordLoginLog(params: {
     message: (params.message || '').trim().slice(0, 280),
     deviceInfo: getDeviceAndBrowserInfo().slice(0, 280),
     loginAt: now,
+    ...(isSharedLink ? { isSharedLink: true } : {}),
+    ...(sharedAudioId ? { sharedAudioId } : {}),
+    ...(sharedAudioTitle ? { sharedAudioTitle } : {}),
   };
 
   try {
@@ -443,14 +455,25 @@ function saveLoginAttemptRecord(record: LoginAttemptRecord): void {
 }
 
 /**
- * 登入驗證 (帳號密碼登入，含防暴力破解鎖定保護)
+ * 登入驗證 (帳號密碼登入，含防暴力破解鎖定保護與分享連結進入來源記錄)
  */
 export async function authenticate(
   usernameInput: string,
-  passwordInput: string
+  passwordInput: string,
+  options?: {
+    isSharedLink?: boolean;
+    sharedAudioId?: string;
+    sharedAudioTitle?: string;
+  }
 ): Promise<{ success: boolean; user?: CurrentUser; error?: string }> {
   const now = Date.now();
   const attemptRecord = getLoginAttemptRecord();
+
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const isSharedFromUrl = urlParams ? (urlParams.get('shared') === '1' || urlParams.has('audioId')) : false;
+  const isSharedLink = options?.isSharedLink !== undefined ? options.isSharedLink : isSharedFromUrl;
+  const sharedAudioId = options?.sharedAudioId || (urlParams?.get('audioId') || undefined);
+  const sharedAudioTitle = options?.sharedAudioTitle;
 
   if (attemptRecord.lockedUntil > now) {
     const remainSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
@@ -487,7 +510,12 @@ export async function authenticate(
         displayName: existingAccount?.displayName || uTrim,
         role: existingAccount?.role || 'user',
         status: 'failed',
-        message: `密碼錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，觸發系統安全鎖定 60 秒`,
+        message: isSharedLink
+          ? `[分享連結] 密碼錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，觸發系統安全鎖定 60 秒`
+          : `密碼錯誤達 ${MAX_LOGIN_ATTEMPTS} 次，觸發系統安全鎖定 60 秒`,
+        isSharedLink,
+        sharedAudioId,
+        sharedAudioTitle,
       }).catch(() => {});
       return {
         success: false,
@@ -501,7 +529,14 @@ export async function authenticate(
       displayName: existingAccount?.displayName || uTrim,
       role: existingAccount?.role || 'user',
       status: 'failed',
-      message: existingAccount ? '登入失敗：密碼輸入錯誤' : '登入失敗：查無此登入帳號',
+      message: isSharedLink
+        ? `[分享連結] ${existingAccount ? '登入失敗：密碼輸入錯誤' : '登入失敗：查無此登入帳號'}`
+        : existingAccount
+        ? '登入失敗：密碼輸入錯誤'
+        : '登入失敗：查無此登入帳號',
+      isSharedLink,
+      sharedAudioId,
+      sharedAudioTitle,
     }).catch(() => {});
     return {
       success: false,
@@ -521,13 +556,20 @@ export async function authenticate(
   };
 
   setCurrentSessionUser(currentUser);
+  const successMsg = isSharedLink
+    ? `透過分享連結帳號驗證成功${sharedAudioTitle ? `《${sharedAudioTitle}》` : ''}`
+    : '帳號密碼驗證登入成功';
+
   recordLoginLog({
     userId: currentUser.id,
     username: currentUser.username,
     displayName: currentUser.displayName,
     role: currentUser.role,
     status: 'success',
-    message: '帳號密碼驗證登入成功',
+    message: successMsg,
+    isSharedLink,
+    sharedAudioId,
+    sharedAudioTitle,
   }).catch(() => {});
   return { success: true, user: currentUser };
 }
@@ -535,15 +577,32 @@ export async function authenticate(
 /**
  * 以訪客身份直接登入（免帳號密碼）
  */
-export function loginAsGuest(): CurrentUser {
+export function loginAsGuest(options?: {
+  isSharedLink?: boolean;
+  sharedAudioId?: string;
+  sharedAudioTitle?: string;
+  message?: string;
+}): CurrentUser {
   setCurrentSessionUser(GUEST_USER);
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const isSharedFromUrl = urlParams ? (urlParams.get('shared') === '1' || urlParams.has('audioId')) : false;
+  const isSharedLink = options?.isSharedLink !== undefined ? options.isSharedLink : isSharedFromUrl;
+  const sharedAudioId = options?.sharedAudioId || (urlParams?.get('audioId') || undefined);
+  const sharedAudioTitle = options?.sharedAudioTitle;
+  const defaultMsg = isSharedLink
+    ? `透過分享連結進入放映室（訪客模式）${sharedAudioTitle ? `《${sharedAudioTitle}》` : ''}`
+    : '以訪客模式免密進入系統';
+
   recordLoginLog({
     userId: GUEST_USER.id,
     username: GUEST_USER.username,
     displayName: GUEST_USER.displayName,
     role: 'guest',
     status: 'success',
-    message: '以訪客模式免密進入系統',
+    message: options?.message || defaultMsg,
+    isSharedLink,
+    sharedAudioId,
+    sharedAudioTitle,
   }).catch(() => {});
   return GUEST_USER;
 }

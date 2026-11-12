@@ -111,6 +111,9 @@ rules_version = '2';
 //   - status: string (required, must be 'success' or 'failed') - Login attempt status
 //   - message: string (optional, 0..300 chars) - Login description / status message
 //   - deviceInfo: string (optional, 0..300 chars) - Device and browser environment info
+//   - isSharedLink: bool (optional) - Whether login was accessed via a shared presentation link
+//   - sharedAudioId: string (optional, 0..200 chars) - Audio item ID accessed via shared link
+//   - sharedAudioTitle: string (optional, 0..300 chars) - Title snapshot of the shared audio item
 //   - loginAt: string (required, immutable, ISO 8601 format, <= 64 chars) - Login timestamp string
 //
 // Collection: playLogs
@@ -493,7 +496,10 @@ service cloud.firestore {
         'status',
         'message',
         'deviceInfo',
-        'loginAt'
+        'loginAt',
+        'isSharedLink',
+        'sharedAudioId',
+        'sharedAudioTitle'
       ];
 
       return hasRequiredFields(requiredFields) &&
@@ -507,6 +513,9 @@ service cloud.firestore {
         data.status is string && data.status in ['success', 'failed'] &&
         isValidOptionalString('message', 0, 300) &&
         isValidOptionalString('deviceInfo', 0, 300) &&
+        (!('isSharedLink' in data) || data.isSharedLink is bool) &&
+        (!('sharedAudioId' in data) || (data.sharedAudioId is string && data.sharedAudioId.size() <= 200)) &&
+        (!('sharedAudioTitle' in data) || (data.sharedAudioTitle is string && data.sharedAudioTitle.size() <= 300)) &&
         isValidDateString(data.loginAt);
     }
 
@@ -610,7 +619,7 @@ service cloud.firestore {
       allow delete: if resource.data.username != 'admin' && resource.data.id != 'user_admin';
     }
 
-    // Login Audit Logs (loginLogs/{logId})
+    // Login Audit Logs (loginLogs/{logId}) - records login audit trails and optional shared-link tracking
     match /loginLogs/{logId} {
       allow read: if true;
       allow create: if isValidLoginLog(request.resource.data, logId);

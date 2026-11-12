@@ -386,8 +386,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [showAutoplayPrompt, setShowAutoplayPrompt] = useState<boolean>(false);
+
+  // 客廳電視投放獨立遠端控制狀態（與電腦本機音訊完全解耦，互不干擾）
   const [isPresentationConnected, setIsPresentationConnected] = useState<boolean>(false);
   const presentationConnectionRef = useRef<any>(null);
+  const [tvIsPlaying, setTvIsPlaying] = useState<boolean>(true);
+  const [tvCurrentTime, setTvCurrentTime] = useState<number>(0);
+  const [tvDuration, setTvDuration] = useState<number>(0);
+  const [tvItemTitle, setTvItemTitle] = useState<string>('');
+
+  // 電視端 (Presentation Receiver) 連線集合與狀態回報參考
+  const receiverConnectionsRef = useRef<any[]>([]);
+  const lastReportedTvSecRef = useRef<number>(-1);
 
   const shouldAutoPlayFromUrl = useMemo(() => {
     try {
@@ -461,11 +471,26 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       sendPresentationMessage({
         type: 'INIT_SYNC',
         audioId: currentItem?.id,
-        currentTime: audioRef.current?.currentTime || currentTime,
-        isPlaying: isPlaying,
+        currentTime: currentTime,
+        isPlaying: true,
         playbackRate: playbackRate,
-        muted: isMuted,
+        muted: false,
       });
+      setTvIsPlaying(true);
+      setTvCurrentTime(currentTime);
+      setTvDuration(duration || 0);
+      setTvItemTitle(currentItem?.title || '');
+    };
+    conn.onmessage = (event: any) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'TV_STATUS') {
+          if (msg.isPlaying !== undefined) setTvIsPlaying(Boolean(msg.isPlaying));
+          if (msg.currentTime !== undefined) setTvCurrentTime(msg.currentTime);
+          if (msg.duration !== undefined && msg.duration > 0) setTvDuration(msg.duration);
+          if (msg.title) setTvItemTitle(msg.title);
+        }
+      } catch {}
     };
     conn.onclose = () => {
       setIsPresentationConnected(false);
@@ -715,7 +740,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
   // 點選書架上的語音檔時，切換曲目；手機版自動平滑捲動至下方的播放舞台，電腦版則平滑定位至頂部播放視角
   const handleSelectShelfAudio = (item: AudioItem) => {
     onSelectAudio(item);
-    sendPresentationMessage({ type: 'SET_AUDIO', audioId: item.id });
     if (window.innerWidth < 1024) {
       if (playerStageRef.current) {
         playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -965,7 +989,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       audio.pause();
       setIsPlaying(false);
       pendingAutoPlayRef.current = false;
-      sendPresentationMessage({ type: 'PAUSE' });
     } else {
       setManualSlideIndex(null);
       setManualSegmentIndex(null); // 播放時恢復依時間軸自動切換區段
@@ -977,7 +1000,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         .play()
         .then(() => {
           setIsPlaying(true);
-          sendPresentationMessage({ type: 'PLAY' });
         })
         .catch((err) => {
           console.warn('播放失敗:', err);
@@ -999,8 +1021,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     } else {
       setManualSegmentIndex(null);
     }
-
-    sendPresentationMessage({ type: 'SEEK', currentTime: clamped });
 
     const audio = audioRef.current;
     if (audio) {
@@ -1033,8 +1053,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       setManualSegmentIndex(null);
     }
 
-    sendPresentationMessage({ type: 'SLIDE', slideIndex: index, currentTime: clamped });
-
     const audio = audioRef.current;
     if (audio) {
       try {
@@ -1049,7 +1067,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     const rates = [0.75, 1, 1.25, 1.5, 2];
     const nextRate = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
     setPlaybackRate(nextRate);
-    sendPresentationMessage({ type: 'RATE', playbackRate: nextRate });
     if (audioRef.current) {
       audioRef.current.playbackRate = nextRate;
     }
@@ -1060,7 +1077,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     const nextMuted = !isMuted;
     audioRef.current.muted = nextMuted;
     setIsMuted(nextMuted);
-    sendPresentationMessage({ type: 'MUTE', muted: nextMuted });
   };
 
   // 切換放映循環/順序模式：循序播放 -> 清單循環 -> 單曲循環 -> 循序播放
@@ -1079,7 +1095,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 播放下一首
   const playNextTrack = (autoPlay = true) => {
-    sendPresentationMessage({ type: 'NEXT_TRACK' });
     if (playbackLoopMode === 'single') {
       const audio = audioRef.current;
       if (audio) {
@@ -1137,7 +1152,6 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
   // 播放上一首
   const playPrevTrack = (autoPlay = true) => {
-    sendPresentationMessage({ type: 'PREV_TRACK' });
     if (currentTime > 3) {
       handleSeek(0);
       return;
@@ -1791,6 +1805,27 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
 
     let activeConnections: any[] = [];
 
+    const broadcastReceiverStatus = (extra?: any) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const payload = JSON.stringify({
+        type: 'TV_STATUS',
+        isPlaying: !audio.paused,
+        currentTime: audio.currentTime,
+        duration: audio.duration || 0,
+        title: currentItem?.title || '',
+        audioId: currentItem?.id || '',
+        ...extra,
+      });
+      activeConnections.forEach((conn) => {
+        if (conn && conn.state === 'connected') {
+          try {
+            conn.send(payload);
+          } catch {}
+        }
+      });
+    };
+
     const handleMessage = (event: any) => {
       try {
         const msg = JSON.parse(event.data);
@@ -1814,18 +1849,24 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             if (msg.isPlaying) {
               audio?.play().then(() => setIsPlaying(true)).catch(console.warn);
             }
+            setTimeout(() => broadcastReceiverStatus(), 100);
             break;
           case 'PLAY':
-            audio?.play().then(() => setIsPlaying(true)).catch(console.warn);
+            audio?.play().then(() => {
+              setIsPlaying(true);
+              broadcastReceiverStatus({ isPlaying: true });
+            }).catch(console.warn);
             break;
           case 'PAUSE':
             audio?.pause();
             setIsPlaying(false);
+            broadcastReceiverStatus({ isPlaying: false });
             break;
           case 'SEEK':
             if (msg.currentTime !== undefined && audio) {
               audio.currentTime = msg.currentTime;
               setCurrentTime(msg.currentTime);
+              broadcastReceiverStatus({ currentTime: msg.currentTime });
             }
             break;
           case 'RATE':
@@ -1851,15 +1892,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             break;
           case 'NEXT_TRACK':
             playNextTrack(true);
+            setTimeout(() => broadcastReceiverStatus(), 200);
             break;
           case 'PREV_TRACK':
             playPrevTrack(true);
+            setTimeout(() => broadcastReceiverStatus(), 200);
             break;
           case 'SET_AUDIO':
             if (msg.audioId) {
               const target = audioItems.find((a) => a.id === msg.audioId);
               if (target) {
                 onSelectAudio(target);
+                setTimeout(() => broadcastReceiverStatus({ title: target.title }), 300);
               }
             }
             break;
@@ -1873,7 +1917,12 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
       .then((list: any) => {
         const registerConn = (conn: any) => {
           activeConnections.push(conn);
+          receiverConnectionsRef.current = activeConnections;
           conn.addEventListener('message', handleMessage);
+          conn.addEventListener('connect', () => broadcastReceiverStatus());
+          if (conn.state === 'connected') {
+            broadcastReceiverStatus();
+          }
         };
 
         list.connections.forEach(registerConn);
@@ -1891,8 +1940,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           conn.removeEventListener('message', handleMessage);
         } catch {}
       });
+      receiverConnectionsRef.current = [];
     };
-  }, [audioItems, onSelectAudio]);
+  }, [audioItems, onSelectAudio, currentItem]);
 
   // 判斷是否為行動裝置 (iPhone / iPad / Android) 與 iOS 裝置 (iPhone / iPad / iPod)
   const isMobileDevice = useMemo(() => {
@@ -1971,8 +2021,17 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
           .then((conn: any) => {
             presentationConnectionRef.current = conn;
             setIsPresentationConnected(true);
+            // 電腦本機音訊自動暫停，避免電視與電腦喇叭同時發聲產生回音干擾
+            if (audioRef.current) {
+              audioRef.current.pause();
+              setIsPlaying(false);
+            }
+            setTvIsPlaying(true);
+            setTvCurrentTime(currentTime);
+            setTvDuration(duration || 0);
+            setTvItemTitle(currentItem?.title || '');
             setupPresentationConnection(conn);
-            showToast('📺 已連線至客廳電視 / 外接投放顯示器！您可由電腦控制台或電視遙控器同步操控。');
+            showToast('📺 已連線至客廳電視！您可透過右下角「電視控制台」專屬操作電視端。');
           })
           .catch((e: any) => {
             if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') {
@@ -2217,11 +2276,45 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         onPlay={() => {
           setIsPlaying(true);
           if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, true);
+          if (receiverConnectionsRef.current.length > 0) {
+            const payload = JSON.stringify({
+              type: 'TV_STATUS',
+              isPlaying: true,
+              currentTime: audioRef.current?.currentTime || 0,
+              duration: audioRef.current?.duration || 0,
+              title: currentItem?.title || '',
+              audioId: currentItem?.id || '',
+            });
+            receiverConnectionsRef.current.forEach((c) => {
+              if (c && c.state === 'connected') {
+                try {
+                  c.send(payload);
+                } catch {}
+              }
+            });
+          }
         }}
         onPause={() => {
           setIsPlaying(false);
           if (audioRef.current) trackPlayProgress(audioRef.current.currentTime, false);
           flushPlayStats();
+          if (receiverConnectionsRef.current.length > 0) {
+            const payload = JSON.stringify({
+              type: 'TV_STATUS',
+              isPlaying: false,
+              currentTime: audioRef.current?.currentTime || 0,
+              duration: audioRef.current?.duration || 0,
+              title: currentItem?.title || '',
+              audioId: currentItem?.id || '',
+            });
+            receiverConnectionsRef.current.forEach((c) => {
+              if (c && c.state === 'connected') {
+                try {
+                  c.send(payload);
+                } catch {}
+              }
+            });
+          }
         }}
         onCanPlay={() => {
           if (initialSeekTimeRef.current !== null && audioRef.current) {
@@ -2241,6 +2334,27 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             const t = audioRef.current.currentTime;
             setCurrentTime(t);
             trackPlayProgress(t, audioRef.current.paused);
+            if (receiverConnectionsRef.current.length > 0) {
+              const sec = Math.floor(t);
+              if (sec !== lastReportedTvSecRef.current) {
+                lastReportedTvSecRef.current = sec;
+                const payload = JSON.stringify({
+                  type: 'TV_STATUS',
+                  isPlaying: !audioRef.current.paused,
+                  currentTime: t,
+                  duration: audioRef.current.duration || 0,
+                  title: currentItem?.title || '',
+                  audioId: currentItem?.id || '',
+                });
+                receiverConnectionsRef.current.forEach((c) => {
+                  if (c && c.state === 'connected') {
+                    try {
+                      c.send(payload);
+                    } catch {}
+                  }
+                });
+              }
+            }
             // 當音訊實際播放推進超過手動選取的區段結束時間時（且未處於編輯狀態），自動交回時間軸控制
             if (
               !isEditingSegment &&
@@ -5619,34 +5733,50 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             </button>
           </div>
 
-          <div className="text-xs text-stone-200 truncate font-semibold mb-2.5">
-            {currentItem?.title}
+          <div className="flex items-center justify-between gap-2 mb-2 text-xs text-stone-200">
+            <span className="font-semibold truncate max-w-[170px]" title={tvItemTitle || currentItem?.title}>
+              {tvItemTitle || currentItem?.title}
+            </span>
+            <span className="font-mono text-[11px] text-emerald-300 shrink-0">
+              {formatDuration(tvCurrentTime)} / {formatDuration(tvDuration || duration)}
+            </span>
           </div>
 
           <div className="flex items-center justify-center gap-2">
             <button
               type="button"
-              onClick={() => playPrevTrack(true)}
+              onClick={() => {
+                sendPresentationMessage({ type: 'PREV_TRACK' });
+                showToast('⏮️ 已傳送「上一首」至客廳電視');
+              }}
               className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-              title="上一首"
+              title="電視：上一首"
             >
               <SkipBack className="w-4 h-4" />
             </button>
             <button
               type="button"
-              onClick={() => handleSeek(currentTime - 5)}
+              onClick={() => {
+                const target = Math.max(0, tvCurrentTime - 5);
+                setTvCurrentTime(target);
+                sendPresentationMessage({ type: 'SEEK', currentTime: target });
+              }}
               className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-              title="倒退 5 秒"
+              title="電視：倒退 5 秒"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
             <button
               type="button"
-              onClick={togglePlay}
+              onClick={() => {
+                const nextState = !tvIsPlaying;
+                setTvIsPlaying(nextState);
+                sendPresentationMessage({ type: nextState ? 'PLAY' : 'PAUSE' });
+              }}
               className="p-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-900 font-bold transition cursor-pointer shadow-md"
-              title={isPlaying ? '暫停電視播放' : '開始電視播放'}
+              title={tvIsPlaying ? '暫停電視放映' : '開始電視放映'}
             >
-              {isPlaying ? (
+              {tvIsPlaying ? (
                 <Pause className="w-5 h-5 fill-current" />
               ) : (
                 <Play className="w-5 h-5 fill-current ml-0.5" />
@@ -5654,21 +5784,52 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleSeek(currentTime + 5)}
+              onClick={() => {
+                const maxT = tvDuration || duration || 999999;
+                const target = Math.min(maxT, tvCurrentTime + 5);
+                setTvCurrentTime(target);
+                sendPresentationMessage({ type: 'SEEK', currentTime: target });
+              }}
               className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-              title="快轉 5 秒"
+              title="電視：快轉 5 秒"
             >
               <RotateCw className="w-4 h-4" />
             </button>
             <button
               type="button"
-              onClick={() => playNextTrack(true)}
+              onClick={() => {
+                sendPresentationMessage({ type: 'NEXT_TRACK' });
+                showToast('⏭️ 已傳送「下一首」至客廳電視');
+              }}
               className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-              title="下一首"
+              title="電視：下一首"
             >
               <SkipForward className="w-4 h-4" />
             </button>
           </div>
+
+          {/* 若電腦端正在檢視與電視不同之語音作品，提供一鍵推送給電視播放 */}
+          {currentItem && tvItemTitle && currentItem.title !== tvItemTitle && (
+            <button
+              type="button"
+              onClick={() => {
+                sendPresentationMessage({
+                  type: 'SET_AUDIO',
+                  audioId: currentItem.id,
+                });
+                setTvItemTitle(currentItem.title);
+                setTvCurrentTime(0);
+                showToast(`📺 已通知電視切換放映：《${currentItem.title}》`);
+              }}
+              className="w-full mt-2.5 py-1 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 text-[10px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+            >
+              <span className="truncate">電視切換播放此曲：《{currentItem.title}》</span>
+            </button>
+          )}
+
+          <p className="text-[10px] text-emerald-200/70 text-center mt-2">
+            💡 此控制台獨立操作電視端，不影響電腦本機播放
+          </p>
         </aside>
       )}
     </div>

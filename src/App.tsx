@@ -31,7 +31,14 @@ import {
   saveAudioItem,
   saveCategoryItem,
 } from './services/storageService';
-import { getCurrentSessionUser, loadSystemUsers, logout, GUEST_USER, loginAsGuest } from './services/authService';
+import {
+  getCurrentSessionUser,
+  loadSystemUsers,
+  logout,
+  GUEST_USER,
+  loginAsGuest,
+  recordLoginLog,
+} from './services/authService';
 import { LoginView } from './components/LoginView';
 import { SystemManagementView, SystemSubTab } from './components/SystemManagementView';
 import { DashboardView } from './components/DashboardView';
@@ -191,8 +198,33 @@ export function App() {
       if (target && isAllowedForGuest) {
         // 該作品所屬分類已勾選「開放訪客瀏覽」：若尚未登入，自動為其以訪客登入，直接觀看放映
         if (!getCurrentSessionUser()) {
-          const guest = loginAsGuest();
+          const guest = loginAsGuest({
+            isSharedLink: true,
+            sharedAudioId: target.id,
+            sharedAudioTitle: target.title,
+            message: `透過分享連結進入觀看《${target.title}》（訪客模式）`,
+          });
           setCurrentUser(guest);
+        } else {
+          // 若已有工作階段（訪客或已登入人員），檢查是否已記錄本次分享存取日誌，避免重複寫入
+          const sessionLogKey = `logged_share_access_${target.id}`;
+          if (!sessionStorage.getItem(sessionLogKey)) {
+            sessionStorage.setItem(sessionLogKey, '1');
+            const sessionUser = getCurrentSessionUser();
+            if (sessionUser) {
+              recordLoginLog({
+                userId: sessionUser.id,
+                username: sessionUser.username,
+                displayName: sessionUser.displayName,
+                role: sessionUser.role,
+                status: 'success',
+                isSharedLink: true,
+                sharedAudioId: target.id,
+                sharedAudioTitle: target.title,
+                message: `透過分享連結進入觀看《${target.title}》`,
+              }).catch(() => {});
+            }
+          }
         }
         setActiveAudioForPlayback(target);
         setActiveTab('screening');
@@ -215,6 +247,21 @@ export function App() {
           );
         } else {
           // 已登入的人員/管理員：擁有存取權限，正常播放
+          const sessionLogKey = `logged_share_access_${target.id}`;
+          if (!sessionStorage.getItem(sessionLogKey)) {
+            sessionStorage.setItem(sessionLogKey, '1');
+            recordLoginLog({
+              userId: sessionUser.id,
+              username: sessionUser.username,
+              displayName: sessionUser.displayName,
+              role: sessionUser.role,
+              status: 'success',
+              isSharedLink: true,
+              sharedAudioId: target.id,
+              sharedAudioTitle: target.title,
+              message: `透過分享連結進入觀看《${target.title}》`,
+            }).catch(() => {});
+          }
           setActiveAudioForPlayback(target);
           setActiveTab('screening');
           setScreeningInitialAutoPlay(true);

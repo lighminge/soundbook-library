@@ -101,6 +101,9 @@ export interface LoginLogRecord {
   message?: string; // 登入說明（如：帳號密碼驗證登入、訪客模式進入、密碼錯誤等）
   deviceInfo?: string; // 裝置與瀏覽器環境資訊
   loginAt: string; // ISO 8601 登入時間
+  isSharedLink?: boolean; // 是否為使用分享連結進入放映
+  sharedAudioId?: string; // 分享存取之語音作品 ID
+  sharedAudioTitle?: string; // 分享存取之語音作品標題快照
 }
 
 export interface PlayLogRecord {
