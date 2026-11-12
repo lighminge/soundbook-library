@@ -50,6 +50,7 @@ import {
 import {
   formatDuration,
   getCategoryIcon,
+  getCategoryEmoji,
   THEME_COLOR_OPTIONS,
   ICON_OPTIONS,
 } from './DashboardView';
@@ -1880,10 +1881,10 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                   onChange={(e) => setFilterCategoryId(e.target.value)}
                   className="w-full pl-8 pr-7 py-2 rounded-xl border border-[#D5C5AE] bg-white text-xs font-semibold text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate"
                 >
-                  <option value="all">所有館藏分類 ({audioItems.length})</option>
+                  <option value="all">✨ 所有館藏分類 ({audioItems.length})</option>
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.id}>
-                      [{cat.code}] {cat.name} (
+                      {getCategoryEmoji(cat.icon)} {cat.name} (
                       {audioItems.filter((a) => a.categoryId === cat.id).length})
                     </option>
                   ))}

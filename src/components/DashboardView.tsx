@@ -566,6 +566,114 @@ export function getCategoryIcon(iconName: string, className = 'w-5 h-5') {
   }
 }
 
+/** 100 款館藏分類圖示對應之 Unicode 小圖示 (Emoji)，供下拉選單等純文字選項顯示使用 */
+export const CATEGORY_ICON_EMOJI_MAP: Record<string, string> = {
+  BookOpen: '📖',
+  Landmark: '🏛️',
+  Compass: '🧭',
+  Feather: '🪶',
+  Music: '🎵',
+  Globe: '🌐',
+  Mic: '🎙️',
+  Headphones: '🎧',
+  Sparkles: '✨',
+  Heart: '❤️',
+  Star: '⭐',
+  Award: '🎖️',
+  Scroll: '📜',
+  GraduationCap: '🎓',
+  Palette: '🎨',
+  Film: '🎞️',
+  Coffee: '☕',
+  Sun: '☀️',
+  Moon: '🌙',
+  Trees: '🌲',
+  Book: '📕',
+  Bookmark: '🔖',
+  Crown: '👑',
+  Gem: '💎',
+  Flame: '🔥',
+  Cloud: '☁️',
+  Umbrella: '☂️',
+  Anchor: '⚓',
+  Ship: '🚢',
+  Plane: '✈️',
+  Train: '🚆',
+  Car: '🚗',
+  Bike: '🚲',
+  Camera: '📷',
+  Video: '📹',
+  Radio: '📻',
+  Tv: '📺',
+  Speaker: '🔊',
+  Bell: '🔔',
+  Gift: '🎁',
+  Key: '🔑',
+  Lock: '🔒',
+  Shield: '🛡️',
+  Trophy: '🏆',
+  Flag: '🚩',
+  Map: '🗺️',
+  Navigation: '🧭',
+  Mountain: '⛰️',
+  Flower2: '🌸',
+  Leaf: '🍃',
+  Library: '🏛️',
+  BookMarked: '📑',
+  NotebookPen: '📓',
+  FileText: '📄',
+  FileAudio: '🎵',
+  Disc: '💿',
+  Volume2: '🔊',
+  Podcast: '🎙️',
+  Theater: '🎭',
+  Clapperboard: '🎬',
+  Brush: '🖌️',
+  PenTool: '✒️',
+  Wand2: '🪄',
+  Lightbulb: '💡',
+  Brain: '🧠',
+  Atom: '⚛️',
+  Microscope: '🔬',
+  Telescope: '🔭',
+  Rocket: '🚀',
+  Orbit: '🪐',
+  Sunrise: '🌅',
+  Sunset: '🌇',
+  Rainbow: '🌈',
+  Snowflake: '❄️',
+  Wind: '💨',
+  Waves: '🌊',
+  Droplets: '💧',
+  Sprout: '🌱',
+  TreePine: '🌲',
+  Bird: '🐦',
+  Fish: '🐟',
+  Cat: '🐱',
+  Dog: '🐶',
+  Rabbit: '🐰',
+  Squirrel: '🐿️',
+  Turtle: '🐢',
+  Bug: '🐛',
+  Shell: '🐚',
+  Castle: '🏰',
+  Church: '⛪',
+  Building2: '🏢',
+  Home: '🏠',
+  Tent: '⛺',
+  Medal: '🏅',
+  Hourglass: '⏳',
+  Watch: '⌚',
+  Calendar: '📅',
+  Mail: '✉️',
+  Puzzle: '🧩',
+  Gamepad2: '🎮',
+};
+
+export function getCategoryEmoji(iconName: string): string {
+  return CATEGORY_ICON_EMOJI_MAP[iconName] || '📖';
+}
+
 export function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
@@ -1270,7 +1378,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 const countInCat = audioItems.filter((i) => i.categoryId === c.id).length;
                 return (
                   <option key={c.id} value={c.id}>
-                    [{c.code}] {c.name} ({countInCat} 部)
+                    {getCategoryEmoji(c.icon)} {c.name} ({countInCat} 部)
                   </option>
                 );
               })}

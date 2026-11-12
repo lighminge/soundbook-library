@@ -55,7 +55,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { AudioItem, Category, PlaybackSlide, SavedPlaylist } from '../types';
-import { formatDuration, getCategoryIcon } from './DashboardView';
+import { formatDuration, getCategoryIcon, getCategoryEmoji } from './DashboardView';
 import {
   fetchAudioBlobFromGoogleDrive,
   loadSavedPlaylists,
@@ -2513,7 +2513,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 const count = audioItems.filter((i) => i.categoryId === cat.id).length;
                 return (
                   <option key={cat.id} value={cat.id}>
-                    [{cat.code}] {cat.name} ({count} 部)
+                    {getCategoryEmoji(cat.icon)} {cat.name} ({count} 部)
                   </option>
                 );
               })}

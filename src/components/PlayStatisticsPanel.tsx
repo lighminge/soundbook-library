@@ -23,7 +23,7 @@ import {
 import { AudioItem, Category, PlayLogRecord } from '../types';
 import { loadPlayLogs, clearAllPlayLogs } from '../services/playStatsService';
 import { PaginationBar, dateInputToEndMs, dateInputToStartMs } from './PaginationBar';
-import { getCategoryIcon } from './DashboardView';
+import { getCategoryIcon, getCategoryEmoji } from './DashboardView';
 
 interface PlayStatisticsPanelProps {
   audioItems: AudioItem[];
@@ -396,11 +396,10 @@ export const PlayStatisticsPanel: React.FC<PlayStatisticsPanelProps> = ({
                   onChange={(e) => setCategoryFilter(e.target.value)}
                   className="w-full pl-8 pr-8 py-2 rounded-lg border border-[#D5C5AE] bg-white text-xs sm:text-sm focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium text-[#2C221E]"
                 >
-                  <option value="all">全部分類</option>
+                  <option value="all">✨ 全部分類</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.code ? `${c.code} · ` : ''}
-                      {c.name}
+                      {getCategoryEmoji(c.icon)} {c.name}
                     </option>
                   ))}
                 </select>

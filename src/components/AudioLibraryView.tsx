@@ -70,7 +70,7 @@ import {
   syncSlidesWithSrtSegments,
   sortSlidesBySegmentRange,
 } from '../utils/srtUtils';
-import { formatDuration, getCategoryIcon } from './DashboardView';
+import { formatDuration, getCategoryIcon, getCategoryEmoji } from './DashboardView';
 
 interface AudioLibraryViewProps {
   categories: Category[];
@@ -1939,12 +1939,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     onChange={(e) => setFilterCategoryId(e.target.value)}
                     className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-[#D5C5AE] bg-white text-xs text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] cursor-pointer appearance-none truncate font-medium"
                   >
-                    <option value="all">全部分類 (不限)</option>
+                    <option value="all">✨ 全部分類 (不限)</option>
                     {categories.map((cat) => {
                       const count = audioItems.filter((i) => i.categoryId === cat.id).length;
                       return (
                         <option key={cat.id} value={cat.id}>
-                          [{cat.code}] {cat.name} ({count} 筆)
+                          {getCategoryEmoji(cat.icon)} {cat.name} ({count} 筆)
                         </option>
                       );
                     })}
