@@ -64,18 +64,34 @@ export function isSupportedAudioFile(file: File): boolean {
 }
 
 /**
+ * 取得選取語音檔案的標準 MIME 類型（優先依副檔名對照，確保重新上傳不同格式時能精確更新檔案類型）
+ */
+export function getResolvedAudioMimeType(file: File): string {
+  const ext = getExt(file.name);
+  if (ext && AUDIO_EXT_MIME[ext]) {
+    return AUDIO_EXT_MIME[ext];
+  }
+  const type = (file.type || '').trim();
+  if (type.startsWith('audio/')) {
+    return type;
+  }
+  return 'audio/mpeg';
+}
+
+/**
  * 修正 iOS 上 MIME 類型為空字串或 video/quicktime 等情況，
- * 回傳帶有正確 audio/* MIME 的 File，確保後續上傳、雲端存檔與播放正常
+ * 並以副檔名校正標準 audio/* MIME，確保後續上傳、檔案類型判定、雲端存檔與播放正常
  */
 export function normalizeAudioFile(file: File): File {
-  const type = file.type || '';
-  if (type.startsWith('audio/')) return file;
   const ext = getExt(file.name);
-  const mime = AUDIO_EXT_MIME[ext] || 'audio/mp4';
+  const targetMime = getResolvedAudioMimeType(file);
   // .qta 在 Google 雲端硬碟與瀏覽器較難辨識，轉為 .m4a 副檔名（內容同為 AAC/MP4 容器）
   const name = ext === 'qta' ? file.name.replace(/\.[^.]+$/, '.m4a') : file.name;
+  if ((file.type || '') === targetMime && name === file.name) {
+    return file;
+  }
   try {
-    return new File([file], name, { type: mime, lastModified: file.lastModified });
+    return new File([file], name, { type: targetMime, lastModified: file.lastModified });
   } catch {
     return file;
   }

@@ -991,8 +991,11 @@ export async function deleteSavedSpeaker(
 
 const CHUNK_STR_LIMIT = 720000; // 每個分片 720KB，完全符合 Firestore 1MB 限制
 
+export const AUDIO_ITEM_MIME_REPAIRED_EVENT = 'soundbook:audio-mime-repaired';
+
 /**
  * 自動檢查本機 IndexedDB 快取的音檔，若雲端 audioChunks 尚無分片則自動補齊上傳（讓先前在電腦上傳的音檔，手機也能立即播放）
+ * 同時若先前「重新上傳替換語音檔」導致 audioItems.mimeType 與實際上傳之 audioChunks.mimeType 不一致，亦自動修正並同步回資料庫與前端狀態
  */
 async function backfillLocalBlobsToFirestoreChunks(items: AudioItem[]): Promise<void> {
   const db = getDbInstance();
@@ -1007,7 +1010,34 @@ async function backfillLocalBlobsToFirestoreChunks(items: AudioItem[]): Promise<
 
     try {
       const existingChunk = await getDoc(doc(db, 'audioChunks', `${fileId}_chunk_0`));
-      if (existingChunk.exists()) continue;
+      if (existingChunk.exists()) {
+        const chunkMime = String(existingChunk.data()?.mimeType || '').trim();
+        if (
+          chunkMime &&
+          chunkMime.startsWith('audio/') &&
+          chunkMime !== 'audio/octet-stream' &&
+          chunkMime !== (item.mimeType || '').trim()
+        ) {
+          const repairedItem: AudioItem = {
+            ...item,
+            mimeType: chunkMime,
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            await setDoc(doc(db, 'audioItems', item.id), JSON.parse(JSON.stringify(repairedItem)));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent(AUDIO_ITEM_MIME_REPAIRED_EVENT, {
+                  detail: { id: item.id, mimeType: chunkMime },
+                })
+              );
+            }
+          } catch {
+            // ignore repair write error
+          }
+        }
+        continue;
+      }
 
       const localBlobUrl =
         (await getCachedMediaBlobUrl(fileId)) ||
@@ -1111,7 +1141,7 @@ async function loadAudioBlobFromFirestoreChunks(fileId: string): Promise<Blob | 
 /**
  * 刪除語音檔時，一併清理 Firestore 中的 audioChunks 分片
  */
-async function deleteAudioChunksFromFirestore(fileIds: string[]): Promise<void> {
+export async function deleteAudioChunksFromFirestore(fileIds: string[]): Promise<void> {
   const db = getDbInstance();
   if (!db || !fileIds.length) return;
 

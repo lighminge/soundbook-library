@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { AudioItem, Category, CurrentUser, LoginScreenConfig } from './types';
 import {
+  AUDIO_ITEM_MIME_REPAIRED_EVENT,
   deleteCategoryItem,
   getLocalLoginScreenConfig,
   isGoogleDriveConfigured,
@@ -296,6 +297,24 @@ export function App() {
       }
     }
     reloadAllData();
+  }, []);
+
+  // 當背景自癒檢查發現先前重新上傳替換語音檔之 mimeType 與實際上傳之 audioChunks 不一致並完成修正時，即時更新前端語音清單
+  useEffect(() => {
+    const handleMimeRepaired = (e: Event) => {
+      const detail = (e as CustomEvent<{ id: string; mimeType: string }>).detail;
+      if (!detail || !detail.id || !detail.mimeType) return;
+      setAudioItems((prev) =>
+        prev.map((a) =>
+          a.id === detail.id ? { ...a, mimeType: detail.mimeType } : a
+        )
+      );
+      setActiveAudioForPlayback((prev) =>
+        prev && prev.id === detail.id ? { ...prev, mimeType: detail.mimeType } : prev
+      );
+    };
+    window.addEventListener(AUDIO_ITEM_MIME_REPAIRED_EVENT, handleMimeRepaired);
+    return () => window.removeEventListener(AUDIO_ITEM_MIME_REPAIRED_EVENT, handleMimeRepaired);
   }, []);
 
   // 訪客與權限模式保護：若處於訪客模式且目前頁籤為上傳或管理，或非管理員進入系統管理，自動導回總覽

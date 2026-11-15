@@ -40,11 +40,8 @@ function openMediaDb(): Promise<IDBDatabase> {
 export async function cacheMediaBlob(key: string, blob: Blob): Promise<string> {
   if (!key) return URL.createObjectURL(blob);
 
-  let blobUrl = memoryBlobUrls.get(key);
-  if (!blobUrl) {
-    blobUrl = URL.createObjectURL(blob);
-    memoryBlobUrls.set(key, blobUrl);
-  }
+  const blobUrl = URL.createObjectURL(blob);
+  memoryBlobUrls.set(key, blobUrl);
 
   try {
     const db = await openMediaDb();

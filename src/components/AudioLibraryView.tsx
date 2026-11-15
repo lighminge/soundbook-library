@@ -36,6 +36,7 @@ import {
   uploadFileToGoogleDrive,
   fetchAudioBlobFromGoogleDrive,
   deleteFilesFromGoogleDrive,
+  deleteAudioChunksFromFirestore,
   extractDriveFileIdFromSlide,
   extractDriveFileIdFromCover,
   extractDriveFileIdFromUrl,
@@ -53,6 +54,8 @@ import {
   getAudioInputAccept,
   isSupportedAudioFile,
   normalizeAudioFile,
+  getResolvedAudioMimeType,
+  getAudioFileType,
   getAudioItemCallNumberMap,
 } from '../utils/audioFileUtils';
 import {
@@ -505,6 +508,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       description?: string;
       speaker?: string;
       tags?: string[];
+      mimeType?: string;
+      fileSize?: number;
     }
   ) => {
     if (!formId) return;
@@ -525,6 +530,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       overrideMeta?.tags !== undefined
         ? overrideMeta.tags
         : itemTags;
+    const finalMimeType = overrideMeta?.mimeType ?? itemMimeType;
+    const finalFileSize = overrideMeta?.fileSize ?? itemFileSize;
 
     const itemToSave: AudioItem = {
       id: formId,
@@ -534,8 +541,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       ...(finalSpeaker?.trim() ? { speaker: finalSpeaker.trim() } : {}),
       ...(finalTags.length > 0 ? { tags: finalTags } : {}),
       duration: overrideDuration ?? (Number(duration) || 20),
-      ...(itemFileSize !== undefined ? { fileSize: itemFileSize } : {}),
-      ...(itemMimeType ? { mimeType: itemMimeType } : {}),
+      ...(finalFileSize !== undefined ? { fileSize: finalFileSize } : {}),
+      ...(finalMimeType ? { mimeType: finalMimeType } : {}),
       ...(overrideAudioDriveId ?? audioDriveFileId
         ? { audioDriveFileId: overrideAudioDriveId ?? audioDriveFileId }
         : {}),
@@ -1015,6 +1022,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       const sampleSegments = createSampleSrtSegments(cleanName);
       const firstRange = getCaptionForSegmentRange(sampleSegments, 1, 1);
 
+      const resolvedMime = getResolvedAudioMimeType(file);
+
       const newItem: AudioItem = {
         id: `audio_${Date.now()}`,
         title: cleanName,
@@ -1023,7 +1032,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         description: `由裝置上傳之語音檔案（原始檔名：${file.name}）`,
         duration: detectedDuration,
         fileSize: file.size,
-        mimeType: file.type || 'audio/mpeg',
+        mimeType: resolvedMime,
         audioDriveFileId: uploadRes.fileId,
         audioUrl: uploadRes.directUrl,
         coverImageUrl: randomCover,
@@ -1143,9 +1152,20 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         );
         return;
       }
+      const resolvedMime = getResolvedAudioMimeType(file);
+      const nextFileSize = file.size;
+      const nextDescription = /^由裝置上傳之語音檔案（原始檔名：.+）$/.test(description.trim())
+        ? `由裝置上傳之語音檔案（原始檔名：${file.name}）`
+        : description;
+
       setAudioUrl(uploadRes.directUrl);
       setAudioDriveFileId(uploadRes.fileId);
       setDuration(detectedDuration);
+      setItemMimeType(resolvedMime);
+      setItemFileSize(nextFileSize);
+      if (nextDescription !== description) {
+        setDescription(nextDescription);
+      }
       await autoPersistToFirebase(
         srtSegments,
         slides,
@@ -1153,10 +1173,15 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         coverImageDriveId,
         uploadRes.directUrl,
         uploadRes.fileId,
-        detectedDuration
+        detectedDuration,
+        {
+          mimeType: resolvedMime,
+          fileSize: nextFileSize,
+          description: nextDescription,
+        }
       );
 
-      // 若有舊的 Google Drive 語音檔，且未被其他地方共用，自動清理舊檔
+      // 若有舊的 Google Drive 語音檔，且未被其他地方共用，自動清理舊檔與舊音訊分片
       let deletedOldMsg = '';
       if (
         oldAudioDriveId &&
@@ -1169,6 +1194,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
           slides.some((s) => extractDriveFileIdFromSlide(s) === oldAudioDriveId);
         if (!stillUsed) {
           try {
+            await deleteAudioChunksFromFirestore([oldAudioDriveId]);
             const delRes = await deleteFilesFromGoogleDrive([oldAudioDriveId]);
             if (delRes.deletedOnDrive) {
               deletedOldMsg = '（已自動刪除雲端硬碟舊語音檔）';
@@ -1179,7 +1205,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         }
       }
 
-      showToast(`✅ 已更新語音檔案${deletedOldMsg}，並同步儲存至 Google 雲端硬碟與 Firebase！`);
+      const nextFileTypeLabel = getAudioFileType({
+        mimeType: resolvedMime,
+        audioUrl: uploadRes.directUrl,
+        title,
+      });
+      showToast(
+        `✅ 已更新語音檔案（檔案類型已同步更新為 ${nextFileTypeLabel}）${deletedOldMsg}，並同步儲存至 Google 雲端硬碟與 Firebase！`
+      );
     } catch (err: any) {
       console.error('替換語音檔失敗:', err);
       showToast(`❌ 替換語音檔失敗：${err?.message || '請確認檔案格式與網路連線'}`, 10000);
@@ -2494,10 +2527,16 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 {/* 音訊預覽與重新上傳音檔 */}
                 <div className="p-4 rounded-xl bg-[#F4ECE0] border border-[#E2D5C1] space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-[#5C3A1B]">
-                      目前綁定語音檔（時長：{formatDuration(duration)}）
+                    <span className="text-xs font-semibold text-[#5C3A1B] flex flex-wrap items-center gap-1.5">
+                      <span>目前綁定語音檔（時長：{formatDuration(duration)}）</span>
+                      <span
+                        className="px-1.5 py-0.5 rounded bg-[#2B4C7E]/12 border border-[#2B4C7E]/30 text-[#2B4C7E] font-mono text-[10px] font-bold tracking-wider"
+                        title={`目前語音檔案類型：${getAudioFileType({ mimeType: itemMimeType, audioUrl, title })}`}
+                      >
+                        {getAudioFileType({ mimeType: itemMimeType, audioUrl, title })}
+                      </span>
                       {isEditorAudioLoading && (
-                        <span className="ml-2 text-[#8B5A2B] animate-pulse">
+                        <span className="ml-1 text-[#8B5A2B] animate-pulse">
                           正在從雲端硬碟載入音訊串流...
                         </span>
                       )}
