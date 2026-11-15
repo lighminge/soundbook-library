@@ -1740,9 +1740,9 @@ async function uploadLargeFileViaGasChunks(
   viewUrl?: string;
   error?: string;
 }> {
-  // 每個分段採用 12MB (48 * 256KB，符合 Google Drive Resumable Upload 256KB 倍數規範，且 Base64 僅約 16MB)
-  const DRIVE_CHUNK_BYTES = 12 * 1024 * 1024;
-  onProgress?.(14, `正在初始化大型檔案分段續傳 (${(file.size / 1024 / 1024).toFixed(1)} MB)...`);
+  // 每個分段採用 5MB (20 * 256KB，符合 Google Drive Resumable Upload 256KB 倍數規範，且低於 GAS UrlFetchApp 10MB 單次請求上限，100% 保留原始檔案大小不壓縮)
+  const DRIVE_CHUNK_BYTES = 5 * 1024 * 1024;
+  onProgress?.(14, `正在初始化大型檔案無損分段續傳 (${(file.size / 1024 / 1024).toFixed(1)} MB)...`);
 
   let initData: any = null;
   try {
@@ -1755,6 +1755,7 @@ async function uploadLargeFileViaGasChunks(
         fileName: file.name,
         mimeType: file.type || 'audio/mpeg',
         fileSize: file.size,
+        origin: typeof window !== 'undefined' ? window.location.origin : '',
       }),
     });
     const initText = await initRes.text();
@@ -1764,11 +1765,106 @@ async function uploadLargeFileViaGasChunks(
   }
 
   if (!initData || !initData.success || initData.action !== 'initChunkUpload') {
-    // 代表使用者部署的 GAS 仍為舊版（不認識 initChunkUpload）
+    // 代表使用者目前綁定的 GAS 網址仍為舊版（不認識 initChunkUpload）
     return { supported: false };
   }
 
-  const mode = initData.mode || 'driveapp';
+  // 優先通道 A：若 GAS 回傳 OAuth accessToken，由瀏覽器直接對 Google Drive API v3 進行 Resumable Upload（100% 原始檔案二進位直傳，無須壓縮、不受 GAS 10MB/50MB 限制）
+  if (initData.accessToken) {
+    try {
+      const initDriveRes = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${initData.accessToken}`,
+            'Content-Type': 'application/json; charset=UTF-8',
+            'X-Upload-Content-Type': file.type || 'audio/mpeg',
+            'X-Upload-Content-Length': String(file.size),
+          },
+          body: JSON.stringify({
+            name: file.name,
+            mimeType: file.type || 'audio/mpeg',
+            ...(cleanFolderId ? { parents: [cleanFolderId] } : {}),
+          }),
+        }
+      );
+
+      const directSessionUrl = initDriveRes.headers.get('Location') || initData.uploadUrl || '';
+      if (directSessionUrl) {
+        const DIRECT_CHUNK_BYTES = 8 * 1024 * 1024; // 8MB (32 * 256KB)
+        const directTotalChunks = Math.ceil(file.size / DIRECT_CHUNK_BYTES);
+        let createdFileId = '';
+
+        for (let i = 0; i < directTotalChunks; i++) {
+          const start = i * DIRECT_CHUNK_BYTES;
+          const end = Math.min(file.size, (i + 1) * DIRECT_CHUNK_BYTES) - 1;
+          const chunkBlob = file.slice(start, end + 1);
+          const pct = Math.round(18 + ((i + 0.5) / directTotalChunks) * 62);
+          onProgress?.(
+            pct,
+            `正在無損直傳原始大型語音檔至 Google 雲端硬碟 (第 ${i + 1} / ${directTotalChunks} 段)...`
+          );
+
+          const putRes = await fetch(directSessionUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${file.size}`,
+            },
+            body: chunkBlob,
+          });
+
+          if (putRes.status === 308) {
+            continue;
+          }
+          if (putRes.status === 200 || putRes.status === 201) {
+            const putJson = await putRes.json();
+            if (putJson && putJson.id) {
+              createdFileId = String(putJson.id);
+              break;
+            }
+          }
+          throw new Error(`Direct resumable PUT status ${putRes.status}`);
+        }
+
+        if (createdFileId) {
+          onProgress?.(82, '正在設定 Google 雲端硬碟檔案共用權限...');
+          let viewUrl: string | undefined = `https://drive.google.com/file/d/${createdFileId}/view`;
+          let directUrl = `https://docs.google.com/uc?export=download&id=${createdFileId}`;
+          try {
+            const pubRes = await fetch(scriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify({
+                action: 'setFilePublic',
+                fileId: createdFileId,
+                mimeType: file.type || 'audio/mpeg',
+              }),
+            });
+            const pubJson = JSON.parse(await pubRes.text());
+            if (pubJson && pubJson.success) {
+              if (pubJson.viewUrl) viewUrl = String(pubJson.viewUrl);
+              if (pubJson.directUrl) directUrl = String(pubJson.directUrl);
+            }
+          } catch {
+            // ignore permission callback error if already accessible
+          }
+
+          return {
+            supported: true,
+            fileId: createdFileId,
+            directUrl,
+            viewUrl,
+          };
+        }
+      }
+    } catch (directErr) {
+      console.warn('瀏覽器直傳 Google Drive Resumable API 改由 GAS 5MB 分段續傳:', directErr);
+    }
+  }
+
+  // 優先通道 B：透過 GAS 代理每段 5MB (20 * 256KB) 分段續傳，100% 保留原始檔案大小
+  const mode = initData.mode === 'resumable' || initData.uploadUrl ? 'resumable' : (initData.mode || 'driveapp');
   const uploadUrl = initData.uploadUrl || '';
   const uploadId = initData.uploadId || `up_${Date.now()}`;
   const totalChunks = Math.ceil(file.size / DRIVE_CHUNK_BYTES);
@@ -2226,9 +2322,32 @@ export async function testGoogleDriveConnection(
     }
 
     if (result && result.success) {
+      let chunkSupportMsg = '';
+      try {
+        const probeRes = await fetch(cleanUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'initChunkUpload',
+            folderId: cleanFolderId,
+            fileName: 'probe.mp3',
+            mimeType: 'audio/mpeg',
+            fileSize: 0,
+          }),
+        });
+        const probeJson = JSON.parse(await probeRes.text());
+        if (probeJson && probeJson.success && probeJson.action === 'initChunkUpload') {
+          chunkSupportMsg = '（✅ 已啟用 >35MB 大型語音檔 100% 原始大小無損直傳！）';
+        } else {
+          chunkSupportMsg =
+            '（⚠️ 注意：目前此 GAS 網址仍運行舊版腳本，大型檔案會自動最佳化壓縮至 24MB 以下。若您剛才在 GAS 點選「新增部署作業」，請將產生的新 /exec 網址貼入上方欄位並按「儲存設定」；或在 GAS 點選「管理部署作業 → 編輯(鉛筆) → 版本：建立新版本 → 部署」，即可 100% 保留原始檔案大小！）';
+        }
+      } catch {
+        // ignore probe error
+      }
       return {
         success: true,
-        message: '測試成功！已在您的 Google 雲端硬碟資料夾建立「聲書閣_雲端硬碟連線測試成功.txt」檔案。',
+        message: `測試成功！已在您的 Google 雲端硬碟資料夾建立「聲書閣_雲端硬碟連線測試成功.txt」檔案。${chunkSupportMsg}`,
         viewUrl: result.viewUrl,
       };
     } else {

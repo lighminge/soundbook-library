@@ -117,21 +117,33 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 4. 大型檔案 (>24MB) 分段續傳初始化：突破 GAS 單次 50MB 限制
+    // 4. 大型檔案 (>24MB) 分段續傳初始化：突破 GAS 單次 50MB 限制（回傳 OAuth Token 與 Resumable Upload URL，100% 保留原始檔案大小不壓縮）
     if (payload.action === 'initChunkUpload') {
       var initFolderId = cleanFolderId(payload.folderId);
       var initFileName = payload.fileName || ('soundbook_' + new Date().getTime());
       var initMimeType = payload.mimeType || 'audio/mpeg';
       var initFileSize = Number(payload.fileSize) || 0;
+      var oauthToken = ScriptApp.getOAuthToken();
+      if (initFileSize <= 0) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: true,
+          action: 'initChunkUpload',
+          mode: 'probe',
+          accessToken: oauthToken
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
       try {
         var meta = { name: initFileName, mimeType: initMimeType };
         if (initFolderId) meta.parents = [initFolderId];
         var initHeaders = {
-          Authorization: 'Bearer ' + ScriptApp.getOAuthToken(),
+          Authorization: 'Bearer ' + oauthToken,
           'X-Upload-Content-Type': initMimeType
         };
         if (initFileSize > 0) {
           initHeaders['X-Upload-Content-Length'] = String(initFileSize);
+        }
+        if (payload.origin) {
+          initHeaders['Origin'] = String(payload.origin);
         }
         var initRes = UrlFetchApp.fetch(
           'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
@@ -150,17 +162,37 @@ function doPost(e) {
             success: true,
             action: 'initChunkUpload',
             mode: 'resumable',
+            accessToken: oauthToken,
             uploadUrl: String(locationUrl)
           })).setMimeType(ContentService.MimeType.JSON);
         }
       } catch (resumableErr) {
-        // 若尚未授權 UrlFetchApp，自動退回純 DriveApp 分段暫存合併模式
+        // 若尚未授權 UrlFetchApp，仍回傳 accessToken 讓瀏覽器直接對 Google Drive API 進行分段續傳
       }
       return ContentService.createTextOutput(JSON.stringify({
         success: true,
         action: 'initChunkUpload',
-        mode: 'driveapp',
+        mode: 'direct_oauth',
+        accessToken: oauthToken,
         uploadId: 'up_' + new Date().getTime()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 4.5 瀏覽器直傳完成後設定 Google 雲端硬碟檔案共享權限
+    if (payload.action === 'setFilePublic') {
+      var pubFileId = String(payload.fileId || '').trim();
+      var pubMime = String(payload.mimeType || 'audio/mpeg');
+      var pubFile = DriveApp.getFileById(pubFileId);
+      pubFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      var isPubImg = pubMime.indexOf('image/') === 0;
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'setFilePublic',
+        fileId: pubFileId,
+        viewUrl: pubFile.getUrl(),
+        directUrl: isPubImg
+          ? 'https://lh3.googleusercontent.com/d/' + pubFileId
+          : 'https://docs.google.com/uc?export=download&id=' + pubFileId
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -177,6 +209,7 @@ function doPost(e) {
         var totalBytes = Number(payload.total) || (endByte + 1);
         var putRes = UrlFetchApp.fetch(payload.uploadUrl, {
           method: 'put',
+          contentType: cMime,
           headers: {
             'Content-Range': 'bytes ' + startByte + '-' + endByte + '/' + totalBytes
           },
