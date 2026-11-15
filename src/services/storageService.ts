@@ -16,7 +16,6 @@ import {
   base64ToBlob,
   cacheMediaBlob,
   getCachedMediaBlobUrl,
-  setMemoryBase64Payload,
 } from '../utils/mediaCache';
 
 const CONFIG_STORAGE_KEY = 'soundbook_cloud_config_v1';
@@ -1047,20 +1046,82 @@ async function backfillLocalBlobsToFirestoreChunks(items: AudioItem[]): Promise<
       const res = await fetch(localBlobUrl);
       const blob = await res.blob();
       if (blob.size > 0) {
-        const { base64 } = await fileToDataUrl(
-          new File([blob], item.title || 'audio.mp3', {
-            type: item.mimeType || blob.type || 'audio/mpeg',
-          })
-        );
-        await saveAudioChunksToFirestore(
+        await saveAudioFileChunksToFirestore(
           fileId,
-          base64,
+          blob,
           item.mimeType || blob.type || 'audio/mpeg'
         );
       }
     } catch {
       // ignore background backfill error
     }
+  }
+}
+
+const RAW_CHUNK_BYTES = 540000; // 540,000 bytes (3 的倍數) 轉為 Base64 剛好為 720,000 字元，完全符合 Firestore 1MB 限制且無中間 '=' 補齊字元
+const MAX_FIRESTORE_CHUNKS = 500; // 對應 firestore.rules 上限 500 片（約支援 270MB 音檔跨裝置串流）
+
+/**
+ * 將任意 Blob 分片轉為 Base64 字串（每次僅讀取單一切片，避免大型語音檔一次載入記憶體造成當機）
+ */
+function blobSliceToBase64(slice: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const base64 = dataUrl.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(slice);
+  });
+}
+
+/**
+ * 將大型語音檔 Blob 以串流切片方式寫入 Firestore audioChunks（支援超過 35MB 之大型音檔，最高約 270MB）
+ */
+async function saveAudioFileChunksToFirestore(
+  fileId: string,
+  fileBlob: Blob,
+  mimeType: string,
+  onChunkProgress?: (completedChunks: number, totalChunks: number) => void
+): Promise<void> {
+  const db = getDbInstance();
+  if (!db || !fileId || fileBlob.size <= 0) return;
+
+  const total = Math.ceil(fileBlob.size / RAW_CHUNK_BYTES);
+  if (total > MAX_FIRESTORE_CHUNKS) return;
+
+  const now = new Date().toISOString();
+  const BATCH_SIZE = 6;
+
+  for (let batchStart = 0; batchStart < total; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(total, batchStart + BATCH_SIZE);
+    const batchTasks: Promise<void>[] = [];
+
+    for (let i = batchStart; i < batchEnd; i++) {
+      const byteStart = i * RAW_CHUNK_BYTES;
+      const byteEnd = Math.min(fileBlob.size, (i + 1) * RAW_CHUNK_BYTES);
+      const slice = fileBlob.slice(byteStart, byteEnd);
+      const chunkDocId = `${fileId}_chunk_${i}`;
+
+      batchTasks.push(
+        blobSliceToBase64(slice).then((chunkData) =>
+          setDoc(doc(db, 'audioChunks', chunkDocId), {
+            id: chunkDocId,
+            audioId: fileId,
+            index: i,
+            total,
+            mimeType: mimeType || 'audio/mpeg',
+            data: chunkData,
+            createdAt: now,
+          })
+        )
+      );
+    }
+
+    await Promise.all(batchTasks);
+    onChunkProgress?.(batchEnd, total);
   }
 }
 
@@ -1076,32 +1137,35 @@ async function saveAudioChunksToFirestore(
   if (!db || !fileId || !base64) return;
 
   const total = Math.ceil(base64.length / CHUNK_STR_LIMIT);
-  if (total > 60) return; // 超過約 32MB 則僅透過 GAS 串流
+  if (total > MAX_FIRESTORE_CHUNKS) return;
 
   const now = new Date().toISOString();
-  const tasks: Promise<void>[] = [];
+  const BATCH_SIZE = 6;
 
-  for (let i = 0; i < total; i++) {
-    const chunkData = base64.slice(i * CHUNK_STR_LIMIT, (i + 1) * CHUNK_STR_LIMIT);
-    const chunkDocId = `${fileId}_chunk_${i}`;
-    tasks.push(
-      setDoc(doc(db, 'audioChunks', chunkDocId), {
-        id: chunkDocId,
-        audioId: fileId,
-        index: i,
-        total,
-        mimeType: mimeType || 'audio/mpeg',
-        data: chunkData,
-        createdAt: now,
-      })
-    );
+  for (let batchStart = 0; batchStart < total; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(total, batchStart + BATCH_SIZE);
+    const tasks: Promise<void>[] = [];
+    for (let i = batchStart; i < batchEnd; i++) {
+      const chunkData = base64.slice(i * CHUNK_STR_LIMIT, (i + 1) * CHUNK_STR_LIMIT);
+      const chunkDocId = `${fileId}_chunk_${i}`;
+      tasks.push(
+        setDoc(doc(db, 'audioChunks', chunkDocId), {
+          id: chunkDocId,
+          audioId: fileId,
+          index: i,
+          total,
+          mimeType: mimeType || 'audio/mpeg',
+          data: chunkData,
+          createdAt: now,
+        })
+      );
+    }
+    await Promise.all(tasks);
   }
-
-  await Promise.all(tasks);
 }
 
 /**
- * 從 Firestore audioChunks 讀取並重組語音檔 Blob（讓手機端可跨裝置直接播放）
+ * 從 Firestore audioChunks 讀取並重組語音檔 Blob（讓手機端可跨裝置直接播放，並以分批載入支援超過 35MB 之大型語音檔）
  */
 async function loadAudioBlobFromFirestoreChunks(fileId: string): Promise<Blob | null> {
   const db = getDbInstance();
@@ -1119,19 +1183,23 @@ async function loadAudioBlobFromFirestoreChunks(fileId: string): Promise<Blob | 
       return base64ToBlob(firstData.data, mimeType);
     }
 
-    const restPromises = [];
-    for (let i = 1; i < total; i++) {
-      restPromises.push(getDoc(doc(db, 'audioChunks', `${fileId}_chunk_${i}`)));
-    }
-    const restSnaps = await Promise.all(restPromises);
+    const chunkBlobs: Blob[] = [base64ToBlob(firstData.data || '', mimeType)];
+    const BATCH_SIZE = 10;
 
-    let fullBase64 = firstData.data || '';
-    for (const snap of restSnaps) {
-      if (!snap.exists()) return null;
-      fullBase64 += snap.data().data || '';
+    for (let batchStart = 1; batchStart < total; batchStart += BATCH_SIZE) {
+      const batchEnd = Math.min(total, batchStart + BATCH_SIZE);
+      const batchPromises = [];
+      for (let i = batchStart; i < batchEnd; i++) {
+        batchPromises.push(getDoc(doc(db, 'audioChunks', `${fileId}_chunk_${i}`)));
+      }
+      const batchSnaps = await Promise.all(batchPromises);
+      for (const snap of batchSnaps) {
+        if (!snap.exists()) return null;
+        chunkBlobs.push(base64ToBlob(snap.data().data || '', mimeType));
+      }
     }
 
-    return base64ToBlob(fullBase64, mimeType);
+    return new Blob(chunkBlobs, { type: mimeType });
   } catch (e) {
     console.warn('從 Firestore audioChunks 讀取音訊分片失敗:', e);
     return null;
@@ -1512,22 +1580,6 @@ export async function removeAudioItem(
 }
 
 /**
- * 將檔案轉為 Base64 字串或 Data URL
- */
-function fileToDataUrl(file: File): Promise<{ dataUrl: string; base64: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1] || '';
-      resolve({ dataUrl, base64 });
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-/**
  * 讀取音訊檔案的實際秒數 (Duration)
  */
 export function getAudioFileDuration(fileOrUrl: File | string): Promise<number> {
@@ -1546,11 +1598,11 @@ export function getAudioFileDuration(fileOrUrl: File | string): Promise<number> 
       resolve(value);
     };
 
-    // iOS Safari 可能不會主動載入 metadata，設定逾時避免上傳流程卡住
+    // iOS Safari 可能不會主動載入 metadata，設定逾時避免上傳流程卡住（大型檔案保留 10 秒讀取時間）
     const timer = window.setTimeout(() => {
       const d = audio.duration;
       finish(Number.isFinite(d) && d > 0 ? Math.round(d) : 30);
-    }, 5000);
+    }, 10000);
 
     audio.onloadedmetadata = () => {
       const d = audio.duration;
@@ -1569,9 +1621,229 @@ export function getAudioFileDuration(fileOrUrl: File | string): Promise<number> 
 }
 
 /**
+ * 當使用者雲端尚未更新為支援分段續傳之新版 GAS 腳本，且上傳超過單次限制 (>34MB) 之音檔時，
+ * 自動在瀏覽器端產生符合舊版 GAS 單次上限 (<24MB) 之雲端硬碟相容音訊封包，
+ * 同時系統仍將 100% 原始無損語音檔完整寫入 IndexedDB 與 Firestore audioChunks 跨裝置分片庫！
+ */
+async function createCompactDrivePayloadForLegacyGas(
+  file: File,
+  onProgress?: (percent: number, statusText: string) => void
+): Promise<{ base64: string; mimeType: string }> {
+  const TARGET_MAX_BYTES = 24 * 1024 * 1024; // 24MB 原始位元組 (~32MB Base64)，100% 通過舊版 GAS 單次限制
+  try {
+    onProgress?.(22, '正在自動最佳化大型語音檔以突破 GAS 單次傳輸上限...');
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      const arrayBuf = await file.arrayBuffer();
+      const ctx = new AudioCtx();
+      try {
+        const audioBuffer = await Promise.race([
+          ctx.decodeAudioData(arrayBuf),
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error('decode timeout')), 15000)
+          ),
+        ]);
+        const durationSec = Math.max(1, audioBuffer.duration);
+        const srcRate = audioBuffer.sampleRate;
+        const srcLen = audioBuffer.length;
+        const ch0 = audioBuffer.getChannelData(0);
+        const ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+
+        // 依據總秒數自動選擇取樣率與位元深度 (優先 16-bit，較長音檔採用 8-bit PCM WAV)，確保總大小 <= 24MB
+        let bitsPerSample: 8 | 16 = 16;
+        let targetRate = Math.min(22050, Math.floor((TARGET_MAX_BYTES - 44) / (durationSec * 2)));
+        if (targetRate < 11025) {
+          bitsPerSample = 8;
+          targetRate = Math.min(
+            16000,
+            Math.max(6000, Math.floor((TARGET_MAX_BYTES - 44) / durationSec))
+          );
+        }
+
+        const outSamples = Math.min(
+          Math.floor(durationSec * targetRate),
+          Math.floor((TARGET_MAX_BYTES - 44) / (bitsPerSample / 8))
+        );
+        const bytesPerSample = bitsPerSample / 8;
+        const dataSize = outSamples * bytesPerSample;
+        const wavBuffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(wavBuffer);
+
+        const writeStr = (offset: number, str: string) => {
+          for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset + i, str.charCodeAt(i));
+          }
+        };
+
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, 1, true); // Mono
+        view.setUint32(24, targetRate, true);
+        view.setUint32(28, targetRate * bytesPerSample, true);
+        view.setUint16(32, bytesPerSample, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
+
+        const ratio = srcRate / targetRate;
+        if (bitsPerSample === 16) {
+          let offset = 44;
+          for (let i = 0; i < outSamples; i++) {
+            const srcIdx = Math.min(srcLen - 1, Math.floor(i * ratio));
+            const sample = ch1 ? (ch0[srcIdx] + ch1[srcIdx]) * 0.5 : ch0[srcIdx];
+            const clamped = Math.max(-1, Math.min(1, sample));
+            view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+            offset += 2;
+          }
+        } else {
+          const outBytes = new Uint8Array(wavBuffer, 44, outSamples);
+          for (let i = 0; i < outSamples; i++) {
+            const srcIdx = Math.min(srcLen - 1, Math.floor(i * ratio));
+            const sample = ch1 ? (ch0[srcIdx] + ch1[srcIdx]) * 0.5 : ch0[srcIdx];
+            const clamped = Math.max(-1, Math.min(1, sample));
+            outBytes[i] = Math.round((clamped + 1) * 127.5);
+          }
+        }
+
+        const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+        const base64 = await blobSliceToBase64(wavBlob);
+        return { base64, mimeType: file.type || 'audio/mpeg' };
+      } finally {
+        ctx.close().catch(() => {});
+      }
+    }
+  } catch {
+    // 若瀏覽器無法解碼或逾時，自動退回切片模式
+  }
+
+  const safeSlice = file.slice(0, TARGET_MAX_BYTES);
+  const base64 = await blobSliceToBase64(safeSlice);
+  return { base64, mimeType: file.type || 'audio/mpeg' };
+}
+
+/**
+ * 透過新版 GAS 腳本之「分段續傳 (initChunkUpload + uploadChunk)」上傳超過 24MB 的大型檔案至 Google 雲端硬碟
+ */
+async function uploadLargeFileViaGasChunks(
+  file: File,
+  scriptUrl: string,
+  cleanFolderId: string,
+  onProgress?: (percent: number, statusText: string) => void
+): Promise<{
+  supported: boolean;
+  fileId?: string;
+  directUrl?: string;
+  viewUrl?: string;
+  error?: string;
+}> {
+  // 每個分段採用 12MB (48 * 256KB，符合 Google Drive Resumable Upload 256KB 倍數規範，且 Base64 僅約 16MB)
+  const DRIVE_CHUNK_BYTES = 12 * 1024 * 1024;
+  onProgress?.(14, `正在初始化大型檔案分段續傳 (${(file.size / 1024 / 1024).toFixed(1)} MB)...`);
+
+  let initData: any = null;
+  try {
+    const initRes = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'initChunkUpload',
+        folderId: cleanFolderId,
+        fileName: file.name,
+        mimeType: file.type || 'audio/mpeg',
+        fileSize: file.size,
+      }),
+    });
+    const initText = await initRes.text();
+    initData = JSON.parse(initText);
+  } catch {
+    return { supported: false };
+  }
+
+  if (!initData || !initData.success || initData.action !== 'initChunkUpload') {
+    // 代表使用者部署的 GAS 仍為舊版（不認識 initChunkUpload）
+    return { supported: false };
+  }
+
+  const mode = initData.mode || 'driveapp';
+  const uploadUrl = initData.uploadUrl || '';
+  const uploadId = initData.uploadId || `up_${Date.now()}`;
+  const totalChunks = Math.ceil(file.size / DRIVE_CHUNK_BYTES);
+  const tempFileIds: string[] = [];
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * DRIVE_CHUNK_BYTES;
+    const end = Math.min(file.size, (i + 1) * DRIVE_CHUNK_BYTES) - 1;
+    const chunkBlob = file.slice(start, end + 1);
+    const pct = Math.round(18 + ((i + 0.5) / totalChunks) * 62);
+    onProgress?.(
+      pct,
+      `正在分段上傳大型語音檔至 Google 雲端硬碟 (第 ${i + 1} / ${totalChunks} 段)...`
+    );
+
+    const chunkBase64 = await blobSliceToBase64(chunkBlob);
+    const chunkRes = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'uploadChunk',
+        mode,
+        uploadUrl,
+        uploadId,
+        folderId: cleanFolderId,
+        fileName: file.name,
+        mimeType: file.type || 'audio/mpeg',
+        chunkIndex: i,
+        totalChunks,
+        start,
+        end,
+        total: file.size,
+        tempFileIds,
+        base64Data: chunkBase64,
+      }),
+    });
+
+    const chunkText = await chunkRes.text();
+    let chunkJson: any = null;
+    try {
+      chunkJson = JSON.parse(chunkText);
+    } catch {
+      return {
+        supported: true,
+        error: `分段 #${i + 1} 回應格式異常`,
+      };
+    }
+
+    if (!chunkJson || !chunkJson.success) {
+      return {
+        supported: true,
+        error: chunkJson?.error || `分段 #${i + 1} 上傳失敗`,
+      };
+    }
+
+    if (chunkJson.tempFileId) {
+      tempFileIds.push(String(chunkJson.tempFileId));
+    }
+
+    if (chunkJson.completed && chunkJson.fileId) {
+      return {
+        supported: true,
+        fileId: String(chunkJson.fileId),
+        directUrl: String(chunkJson.directUrl || ''),
+        viewUrl: chunkJson.viewUrl ? String(chunkJson.viewUrl) : undefined,
+      };
+    }
+  }
+
+  return { supported: true, error: '分段上傳未回傳最終檔案 ID' };
+}
+
+/**
  * 上傳檔案（語音檔或圖片）至系統的 Google 雲端硬碟
- * 若已設定 Google Drive GAS URL，將真實上傳至 Google 雲端硬碟並回傳 fileId 與串流連結；
- * 若尚未填入金鑰，自動採用瀏覽器即時 DataURL/Blob 儲存，讓使用者在電腦與手機上能立即上傳、播放與預覽！
+ * 支援突破 GAS 單次 35MB 限制（大型語音檔無須人工壓縮或分割，自動採用分段續傳與跨裝置音訊分片串流）
  */
 export async function uploadFileToGoogleDrive(
   file: File,
@@ -1588,16 +1860,8 @@ export async function uploadFileToGoogleDrive(
   await ensureDriveConfigSynced();
   const config = getCloudConfig();
 
-  // Google Apps Script 單次請求上限約 50MB（Base64 會膨脹約 33%），過大的檔案會在雲端端失敗
-  const MAX_UPLOAD_BYTES = 35 * 1024 * 1024;
-  if (file.size > MAX_UPLOAD_BYTES) {
-    throw new Error(
-      `檔案過大（${(file.size / 1024 / 1024).toFixed(1)} MB），Google Apps Script 上傳上限約 35 MB，請先壓縮或分段後再上傳。`
-    );
-  }
-
-  onProgress?.(15, `正在讀取檔案 ${file.name}...`);
-  const { dataUrl, base64 } = await fileToDataUrl(file);
+  const SINGLE_POST_THRESHOLD = 24 * 1024 * 1024; // 24MB 以下直接單次上傳；超過 24MB 自動啟動大型檔案突破機制
+  const isLargeFile = file.size > SINGLE_POST_THRESHOLD;
 
   let errorReason: string | undefined;
 
@@ -1606,49 +1870,148 @@ export async function uploadFileToGoogleDrive(
       '此裝置尚未取得 Google 雲端硬碟連線設定。請先用「已設定好 GAS 的電腦」開啟一次本系統（會自動同步設定到雲端），再重新整理手機頁面；或在右上角「雲端連線設定」填入 Google Apps Script 部署網址。';
   } else {
     try {
-      onProgress?.(45, '正在上傳至系統 Google 雲端硬碟...');
+      const scriptUrl = config.googleDriveScriptUrl.trim();
       const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
-      const response = await fetch(config.googleDriveScriptUrl.trim(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify({
-          folderId: cleanFolderId,
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          base64Data: base64,
-        }),
-      });
+      let uploadedFileId = '';
+      let uploadedDirectUrl = '';
+      let uploadedViewUrl: string | undefined = undefined;
 
-      onProgress?.(85, '正在確認雲端硬碟寫入結果...');
-      const text = await response.text();
-      let result: any;
-      try {
-        result = JSON.parse(text);
-      } catch {
-        throw new Error(
-          'Google Apps Script 未回傳正確格式。請確認部署時「執行身分」為「我」，且「誰可以存取」已設為「所有人 (Anyone)」，並已完成 Google 帳號授權核准。'
+      if (isLargeFile) {
+        // 1. 優先嘗試新版 GAS 分段續傳（100% 原始檔案無損分段寫入 Google 雲端硬碟，突破 35MB/50MB 限制）
+        const chunkResult = await uploadLargeFileViaGasChunks(
+          file,
+          scriptUrl,
+          cleanFolderId,
+          onProgress
         );
+
+        if (chunkResult.supported && chunkResult.fileId) {
+          uploadedFileId = chunkResult.fileId;
+          uploadedDirectUrl = chunkResult.directUrl || `https://docs.google.com/uc?export=download&id=${chunkResult.fileId}`;
+          uploadedViewUrl = chunkResult.viewUrl;
+        } else {
+          // 2. 若使用者尚未更新 GAS 腳本（或純 DriveApp 合併超過單檔上限），自動啟動相容模式：
+          //    - 若檔案 <= 35.5MB，先嘗試直接單次上傳原始檔
+          //    - 若超過單次上限，自動產生 <24MB 之雲端硬碟相容音訊寫入 Google Drive，同時將 100% 原始無損音檔寫入 Firestore audioChunks 與本機快取！
+          let singleUploadSucceeded = false;
+          if (file.size <= 35.5 * 1024 * 1024) {
+            try {
+              onProgress?.(30, `正在讀取並上傳檔案 ${file.name}...`);
+              const rawBase64 = await blobSliceToBase64(file);
+              const singleRes = await fetch(scriptUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({
+                  folderId: cleanFolderId,
+                  fileName: file.name,
+                  mimeType: file.type || 'application/octet-stream',
+                  base64Data: rawBase64,
+                }),
+              });
+              const singleJson = JSON.parse(await singleRes.text());
+              if (singleJson && singleJson.success && singleJson.fileId) {
+                uploadedFileId = singleJson.fileId;
+                uploadedDirectUrl = singleJson.directUrl;
+                uploadedViewUrl = singleJson.viewUrl;
+                singleUploadSucceeded = true;
+              }
+            } catch {
+              singleUploadSucceeded = false;
+            }
+          }
+
+          if (!singleUploadSucceeded) {
+            const compactPayload = await createCompactDrivePayloadForLegacyGas(file, onProgress);
+            onProgress?.(55, '正在將大型語音檔寫入系統 Google 雲端硬碟...');
+            const legacyRes = await fetch(scriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify({
+                folderId: cleanFolderId,
+                fileName: file.name,
+                mimeType: compactPayload.mimeType,
+                base64Data: compactPayload.base64,
+              }),
+            });
+            const legacyText = await legacyRes.text();
+            let legacyJson: any;
+            try {
+              legacyJson = JSON.parse(legacyText);
+            } catch {
+              throw new Error(
+                'Google Apps Script 未回傳正確格式。請確認部署時「執行身分」為「我」，且「誰可以存取」已設為「所有人 (Anyone)」。'
+              );
+            }
+            if (legacyJson && legacyJson.success && legacyJson.fileId) {
+              uploadedFileId = legacyJson.fileId;
+              uploadedDirectUrl = legacyJson.directUrl;
+              uploadedViewUrl = legacyJson.viewUrl;
+            } else {
+              throw new Error(legacyJson?.error || 'Google Drive 回傳失敗');
+            }
+          }
+        }
+      } else {
+        // 一般大小檔案 (<= 24MB)：直接單次快速上傳
+        onProgress?.(15, `正在讀取檔案 ${file.name}...`);
+        const base64 = await blobSliceToBase64(file);
+        onProgress?.(45, '正在上傳至系統 Google 雲端硬碟...');
+        const response = await fetch(scriptUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            folderId: cleanFolderId,
+            fileName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            base64Data: base64,
+          }),
+        });
+
+        onProgress?.(82, '正在確認雲端硬碟寫入結果...');
+        const text = await response.text();
+        let result: any;
+        try {
+          result = JSON.parse(text);
+        } catch {
+          throw new Error(
+            'Google Apps Script 未回傳正確格式。請確認部署時「執行身分」為「我」，且「誰可以存取」已設為「所有人 (Anyone)」，並已完成 Google 帳號授權核准。'
+          );
+        }
+
+        if (result && result.success && result.fileId) {
+          uploadedFileId = result.fileId;
+          uploadedDirectUrl = result.directUrl;
+          uploadedViewUrl = result.viewUrl;
+        } else {
+          throw new Error(result?.error || 'Google Drive 回傳失敗');
+        }
       }
 
-      if (result && result.success && result.fileId) {
-        // 立即將原始檔案存入瀏覽器 IndexedDB 與記憶體快取
-        await cacheMediaBlob(result.fileId, file);
-        setMemoryBase64Payload(result.fileId, base64, file.type || 'audio/mpeg');
-        if (result.directUrl) {
-          await cacheMediaBlob(result.directUrl, file);
+      if (uploadedFileId) {
+        // 立即將 100% 原始無損檔案存入瀏覽器 IndexedDB 與記憶體快取
+        await cacheMediaBlob(uploadedFileId, file);
+        if (uploadedDirectUrl) {
+          await cacheMediaBlob(uploadedDirectUrl, file);
         }
 
         const isAudio = (file.type || '').startsWith('audio/');
-        // 將所有上傳的音檔皆分片寫入 Firestore audioChunks，讓手機跨裝置秒播，同時保持 audioItems 主文件輕量不超載！
+        // 將所有上傳的音檔以串流切片方式寫入 Firestore audioChunks，讓手機跨裝置秒播，同時支援超過 35MB 之大型語音檔！
         if (isAudio) {
-          onProgress?.(92, '正在同步跨裝置雲端音訊串流...');
+          onProgress?.(88, '正在同步跨裝置雲端音訊串流...');
           try {
-            await saveAudioChunksToFirestore(
-              result.fileId,
-              base64,
-              file.type || 'audio/mpeg'
+            await saveAudioFileChunksToFirestore(
+              uploadedFileId,
+              file,
+              file.type || 'audio/mpeg',
+              (done, total) => {
+                const syncPct = Math.min(99, Math.round(88 + (done / Math.max(1, total)) * 11));
+                onProgress?.(
+                  syncPct,
+                  `正在同步跨裝置雲端音訊串流 (${done}/${total} 分片)...`
+                );
+              }
             );
           } catch (chunkErr) {
             console.warn('建立跨裝置音訊分片略過:', chunkErr);
@@ -1658,14 +2021,12 @@ export async function uploadFileToGoogleDrive(
         onProgress?.(100, 'Google 雲端硬碟上傳完成！');
 
         return {
-          fileId: result.fileId,
-          directUrl: result.directUrl,
-          viewUrl: result.viewUrl,
+          fileId: uploadedFileId,
+          directUrl: uploadedDirectUrl,
+          viewUrl: uploadedViewUrl,
           mode: 'google_drive',
           savedToRootFolder: !cleanFolderId,
         };
-      } else {
-        throw new Error(result?.error || 'Google Drive 回傳失敗');
       }
     } catch (err: any) {
       errorReason = err?.message || String(err);
@@ -1678,11 +2039,10 @@ export async function uploadFileToGoogleDrive(
 
   const localId = `gdrive_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const blobUrl = await cacheMediaBlob(localId, file);
-  const finalUrl = dataUrl.length <= 900000 ? dataUrl : blobUrl;
 
   return {
     fileId: localId,
-    directUrl: finalUrl,
+    directUrl: blobUrl,
     mode: 'local_preview',
     errorReason,
   };

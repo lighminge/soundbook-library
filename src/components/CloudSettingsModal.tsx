@@ -28,10 +28,17 @@ interface CloudSettingsModalProps {
   onSaved: () => void;
 }
 
-const GAS_SCRIPT_CODE = `// 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟自動上傳代理腳本
+const GAS_SCRIPT_CODE = `// 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟自動上傳代理腳本（支援 >35MB 大型語音檔分段續傳）
 // 貼上後請先選取「testDrivePermission」按上方「執行」完成授權，再點右上角「部署 -> 新增部署作業 (網頁應用程式 / 所有人)」
 function testDrivePermission() {
   const root = DriveApp.getRootFolder();
+  const token = ScriptApp.getOAuthToken();
+  try {
+    UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/about?fields=user', {
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+  } catch (e) {}
   Logger.log('授權成功：' + root.getName());
 }
 
@@ -108,6 +115,147 @@ function doPost(e) {
         oldFileName: oldName,
         fileName: newName
       })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 4. 大型檔案 (>24MB) 分段續傳初始化：突破 GAS 單次 50MB 限制
+    if (payload.action === 'initChunkUpload') {
+      var initFolderId = cleanFolderId(payload.folderId);
+      var initFileName = payload.fileName || ('soundbook_' + new Date().getTime());
+      var initMimeType = payload.mimeType || 'audio/mpeg';
+      var initFileSize = Number(payload.fileSize) || 0;
+      try {
+        var meta = { name: initFileName, mimeType: initMimeType };
+        if (initFolderId) meta.parents = [initFolderId];
+        var initHeaders = {
+          Authorization: 'Bearer ' + ScriptApp.getOAuthToken(),
+          'X-Upload-Content-Type': initMimeType
+        };
+        if (initFileSize > 0) {
+          initHeaders['X-Upload-Content-Length'] = String(initFileSize);
+        }
+        var initRes = UrlFetchApp.fetch(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+          {
+            method: 'post',
+            contentType: 'application/json; charset=UTF-8',
+            headers: initHeaders,
+            payload: JSON.stringify(meta),
+            muteHttpExceptions: true
+          }
+        );
+        var resHeaders = initRes.getAllHeaders();
+        var locationUrl = resHeaders['Location'] || resHeaders['location'];
+        if (locationUrl) {
+          return ContentService.createTextOutput(JSON.stringify({
+            success: true,
+            action: 'initChunkUpload',
+            mode: 'resumable',
+            uploadUrl: String(locationUrl)
+          })).setMimeType(ContentService.MimeType.JSON);
+        }
+      } catch (resumableErr) {
+        // 若尚未授權 UrlFetchApp，自動退回純 DriveApp 分段暫存合併模式
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        action: 'initChunkUpload',
+        mode: 'driveapp',
+        uploadId: 'up_' + new Date().getTime()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 5. 大型檔案 (>24MB) 分段續傳接收與合併
+    if (payload.action === 'uploadChunk') {
+      var chunkBytes = Utilities.base64Decode(payload.base64Data);
+      var cMime = payload.mimeType || 'audio/mpeg';
+      var cFileName = payload.fileName || ('soundbook_' + new Date().getTime());
+      var cFolderId = cleanFolderId(payload.folderId);
+
+      if (payload.mode === 'resumable' && payload.uploadUrl) {
+        var startByte = Number(payload.start) || 0;
+        var endByte = Number(payload.end) || (startByte + chunkBytes.length - 1);
+        var totalBytes = Number(payload.total) || (endByte + 1);
+        var putRes = UrlFetchApp.fetch(payload.uploadUrl, {
+          method: 'put',
+          headers: {
+            'Content-Range': 'bytes ' + startByte + '-' + endByte + '/' + totalBytes
+          },
+          payload: chunkBytes,
+          muteHttpExceptions: true
+        });
+        var code = putRes.getResponseCode();
+        if (code === 308) {
+          return ContentService.createTextOutput(JSON.stringify({
+            success: true,
+            action: 'uploadChunk',
+            completed: false
+          })).setMimeType(ContentService.MimeType.JSON);
+        }
+        if (code === 200 || code === 201) {
+          var createdObj = JSON.parse(putRes.getContentText());
+          var createdId = createdObj.id;
+          var createdFile = DriveApp.getFileById(createdId);
+          createdFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          var isImg = cMime.indexOf('image/') === 0;
+          return ContentService.createTextOutput(JSON.stringify({
+            success: true,
+            action: 'uploadChunk',
+            completed: true,
+            fileId: createdId,
+            viewUrl: createdFile.getUrl(),
+            directUrl: isImg
+              ? 'https://lh3.googleusercontent.com/d/' + createdId
+              : 'https://docs.google.com/uc?export=download&id=' + createdId
+          })).setMimeType(ContentService.MimeType.JSON);
+        }
+        throw new Error('Resumable chunk HTTP ' + code + ': ' + putRes.getContentText());
+      }
+
+      // 純 DriveApp 分段暫存與最終合併模式
+      var targetFolder = cFolderId ? DriveApp.getFolderById(cFolderId) : DriveApp.getRootFolder();
+      var chunkIdx = Number(payload.chunkIndex) || 0;
+      var totalChunks = Number(payload.totalChunks) || 1;
+      if (chunkIdx < totalChunks - 1) {
+        var tempBlob = Utilities.newBlob(
+          chunkBytes,
+          'application/octet-stream',
+          '.soundbook_tmp_' + (payload.uploadId || 'part') + '_' + chunkIdx
+        );
+        var tempFile = targetFolder.createFile(tempBlob);
+        return ContentService.createTextOutput(JSON.stringify({
+          success: true,
+          action: 'uploadChunk',
+          completed: false,
+          tempFileId: tempFile.getId()
+        })).setMimeType(ContentService.MimeType.JSON);
+      } else {
+        var tempIds = payload.tempFileIds || [];
+        var allBytes = [];
+        for (var t = 0; t < tempIds.length; t++) {
+          var tf = DriveApp.getFileById(tempIds[t]);
+          var tb = tf.getBlob().getBytes();
+          allBytes = allBytes.concat(tb);
+        }
+        allBytes = allBytes.concat(chunkBytes);
+        var finalBlob = Utilities.newBlob(allBytes, cMime, cFileName);
+        var finalFile = targetFolder.createFile(finalBlob);
+        finalFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        for (var d = 0; d < tempIds.length; d++) {
+          try { DriveApp.getFileById(tempIds[d]).setTrashed(true); } catch (e2) {}
+        }
+        var finalId = finalFile.getId();
+        var isImg2 = cMime.indexOf('image/') === 0;
+        return ContentService.createTextOutput(JSON.stringify({
+          success: true,
+          action: 'uploadChunk',
+          completed: true,
+          fileId: finalId,
+          viewUrl: finalFile.getUrl(),
+          directUrl: isImg2
+            ? 'https://lh3.googleusercontent.com/d/' + finalId
+            : 'https://docs.google.com/uc?export=download&id=' + finalId
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
     }
 
     const folderId = cleanFolderId(payload.folderId);
