@@ -134,6 +134,7 @@ import {
   Copy,
   QrCode,
   CheckCircle2,
+  ArrowUpDown,
 } from 'lucide-react';
 import { AudioItem, Category } from '../types';
 import { getAudioItemCallNumberMap } from '../utils/audioFileUtils';
@@ -905,6 +906,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 每個館藏主題書架之分頁狀態（當前頁碼與每頁數量，預設每頁 8 部）
   const [categoryPageMap, setCategoryPageMap] = useState<Record<string, number>>({});
   const [categoryPageSizeMap, setCategoryPageSizeMap] = useState<Record<string, number>>({});
+  // 每個館藏主題書架之排序狀態（依編號 callNumber、上傳日期 createdAt、檔案名稱 title；由小到大 asc、由大到小 desc）
+  const [categorySortByMap, setCategorySortByMap] = useState<
+    Record<string, 'callNumber' | 'createdAt' | 'title'>
+  >({});
+  const [categorySortOrderMap, setCategorySortOrderMap] = useState<
+    Record<string, 'asc' | 'desc'>
+  >({});
   // 每個館藏主題書架之主講人篩選狀態（點擊標題列主講人統計標籤即可快速切換）
   const [categorySpeakerFilterMap, setCategorySpeakerFilterMap] = useState<Record<string, string>>({});
   // 每個館藏主題書架之「查詢」關鍵字狀態與「類別標籤」下拉篩選狀態
@@ -1889,37 +1897,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           const activeSpeakerFilter = categorySpeakerFilterMap[category.id] || '';
           const activeTagFilter = categoryTagFilterMap[category.id] || '';
           const activeSearchQuery = (categorySearchQueryMap[category.id] || '').trim().toLowerCase();
+          const sortBy = categorySortByMap[category.id] || 'callNumber';
+          const sortOrder = categorySortOrderMap[category.id] || 'asc';
 
-          const filteredCategoryItems = itemsInCat.filter((item) => {
-            // 1. 主講人篩選
-            if (activeSpeakerFilter) {
-              if (activeSpeakerFilter === '__unassigned__') {
-                if (item.speaker && item.speaker.trim()) return false;
-              } else if (item.speaker?.trim() !== activeSpeakerFilter) {
-                return false;
+          const filteredCategoryItems = itemsInCat
+            .filter((item) => {
+              // 1. 主講人篩選
+              if (activeSpeakerFilter) {
+                if (activeSpeakerFilter === '__unassigned__') {
+                  if (item.speaker && item.speaker.trim()) return false;
+                } else if (item.speaker?.trim() !== activeSpeakerFilter) {
+                  return false;
+                }
               }
-            }
 
-            // 2. 類別標籤篩選
-            if (activeTagFilter) {
-              if (!item.tags || !item.tags.includes(activeTagFilter)) {
-                return false;
+              // 2. 類別標籤篩選
+              if (activeTagFilter) {
+                if (!item.tags || !item.tags.includes(activeTagFilter)) {
+                  return false;
+                }
               }
-            }
 
-            // 3. 關鍵字查詢 (搜尋檔名、主講人、故事描述、標籤)
-            if (activeSearchQuery) {
-              const matchTitle = (item.title || '').toLowerCase().includes(activeSearchQuery);
-              const matchDesc = (item.description || '').toLowerCase().includes(activeSearchQuery);
-              const matchSpeaker = (item.speaker || '').toLowerCase().includes(activeSearchQuery);
-              const matchTags = (item.tags || []).some((tg) => tg.toLowerCase().includes(activeSearchQuery));
-              if (!matchTitle && !matchDesc && !matchSpeaker && !matchTags) {
-                return false;
+              // 3. 關鍵字查詢 (搜尋檔名、主講人、故事描述、標籤)
+              if (activeSearchQuery) {
+                const matchTitle = (item.title || '').toLowerCase().includes(activeSearchQuery);
+                const matchDesc = (item.description || '').toLowerCase().includes(activeSearchQuery);
+                const matchSpeaker = (item.speaker || '').toLowerCase().includes(activeSearchQuery);
+                const matchTags = (item.tags || []).some((tg) => tg.toLowerCase().includes(activeSearchQuery));
+                if (!matchTitle && !matchDesc && !matchSpeaker && !matchTags) {
+                  return false;
+                }
               }
-            }
 
-            return true;
-          });
+              return true;
+            })
+            .sort((a, b) => {
+              let cmp = 0;
+              if (sortBy === 'callNumber') {
+                const callA = audioCallNumberMap.get(a.id) || `${category.code}-1`;
+                const callB = audioCallNumberMap.get(b.id) || `${category.code}-1`;
+                cmp = callA.localeCompare(callB, 'zh-Hant', { numeric: true });
+              } else if (sortBy === 'createdAt') {
+                const timeA = new Date(a.createdAt || 0).getTime();
+                const timeB = new Date(b.createdAt || 0).getTime();
+                cmp = timeA - timeB;
+              } else if (sortBy === 'title') {
+                cmp = (a.title || '').localeCompare(b.title || '', 'zh-Hant', { numeric: true });
+              }
+              if (cmp === 0) {
+                const callA = audioCallNumberMap.get(a.id) || `${category.code}-1`;
+                const callB = audioCallNumberMap.get(b.id) || `${category.code}-1`;
+                cmp = callA.localeCompare(callB, 'zh-Hant', { numeric: true });
+              }
+              if (cmp === 0) {
+                cmp = a.id.localeCompare(b.id);
+              }
+              return sortOrder === 'asc' ? cmp : -cmp;
+            });
 
           // 本分類專屬分頁計算（預設每頁 8 部，亦可自選 4, 8, 12, 16 或全部）
           const pageSize = categoryPageSizeMap[category.id] || 8;
@@ -2093,9 +2127,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </button>
                   </div>
 
-                  {/* (2) 查詢功能列 + (3) 右方類別標籤選單（置於分頁下拉功能的上方） */}
+                  {/* (2) 排序功能（置於分頁功能位置的上方） + 查詢功能列 + 右方類別標籤選單 */}
                   {itemsInCat.length > 0 && (
                     <div className="flex flex-wrap items-center gap-2 text-xs w-full md:w-auto justify-start md:justify-end">
+                      {/* 排序功能（置於下方「分頁功能」的正上方：依編號、上傳日期、檔案名稱；由小到大、由大到小） */}
+                      <div className="flex items-center gap-1.5 bg-black/35 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-white/25 text-xs shadow-xs shrink-0">
+                        <ArrowUpDown className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                        <span className="text-white/90 font-semibold whitespace-nowrap">排序：</span>
+                        <select
+                          value={sortBy}
+                          onChange={(e) => {
+                            const nextSortBy = e.target.value as 'callNumber' | 'createdAt' | 'title';
+                            setCategorySortByMap((prev) => ({ ...prev, [category.id]: nextSortBy }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="bg-black/50 text-white text-[11px] font-medium rounded px-1.5 py-0.5 border border-white/25 focus:outline-none focus:border-amber-300 cursor-pointer"
+                          title="選擇本廳館藏排序依據（編號、上傳日期、檔案名稱）"
+                        >
+                          <option value="callNumber" className="bg-[#2B1B11] text-white">依編號</option>
+                          <option value="createdAt" className="bg-[#2B1B11] text-white">依上傳日期</option>
+                          <option value="title" className="bg-[#2B1B11] text-white">依檔案名稱</option>
+                        </select>
+                        <select
+                          value={sortOrder}
+                          onChange={(e) => {
+                            const nextOrder = e.target.value as 'asc' | 'desc';
+                            setCategorySortOrderMap((prev) => ({ ...prev, [category.id]: nextOrder }));
+                            setCategoryPageMap((prev) => ({ ...prev, [category.id]: 1 }));
+                          }}
+                          className="bg-black/50 text-white text-[11px] font-medium rounded px-1.5 py-0.5 border border-white/25 focus:outline-none focus:border-amber-300 cursor-pointer"
+                          title="選擇排序順序（由小到大、由大到小）"
+                        >
+                          <option value="asc" className="bg-[#2B1B11] text-white">由小到大</option>
+                          <option value="desc" className="bg-[#2B1B11] text-white">由大到小</option>
+                        </select>
+                      </div>
+
                       {/* 關鍵字查詢輸入框 */}
                       <div className="relative min-w-[180px] sm:min-w-[210px] flex-1 md:flex-initial">
                         <Search className="w-3.5 h-3.5 text-white/70 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
