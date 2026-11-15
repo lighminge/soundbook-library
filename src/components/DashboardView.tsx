@@ -1955,6 +1955,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               return sortOrder === 'asc' ? cmp : -cmp;
             });
 
+          // 統計本主題館藏語音時數（總秒數與分鐘數，以及篩選後的時數）
+          const categoryTotalDurationSec = itemsInCat.reduce((acc, item) => {
+            const d = Number(item.duration);
+            return acc + (Number.isFinite(d) && d > 0 ? d : 0);
+          }, 0);
+          const categoryTotalMinutes =
+            categoryTotalDurationSec > 0 ? Math.max(1, Math.round(categoryTotalDurationSec / 60)) : 0;
+
+          const filteredCategoryDurationSec = filteredCategoryItems.reduce((acc, item) => {
+            const d = Number(item.duration);
+            return acc + (Number.isFinite(d) && d > 0 ? d : 0);
+          }, 0);
+          const filteredCategoryMinutes =
+            filteredCategoryDurationSec > 0 ? Math.max(1, Math.round(filteredCategoryDurationSec / 60)) : 0;
+          const hasCategoryFilter = Boolean(activeSpeakerFilter || activeTagFilter || activeSearchQuery);
+
           // 本分類專屬分頁計算（預設每頁 8 部，亦可自選 4, 8, 12, 16 或全部）
           const pageSize = categoryPageSizeMap[category.id] || 8;
           const totalCount = filteredCategoryItems.length;
@@ -2037,68 +2053,101 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   </div>
 
-                  {/* 主講人語音檔案數統計徽章列 */}
+                  {/* 主講人語音檔案數統計與語音時數統計徽章列 */}
                   {itemsInCat.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-white/20 text-xs">
-                      <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
-                        <User className="w-3.5 h-3.5 text-amber-300" />
-                        <span>主講人統計：</span>
-                      </span>
-                      {sortedSpeakerStats.length > 0 ? (
-                        sortedSpeakerStats.map(({ speaker, count }) => {
-                          const isFilterActive = activeSpeakerFilter === speaker;
-                          return (
-                            <button
-                              key={speaker}
-                              type="button"
-                              onClick={() => handleToggleCategorySpeakerFilter(category.id, speaker)}
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
-                                isFilterActive
-                                  ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
-                                  : 'bg-black/30 hover:bg-black/45 text-[#FAF5EC] border-white/20'
-                              }`}
-                              title={`主講人「${speaker}」在此主題共 ${count} 部語音（點擊可篩選）`}
-                            >
-                              <span>{speaker}</span>
-                              <span className={isFilterActive ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-300 font-mono font-bold'}>
-                                ({count} 部)
-                              </span>
-                            </button>
-                          );
-                        })
-                      ) : (
-                        <span className="text-[11px] text-white/70 italic">尚無指定主講人</span>
-                      )}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 pt-2.5 border-t border-white/20 text-xs">
+                      {/* 左側：主講人統計 */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
+                          <User className="w-3.5 h-3.5 text-amber-300" />
+                          <span>主講人統計：</span>
+                        </span>
+                        {sortedSpeakerStats.length > 0 ? (
+                          sortedSpeakerStats.map(({ speaker, count }) => {
+                            const isFilterActive = activeSpeakerFilter === speaker;
+                            return (
+                              <button
+                                key={speaker}
+                                type="button"
+                                onClick={() => handleToggleCategorySpeakerFilter(category.id, speaker)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                                  isFilterActive
+                                    ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                                    : 'bg-black/30 hover:bg-black/45 text-[#FAF5EC] border-white/20'
+                                }`}
+                                title={`主講人「${speaker}」在此主題共 ${count} 部語音（點擊可篩選）`}
+                              >
+                                <span>{speaker}</span>
+                                <span className={isFilterActive ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-300 font-mono font-bold'}>
+                                  ({count} 部)
+                                </span>
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-white/70 italic">尚無指定主講人</span>
+                        )}
 
-                      {unassignedSpeakerCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleCategorySpeakerFilter(category.id, '__unassigned__')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
-                            activeSpeakerFilter === '__unassigned__'
-                              ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
-                              : 'bg-black/25 hover:bg-black/40 text-white/80 border-white/15'
-                          }`}
-                          title={`尚未指定主講人的語音共 ${unassignedSpeakerCount} 部（點擊可篩選）`}
+                        {unassignedSpeakerCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCategorySpeakerFilter(category.id, '__unassigned__')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] backdrop-blur-xs transition cursor-pointer border ${
+                              activeSpeakerFilter === '__unassigned__'
+                                ? 'bg-amber-400 text-[#2B1B11] border-amber-300 font-bold shadow-xs ring-2 ring-white/40'
+                                : 'bg-black/25 hover:bg-black/40 text-white/80 border-white/15'
+                            }`}
+                            title={`尚未指定主講人的語音共 ${unassignedSpeakerCount} 部（點擊可篩選）`}
+                          >
+                            <span>未指定</span>
+                            <span className={activeSpeakerFilter === '__unassigned__' ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-200/90 font-mono font-bold'}>
+                              ({unassignedSpeakerCount} 部)
+                            </span>
+                          </button>
+                        )}
+
+                        {activeSpeakerFilter && (
+                          <button
+                            type="button"
+                            onClick={() => handleClearCategorySpeakerFilter(category.id)}
+                            className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/25 hover:bg-white/35 text-[11px] text-white border border-white/30 cursor-pointer transition font-medium ml-1"
+                            title="清除主講人篩選，顯示本主題全部語音"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>清除主講人篩選</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 右方：語音時數統計 */}
+                      <div className="flex flex-wrap items-center gap-1.5 sm:pl-3 sm:border-l sm:border-white/25">
+                        <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1 shrink-0">
+                          <Clock className="w-3.5 h-3.5 text-amber-300" />
+                          <span>語音時數：</span>
+                        </span>
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] bg-black/30 text-[#FAF5EC] border border-white/20 backdrop-blur-xs"
+                          title={`本館藏分類共 ${itemsInCat.length} 部語音，總時長 ${categoryTotalMinutes} 分鐘 (${formatDuration(categoryTotalDurationSec)})`}
                         >
-                          <span>未指定</span>
-                          <span className={activeSpeakerFilter === '__unassigned__' ? 'text-[#2B1B11] font-mono font-bold' : 'text-amber-200/90 font-mono font-bold'}>
-                            ({unassignedSpeakerCount} 部)
+                          <span className="font-mono font-bold text-amber-300">
+                            {categoryTotalMinutes} 分鐘
                           </span>
-                        </button>
-                      )}
-
-                      {activeSpeakerFilter && (
-                        <button
-                          type="button"
-                          onClick={() => handleClearCategorySpeakerFilter(category.id)}
-                          className="inline-flex items-center gap-0.5 px-2.5 py-0.5 rounded-full bg-white/25 hover:bg-white/35 text-[11px] text-white border border-white/30 cursor-pointer transition font-medium ml-1"
-                          title="清除主講人篩選，顯示本主題全部語音"
-                        >
-                          <X className="w-3 h-3" />
-                          <span>清除主講人篩選</span>
-                        </button>
-                      )}
+                          <span className="font-mono text-white/85">
+                            ({formatDuration(categoryTotalDurationSec)})
+                          </span>
+                        </span>
+                        {hasCategoryFilter && filteredCategoryDurationSec !== categoryTotalDurationSec && (
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] bg-amber-400/20 text-amber-200 border border-amber-300/40 backdrop-blur-xs"
+                            title="目前篩選條件下的語音時數總計"
+                          >
+                            <span>篩選時數：</span>
+                            <span className="font-mono font-bold text-amber-300">
+                              {filteredCategoryMinutes} 分鐘 ({formatDuration(filteredCategoryDurationSec)})
+                            </span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
