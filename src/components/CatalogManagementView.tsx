@@ -35,6 +35,11 @@ import {
   QrCode,
   Lock,
   Mail,
+  Headphones,
+  Pause,
+  Volume2,
+  RotateCcw,
+  RotateCw,
 } from 'lucide-react';
 import { AudioItem, AudioTag, Category, Speaker } from '../types';
 import { PaginationBar } from './PaginationBar';
@@ -57,6 +62,8 @@ import {
 import {
   renameFileInGoogleDrive,
   downloadAudioItemFile,
+  fetchAudioBlobFromGoogleDrive,
+  extractDriveFileIdFromAudioItem,
   loadSavedSpeakers,
   saveSavedSpeaker,
   renameSavedSpeaker,
@@ -248,6 +255,130 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
       showToast(`❌ 下載失敗：${err?.message || '請稍後再試'}`);
     } finally {
       setDownloadingItemIds((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  // ============================================================================
+  // 單筆語音檔「原地即時試聽」狀態與控制（免切換至放映室即可直接聆聽）
+  // ============================================================================
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
+  const [previewAudioUrl, setPreviewAudioUrl] = useState<string>('');
+  const [isLoadingPreview, setIsLoadingPreview] = useState<boolean>(false);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState<boolean>(false);
+  const [previewCurrentTime, setPreviewCurrentTime] = useState<number>(0);
+  const [previewDuration, setPreviewDuration] = useState<number>(0);
+  const [previewPlaybackRate, setPreviewPlaybackRate] = useState<number>(1);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewRequestIdRef = useRef<number>(0);
+
+  const handleStopPreviewAudio = () => {
+    previewRequestIdRef.current++;
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current.currentTime = 0;
+    }
+    setPreviewItemId(null);
+    setPreviewAudioUrl('');
+    setIsLoadingPreview(false);
+    setIsPreviewPlaying(false);
+    setPreviewCurrentTime(0);
+    setPreviewDuration(0);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+    };
+  }, []);
+
+  const handleTogglePreviewAudio = async (item: AudioItem) => {
+    // 若點擊同一筆正在試聽的語音檔按鈕，則停止並收合試聽面板
+    if (previewItemId === item.id) {
+      handleStopPreviewAudio();
+      return;
+    }
+
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+    }
+
+    const reqId = ++previewRequestIdRef.current;
+    setPreviewItemId(item.id);
+    setPreviewAudioUrl('');
+    setIsLoadingPreview(true);
+    setIsPreviewPlaying(false);
+    setPreviewCurrentTime(0);
+    setPreviewDuration(item.duration || 0);
+
+    try {
+      let resolvedUrl: string | null = null;
+      if (item.audioUrl && /^(blob|data):/i.test(item.audioUrl)) {
+        resolvedUrl = item.audioUrl;
+      } else {
+        resolvedUrl = await fetchAudioBlobFromGoogleDrive(
+          extractDriveFileIdFromAudioItem(item),
+          item.id
+        );
+      }
+
+      if (previewRequestIdRef.current !== reqId) return;
+
+      const finalUrl = resolvedUrl || item.audioUrl || '';
+      if (!finalUrl) {
+        showToast('⚠️ 找不到此語音檔的音訊來源，無法試聽');
+        handleStopPreviewAudio();
+        return;
+      }
+
+      setPreviewAudioUrl(finalUrl);
+      setIsLoadingPreview(false);
+    } catch {
+      if (previewRequestIdRef.current !== reqId) return;
+      if (item.audioUrl) {
+        setPreviewAudioUrl(item.audioUrl);
+        setIsLoadingPreview(false);
+      } else {
+        showToast('⚠️ 語音檔載入失敗，請稍後再試');
+        handleStopPreviewAudio();
+      }
+    }
+  };
+
+  const handleTogglePreviewPlayPause = () => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.playbackRate = previewPlaybackRate;
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  };
+
+  const handleSeekPreviewAudio = (nextSeconds: number) => {
+    const audio = previewAudioRef.current;
+    const clamped = Math.max(0, Math.min(previewDuration || 0, nextSeconds));
+    setPreviewCurrentTime(clamped);
+    if (audio) {
+      audio.currentTime = clamped;
+    }
+  };
+
+  const handleSkipPreviewSeconds = (delta: number) => {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+    const maxDur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (previewDuration || 0);
+    const target = Math.max(0, Math.min(maxDur, audio.currentTime + delta));
+    audio.currentTime = target;
+    setPreviewCurrentTime(target);
+  };
+
+  const handleChangePreviewRate = (rate: number) => {
+    setPreviewPlaybackRate(rate);
+    if (previewAudioRef.current) {
+      previewAudioRef.current.playbackRate = rate;
     }
   };
   // 單筆語音檔「說明內容」即時編輯暫存 (key: item.id)
@@ -2315,11 +2446,46 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         </div>
                       </div>
 
-                      {/* 右側操作按鈕群：放映室播放、下載語音檔、SRT 編輯 */}
+                      {/* 右側操作按鈕群：試聽、放映室播放、下載語音檔、SRT 編輯 */}
                       <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
                         <button
                           type="button"
-                          onClick={() => onPlayInScreeningRoom(item)}
+                          onClick={() => handleTogglePreviewAudio(item)}
+                          title={
+                            previewItemId === item.id
+                              ? '停止試聽此語音檔'
+                              : '直接在此頁面試聽語音檔內容（免切換至放映室）'
+                          }
+                          className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 cursor-pointer transition shadow-2xs ${
+                            previewItemId === item.id
+                              ? 'bg-[#B45309] hover:bg-[#92400E] text-white ring-2 ring-amber-300'
+                              : 'bg-[#8B5A2B] hover:bg-[#6E451F] text-white'
+                          }`}
+                        >
+                          {previewItemId === item.id ? (
+                            isLoadingPreview ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Volume2 className="w-3.5 h-3.5 animate-pulse" />
+                            )
+                          ) : (
+                            <Headphones className="w-3.5 h-3.5" />
+                          )}
+                          <span>
+                            {previewItemId === item.id
+                              ? isLoadingPreview
+                                ? '載入試聽中...'
+                                : '停止試聽'
+                              : '試聽'}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (previewItemId) handleStopPreviewAudio();
+                            onPlayInScreeningRoom(item);
+                          }}
                           className="px-3 py-1.5 rounded-xl bg-[#EFE6D5] hover:bg-[#E2D4BC] text-[#3A2518] text-xs font-medium flex items-center gap-1 cursor-pointer"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
@@ -2361,6 +2527,141 @@ export const CatalogManagementView: React.FC<CatalogManagementViewProps> = ({
                         </button>
                       </div>
                     </div>
+
+                    {/* 原地即時試聽控制列（點擊「試聽」時於卡片內展開，免切換至放映室即可直接聆聽） */}
+                    {previewItemId === item.id && (
+                      <div className="bg-gradient-to-r from-[#3A2518] to-[#523522] text-[#FAF5EC] p-3 rounded-xl border border-[#8B5A2B] shadow-md space-y-2">
+                        {isLoadingPreview ? (
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2 text-amber-200 font-medium">
+                              <Loader2 className="w-4 h-4 animate-spin text-amber-300 shrink-0" />
+                              <span>正在從雲端/快取載入語音檔《{item.title}》供即時試聽...</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleStopPreviewAudio}
+                              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium flex items-center gap-1 cursor-pointer shrink-0"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>取消</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <audio
+                              ref={previewAudioRef}
+                              src={previewAudioUrl}
+                              autoPlay
+                              onPlay={() => {
+                                setIsPreviewPlaying(true);
+                                if (previewAudioRef.current) {
+                                  previewAudioRef.current.playbackRate = previewPlaybackRate;
+                                }
+                              }}
+                              onPause={() => setIsPreviewPlaying(false)}
+                              onEnded={() => setIsPreviewPlaying(false)}
+                              onLoadedMetadata={(e) => {
+                                const dur = e.currentTarget.duration;
+                                if (Number.isFinite(dur) && dur > 0) {
+                                  setPreviewDuration(Math.round(dur));
+                                }
+                                e.currentTarget.playbackRate = previewPlaybackRate;
+                              }}
+                              onTimeUpdate={(e) => {
+                                setPreviewCurrentTime(e.currentTarget.currentTime);
+                              }}
+                              className="hidden"
+                            />
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={handleTogglePreviewPlayPause}
+                                  title={isPreviewPlaying ? '暫停試聽' : '繼續試聽'}
+                                  className="w-8 h-8 rounded-full bg-amber-400 hover:bg-amber-300 text-[#2C1A0E] flex items-center justify-center cursor-pointer shrink-0 shadow-xs transition"
+                                >
+                                  {isPreviewPlaying ? (
+                                    <Pause className="w-4 h-4 fill-current" />
+                                  ) : (
+                                    <Play className="w-4 h-4 fill-current ml-0.5" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSkipPreviewSeconds(-10)}
+                                  title="倒退 10 秒"
+                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-mono flex items-center gap-0.5 cursor-pointer shrink-0"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>-10s</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSkipPreviewSeconds(10)}
+                                  title="快轉 10 秒"
+                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-mono flex items-center gap-0.5 cursor-pointer shrink-0"
+                                >
+                                  <RotateCw className="w-3 h-3" />
+                                  <span>+10s</span>
+                                </button>
+                                <span className="text-xs font-semibold text-amber-200 truncate">
+                                  🎧 正在試聽：{item.title}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <div className="flex items-center gap-1 bg-black/25 px-2 py-0.5 rounded-lg">
+                                  {[1, 1.25, 1.5, 2].map((rate) => (
+                                    <button
+                                      key={rate}
+                                      type="button"
+                                      onClick={() => handleChangePreviewRate(rate)}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold cursor-pointer transition ${
+                                        previewPlaybackRate === rate
+                                          ? 'bg-amber-400 text-[#2C1A0E]'
+                                          : 'text-[#E5D9C5] hover:bg-white/10'
+                                      }`}
+                                    >
+                                      {rate}x
+                                    </button>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleStopPreviewAudio}
+                                  title="結束試聽並關閉播放列"
+                                  className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-rose-600/80 text-white text-xs font-medium flex items-center gap-1 cursor-pointer transition"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>結束試聽</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2.5 pt-0.5">
+                              <span className="text-[11px] font-mono text-amber-200 w-11 text-right shrink-0">
+                                {formatDuration(Math.floor(previewCurrentTime))}
+                              </span>
+                              <input
+                                type="range"
+                                min={0}
+                                max={Math.max(1, previewDuration || item.duration || 1)}
+                                step={1}
+                                value={Math.min(
+                                  Math.floor(previewCurrentTime),
+                                  Math.max(1, previewDuration || item.duration || 1)
+                                )}
+                                onChange={(e) => handleSeekPreviewAudio(Number(e.target.value))}
+                                className="flex-1 h-1.5 accent-amber-400 bg-white/25 rounded-lg cursor-pointer"
+                              />
+                              <span className="text-[11px] font-mono text-[#E5D9C5] w-11 shrink-0">
+                                {formatDuration(previewDuration || item.duration || 0)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {/* 第二列：語音檔案名稱修改（左側寬敞空間，儲存按鈕絕不被遮擋） */}
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[#FAF6EE] p-3 rounded-xl border border-[#E5D9C5]">
