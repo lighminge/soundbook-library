@@ -51,6 +51,7 @@ import {
   User,
   Mail,
   Lock,
+  Clock,
   Info,
   Smartphone,
 } from 'lucide-react';
@@ -2425,44 +2426,70 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         </div>
       </div>
 
-      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方，包含關鍵字、主講人與類別標籤下拉查詢） */}
+      {/* 獨立區塊：「搜尋館藏語音」查詢功能區塊（位於分類區塊下方，包含關鍵字、館藏分類、主講人與類別標籤下拉查詢，並於區塊下方即時展示查詢結果） */}
       <div className="parchment-card rounded-2xl p-4 md:p-5 shadow-sm border border-[#E2D5C1] space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div className="flex items-center gap-2">
             <div className="p-1.5 rounded-lg bg-[#8B5A2B]/15 text-[#8B5A2B]">
               <Search className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold font-serif-tc text-sm text-[#2C221E] flex items-center gap-2">
+              <h3 className="font-bold font-serif-tc text-sm text-[#2C221E] flex flex-wrap items-center gap-2">
                 <span>搜尋館藏語音</span>
-                {(searchQuery.trim() || shelfSearchTag || shelfSearchSpeaker) && (
+                {(searchQuery.trim() || selectedCategoryId !== 'all' || shelfSearchTag || shelfSearchSpeaker) && (
                   <span className="text-[11px] px-2 py-0.2 rounded-full bg-[#8B5A2B] text-white font-mono font-medium">
                     找到 {shelfFilteredItems.length} 部
                   </span>
                 )}
               </h3>
               <p className="text-[11px] text-[#7A6855]">
-                依標題關鍵字、故事內容說明、主講人或選取類別標籤即時檢索可放映之語音作品
+                依標題關鍵字、館藏分類、主講人或類別標籤即時檢索，查詢結果將同時顯示於此區塊下方與右側「館藏選片書架」
               </p>
             </div>
           </div>
 
-          {(searchQuery || shelfSearchTag || shelfSearchSpeaker || selectedCategoryId !== 'all') && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setShelfSearchTag('');
-                setShelfSearchSpeaker('');
-                setSelectedCategoryId('all');
-                setShelfTab('shelf');
-              }}
-              className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1 rounded-lg transition"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>清空搜尋條件</span>
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+            {(searchQuery.trim() || selectedCategoryId !== 'all' || shelfSearchTag || shelfSearchSpeaker) && (
+              <>
+                <button
+                  type="button"
+                  disabled={shelfFilteredItems.length === 0}
+                  onClick={handleAddAllFilteredToPlaylist}
+                  className="px-3 py-1.5 rounded-lg bg-[#2E5A44] hover:bg-[#234735] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  title="將目前檢索結果的所有語音檔一併加入播放清單"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>加入播放清單 {shelfFilteredItems.length > 0 ? `(${shelfFilteredItems.length})` : ''}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={shelfFilteredItems.length === 0}
+                  onClick={handleShufflePlayShelfAudio}
+                  className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  title="將目前檢索結果隨機排列並立即放映"
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                  <span>隨機播放 {shelfFilteredItems.length > 0 ? `(${shelfFilteredItems.length})` : ''}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setShelfSearchTag('');
+                    setShelfSearchSpeaker('');
+                    setSelectedCategoryId('all');
+                    setShelfTab('shelf');
+                  }}
+                  className="text-xs text-[#8B5A2B] hover:text-[#5C3A1B] flex items-center gap-1 font-medium cursor-pointer bg-[#FAF4E8] border border-[#DFCEB4] px-2.5 py-1.5 rounded-lg transition"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>清空搜尋條件</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
@@ -2566,6 +2593,185 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
             <ChevronDown className="w-4 h-4 text-[#8B735B] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
+
+        {/* 檢索結果展示（與「館藏語音快速檢索」相同，於區塊下方即時呈現查詢結果，同時同步顯示於右側「館藏選片書架」） */}
+        {searchQuery.trim() || selectedCategoryId !== 'all' || shelfSearchTag || shelfSearchSpeaker ? (
+          shelfFilteredItems.length === 0 ? (
+            <div className="p-8 text-center rounded-xl bg-[#FAF6EE] border border-dashed border-[#D5C5AE] text-[#7A6855] text-xs space-y-1">
+              <p className="font-semibold text-sm text-[#5C3A1B]">
+                找不到符合條件的語音檔
+                {searchQuery.trim() && `「${searchQuery.trim()}」`}
+                {selectedCategoryId !== 'all' &&
+                  ` [分類: ${categories.find((c) => c.id === selectedCategoryId)?.name || selectedCategoryId}]`}
+                {shelfSearchSpeaker &&
+                  ` [主講人: ${shelfSearchSpeaker === '__unassigned__' ? '尚未指定' : shelfSearchSpeaker}]`}
+                {shelfSearchTag && ` [標籤: #${shelfSearchTag}]`}
+              </p>
+              <p>請嘗試其他關鍵字或切換館藏分類、主講人、類別標籤。</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1 max-h-[500px] overflow-y-auto pr-1">
+              {shelfFilteredItems.map((item, idx) => {
+                const cat = categories.find((c) => c.id === item.categoryId);
+                const catColor = cat?.themeColor || '#8B5A2B';
+                const isPlayingCurrent = item.id === currentItem.id;
+                const inPlaylist = playlistItemIds.includes(item.id);
+
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectShelfAudio(item)}
+                    style={{
+                      borderLeftColor: catColor,
+                      borderLeftWidth: '5px',
+                      background: isPlayingCurrent
+                        ? undefined
+                        : `linear-gradient(to right, ${catColor}12 0%, #FFFFFF 25%)`,
+                    }}
+                    className={`group relative flex items-start gap-3 p-3 rounded-xl transition-all duration-200 cursor-pointer shadow-xs hover:shadow-md ${
+                      isPlayingCurrent
+                        ? 'bg-[#FFFDF7] border-t-2 border-r-2 border-b-2 border-[#8B5A2B] ring-2 ring-[#8B5A2B]/25 shadow-md'
+                        : 'border-t border-r border-b border-[#E5D9C5] hover:-translate-y-0.5'
+                    }`}
+                    title={`點選卡片立即放映此語音檔（所屬館藏：[${cat?.code || ''}] ${cat?.name || '未分類'}）`}
+                  >
+                    {/* 左側精裝書脊分類色彩標記條 */}
+                    <div
+                      className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-xl"
+                      style={{ backgroundColor: catColor }}
+                    />
+                    <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-[#2C221E]">
+                      <img
+                        src={item.coverImageUrl}
+                        alt={item.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                      />
+                      <div
+                        className={`absolute inset-0 flex items-center justify-center transition ${
+                          isPlayingCurrent
+                            ? 'bg-[#3A2518]/65 opacity-100'
+                            : 'bg-black/35 opacity-0 group-hover:opacity-100'
+                        }`}
+                      >
+                        <Play className="w-5 h-5 text-white fill-current" />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {/* 檢索清單序號（從 1 開始） */}
+                          <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#3A2518] text-white">
+                            #{idx + 1}
+                          </span>
+                          {/* 獨立語音檔編號 */}
+                          <span className="px-1.5 py-0.2 rounded font-mono text-[10px] font-bold bg-[#FAF4E8] border border-[#D5C5AE] text-[#5C3A1B] shadow-xs">
+                            {audioCallNumberMap.get(item.id) || (cat ? `${cat.code}-1` : 'CAT-1')}
+                          </span>
+                          {cat && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-white"
+                              style={{ backgroundColor: cat.themeColor }}
+                            >
+                              [{cat.code}] {cat.name}
+                            </span>
+                          )}
+                          <span className="text-[11px] font-mono text-[#7A6855] flex items-center gap-0.5">
+                            <Clock className="w-3 h-3" />
+                            {formatDuration(item.duration)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectShelfAudio(item)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition ${
+                              isPlayingCurrent
+                                ? 'bg-amber-600 text-white shadow-2xs'
+                                : 'bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC]'
+                            }`}
+                            title="直接播放此語音檔"
+                          >
+                            <Play className="w-2.5 h-2.5 fill-current" />
+                            <span>{isPlayingCurrent ? '放映中' : '單曲播放'}</span>
+                          </button>
+
+                          {inPlaylist ? (
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveFromPlaylist(item.id, e)}
+                              className="px-2 py-0.5 rounded bg-emerald-600/15 hover:bg-red-500/15 text-emerald-700 hover:text-red-700 border border-emerald-600/30 text-[10px] font-medium transition cursor-pointer flex items-center gap-0.5 group/btn"
+                              title="已在播放清單中，點擊可移出"
+                            >
+                              <Check className="w-3 h-3 group-hover/btn:hidden" />
+                              <X className="w-3 h-3 hidden group-hover/btn:inline" />
+                              <span className="group-hover/btn:hidden">已在清單</span>
+                              <span className="hidden group-hover/btn:inline">移出清單</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => handleAddToPlaylist(item, e)}
+                              className="px-2 py-0.5 rounded bg-[#FAF4E8] hover:bg-[#8B5A2B] hover:text-white text-[#8B5A2B] border border-[#DFCEB4] text-[10px] font-medium transition cursor-pointer flex items-center gap-0.5"
+                              title="加入播放清單"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>+ 清單</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <ScreeningMarqueeTitle title={item.title} size="sm" isSelected={false} />
+                      <p className="text-xs text-[#6E5D4F] line-clamp-1 mt-0.5">{item.description}</p>
+
+                      {/* 主講人與標籤展示 */}
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        {item.speaker && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShelfSearchSpeakerChange(item.speaker!);
+                            }}
+                            className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer flex items-center gap-0.5 font-medium ${
+                              shelfSearchSpeaker === item.speaker
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                : 'bg-[#F2E8DC] border-[#D8C7B2] text-[#5C3A1B] hover:bg-[#EAE0D2]'
+                            }`}
+                            title={`主講人：${item.speaker}（點擊過濾此主講人）`}
+                          >
+                            <User className="w-2.5 h-2.5" />
+                            <span>{item.speaker}</span>
+                          </button>
+                        )}
+                        {item.tags &&
+                          item.tags.slice(0, 3).map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleShelfSearchTagChange(tag);
+                              }}
+                              className={`text-[10px] px-1.5 py-0.2 rounded border transition cursor-pointer ${
+                                shelfSearchTag === tag
+                                  ? 'bg-[#8B5A2B] text-white border-[#8B5A2B]'
+                                  : 'bg-[#FAF4E8] border-[#DFCEB4] text-[#5C3A1B] hover:bg-[#EFE6D5]'
+                              }`}
+                            >
+                              #{tag}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : null}
       </div>
 
       {/* 主放映室佈局：
