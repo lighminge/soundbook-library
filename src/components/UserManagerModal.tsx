@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserPlus, Edit2, Trash2, Shield, User, Lock, AlertCircle, CheckCircle2, ShieldAlert, LayoutTemplate } from 'lucide-react';
 import { AppUser } from '../types';
-import { loadSystemUsers, saveSystemUser, deleteSystemUser } from '../services/authService';
+import { loadSystemUsers, saveSystemUser, deleteSystemUser, isPasswordHashed } from '../services/authService';
 
 interface UserManagerModalProps {
   isOpen: boolean;
@@ -71,7 +71,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({
     setEditingUser(user);
     setFormUsername(user.username);
     setFormDisplayName(user.displayName);
-    setFormPassword(user.password);
+    setFormPassword(isPasswordHashed(user.password) ? '' : user.password);
     setFormRole(user.role);
     setError(null);
     setIsEditing(true);
@@ -87,7 +87,7 @@ export const UserManagerModal: React.FC<UserManagerModalProps> = ({
     e.preventDefault();
     const uName = formUsername.trim();
     const dName = formDisplayName.trim();
-    const pwd = formPassword.trim();
+    const pwd = formPassword.trim() || (editingUser ? editingUser.password : '');
 
     if (!uName) {
       setError('請輸入使用者帳號');

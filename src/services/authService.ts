@@ -9,11 +9,133 @@ const LOCAL_LOGIN_LOGS_KEY = 'soundbook_login_logs_v1';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 60 * 1000; // 連續失敗 5 次鎖定 60 秒
 const MAX_STORED_LOGIN_LOGS = 1000; // 最多保留最近 1000 筆登入紀錄
+const PASSWORD_HASH_PREFIX = 'sha256$';
+const PASSWORD_SALT_NAMESPACE = 'soundbook_v1_salt';
+
+/**
+ * 標準 FIPS 180-4 SHA-256 同步雜湊演算法（支援 HTTPS 與非 HTTPS 區網環境）
+ */
+function sha256Hex(asciiInput: string): string {
+  const utf8 = unescape(encodeURIComponent(asciiInput));
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  const H = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ];
+  const l = utf8.length * 8;
+  const words: number[] = [];
+  for (let i = 0; i < utf8.length; i++) {
+    words[i >> 2] |= (utf8.charCodeAt(i) & 0xff) << (24 - (i % 4) * 8);
+  }
+  words[l >> 5] |= 0x80 << (24 - (l % 32));
+  words[(((l + 64) >> 9) << 4) + 15] = l;
+
+  const W = new Array<number>(64);
+  const rotr = (n: number, x: number) => (x >>> n) | (x << (32 - n));
+
+  for (let i = 0; i < words.length; i += 16) {
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let t = 0; t < 64; t++) {
+      if (t < 16) {
+        W[t] = words[i + t] | 0;
+      } else {
+        const g0 = rotr(7, W[t - 15]) ^ rotr(18, W[t - 15]) ^ (W[t - 15] >>> 3);
+        const g1 = rotr(17, W[t - 2]) ^ rotr(19, W[t - 2]) ^ (W[t - 2] >>> 10);
+        W[t] = (W[t - 16] + g0 + W[t - 7] + g1) | 0;
+      }
+      const s1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + s1 + ch + K[t] + W[t]) | 0;
+      const s0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (s0 + maj) | 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) | 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) | 0;
+    }
+    H[0] = (H[0] + a) | 0;
+    H[1] = (H[1] + b) | 0;
+    H[2] = (H[2] + c) | 0;
+    H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0;
+    H[5] = (H[5] + f) | 0;
+    H[6] = (H[6] + g) | 0;
+    H[7] = (H[7] + h) | 0;
+  }
+
+  return H.map((v) => (v >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
+/**
+ * 判斷密碼字串是否已經過 SHA-256 雜湊處理
+ */
+export function isPasswordHashed(password?: string): boolean {
+  return Boolean(
+    password &&
+      password.startsWith(PASSWORD_HASH_PREFIX) &&
+      password.length === PASSWORD_HASH_PREFIX.length + 64
+  );
+}
+
+/**
+ * 將明文密碼搭配帳號名稱進行加鹽 SHA-256 雜湊（若已為雜湊值則原樣回傳）
+ */
+export function hashUserPassword(password: string, username: string): string {
+  const trimmedPwd = password.trim();
+  if (isPasswordHashed(trimmedPwd)) return trimmedPwd;
+  const cleanUser = username.trim().toLowerCase();
+  return `${PASSWORD_HASH_PREFIX}${sha256Hex(`${PASSWORD_SALT_NAMESPACE}:${cleanUser}:${trimmedPwd}`)}`;
+}
+
+/**
+ * 比對使用者輸入的密碼與儲存的密碼（同時支援 SHA-256 雜湊值與舊版明文自動向下相容比對）
+ */
+export function verifyUserPassword(
+  inputPassword: string,
+  storedPassword: string,
+  username: string
+): boolean {
+  const trimmedInput = inputPassword.trim();
+  if (!trimmedInput || !storedPassword) return false;
+  const hashedInput = hashUserPassword(trimmedInput, username);
+  if (storedPassword === hashedInput) return true;
+  if (!isPasswordHashed(storedPassword) && storedPassword === trimmedInput) return true;
+  return false;
+}
+
+/**
+ * 計算防竄改 Session 簽章（防止透過 F12 修改 localStorage 偽造 admin 角色）
+ */
+function computeSessionIntegritySig(user: {
+  id: string;
+  username: string;
+  role: UserRole;
+  isGuest?: boolean;
+}): string {
+  return sha256Hex(
+    `soundbook_session_sig_v1:${user.id}:${user.username.toLowerCase()}:${user.role}:${Boolean(user.isGuest)}`
+  ).slice(0, 32);
+}
 
 export const DEFAULT_ADMIN_USER: AppUser = {
   id: 'user_admin',
   username: 'admin',
-  password: 'Avon5210',
+  password: hashUserPassword('Avon5210', 'admin'),
   displayName: '系統管理者',
   role: 'admin',
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -292,6 +414,26 @@ export async function loadSystemUsers(): Promise<AppUser[]> {
     loadedUsers = getLocalUsers();
   }
 
+  // 自動將舊版明文密碼無痛升級為 SHA-256 加鹽雜湊值，避免在 Firestore 與 localStorage 中留存明文密碼
+  const usersToUpgradeInCloud: AppUser[] = [];
+  loadedUsers = loadedUsers.map((u) => {
+    if (u.password && !isPasswordHashed(u.password)) {
+      const upgraded: AppUser = {
+        ...u,
+        password: hashUserPassword(u.password, u.username),
+      };
+      usersToUpgradeInCloud.push(upgraded);
+      return upgraded;
+    }
+    return u;
+  });
+
+  if (db && usersToUpgradeInCloud.length > 0) {
+    usersToUpgradeInCloud.forEach((u) => {
+      setDoc(doc(db, 'systemUsers', u.id), u).catch(() => {});
+    });
+  }
+
   // 確保 admin 存在，若 Firestore 尚未寫入 admin 則自動初始化寫入
   const adminExists = loadedUsers.some((u) => u.username.toLowerCase() === 'admin');
   if (!adminExists) {
@@ -308,7 +450,7 @@ export async function loadSystemUsers(): Promise<AppUser[]> {
   // 同步快取至本機
   setLocalUsers(loadedUsers);
 
-  // 若目前已登入非訪客帳號，同步更新 Session 中的顯示名稱 (displayName) 與角色，確保上方工具列永遠顯示最新的「顯示名稱」
+  // 若目前已登入非訪客帳號，強制以權威名冊校正 Session 中的顯示名稱与角色，防止透過 F12 修改 localStorage 偽造權限
   const currentSession = getCurrentSessionUser();
   if (currentSession && !currentSession.isGuest && currentSession.role !== 'guest') {
     const matchedSessionUser = loadedUsers.find(
@@ -319,18 +461,26 @@ export async function loadSystemUsers(): Promise<AppUser[]> {
     if (matchedSessionUser) {
       const latestDisplayName =
         matchedSessionUser.displayName?.trim() || matchedSessionUser.username;
+      const authoritativeRole: UserRole =
+        matchedSessionUser.username.toLowerCase() === 'admin'
+          ? 'admin'
+          : matchedSessionUser.role;
       if (
         currentSession.displayName !== latestDisplayName ||
-        currentSession.role !== matchedSessionUser.role
+        currentSession.role !== authoritativeRole ||
+        currentSession.id !== matchedSessionUser.id
       ) {
         setCurrentSessionUser({
           ...currentSession,
           id: matchedSessionUser.id,
           username: matchedSessionUser.username,
           displayName: latestDisplayName,
-          role: matchedSessionUser.role,
+          role: authoritativeRole,
         });
       }
+    } else {
+      // 若 Session 中的帳號已不存在於系統名冊，自動降級為訪客以確保安全
+      setCurrentSessionUser(GUEST_USER);
     }
   }
 
@@ -343,15 +493,17 @@ export async function loadSystemUsers(): Promise<AppUser[]> {
 }
 
 /**
- * 儲存（新增或修改）使用者帳號
+ * 儲存（新增或修改）使用者帳號（自動以 SHA-256 加鹽雜湊保護密碼）
  */
 export async function saveSystemUser(user: AppUser): Promise<AppUser> {
   const now = new Date().toISOString();
+  const cleanUsername = user.username.trim();
   const cleaned: AppUser = {
     ...user,
-    username: user.username.trim(),
-    displayName: user.displayName.trim() || user.username.trim(),
-    role: user.username.trim().toLowerCase() === 'admin' ? 'admin' : user.role,
+    username: cleanUsername,
+    password: hashUserPassword(user.password, cleanUsername),
+    displayName: user.displayName.trim() || cleanUsername,
+    role: cleanUsername.toLowerCase() === 'admin' ? 'admin' : user.role,
     updatedAt: now,
     createdAt: user.createdAt || now,
   };
@@ -492,7 +644,9 @@ export async function authenticate(
 
   const users = await loadSystemUsers();
   const matched = users.find(
-    (u) => u.username.toLowerCase() === uTrim.toLowerCase() && u.password === pTrim
+    (u) =>
+      u.username.toLowerCase() === uTrim.toLowerCase() &&
+      verifyUserPassword(pTrim, u.password, u.username)
   );
 
   if (!matched) {
@@ -608,15 +762,54 @@ export function loginAsGuest(options?: {
 }
 
 /**
- * 取得目前已登入之使用者資訊（若未登入則回傳 null，含結構完整性校驗）
+ * 取得目前已登入之使用者資訊（若未登入則回傳 null，含結構完整性與防竄改簽章校驗）
  */
 export function getCurrentSessionUser(): CurrentUser | null {
   try {
     const raw = localStorage.getItem(SESSION_USER_KEY);
     if (raw) {
-      const parsed: CurrentUser = JSON.parse(raw);
-      if (parsed && parsed.role) {
-        return parsed;
+      const parsed: CurrentUser & { sessionSig?: string } = JSON.parse(raw);
+      if (parsed && parsed.role && parsed.id && parsed.username) {
+        const expectedSig = computeSessionIntegritySig(parsed);
+        if (parsed.sessionSig && parsed.sessionSig !== expectedSig) {
+          console.warn('偵測到 Session 結構異常或遭竄改，已重置為訪客權限');
+          localStorage.removeItem(SESSION_USER_KEY);
+          return null;
+        }
+        // 與本機已快取的使用者名冊交叉核對角色，防止透過 DevTools 偽造 admin 權限
+        if (!parsed.isGuest && parsed.role !== 'guest') {
+          try {
+            const rawUsers = localStorage.getItem(LOCAL_USERS_KEY);
+            if (rawUsers) {
+              const localList: AppUser[] = JSON.parse(rawUsers);
+              if (Array.isArray(localList) && localList.length > 0) {
+                const matchedLocal = localList.find(
+                  (u) =>
+                    u.id === parsed.id ||
+                    u.username.toLowerCase() === parsed.username.toLowerCase()
+                );
+                if (matchedLocal) {
+                  const trueRole: UserRole =
+                    matchedLocal.username.toLowerCase() === 'admin'
+                      ? 'admin'
+                      : matchedLocal.role;
+                  if (parsed.role !== trueRole) {
+                    parsed.role = trueRole;
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+        return {
+          id: parsed.id,
+          username: parsed.username,
+          displayName: parsed.displayName,
+          role: parsed.role,
+          isGuest: parsed.isGuest,
+        };
       }
     }
   } catch (err) {
@@ -626,12 +819,16 @@ export function getCurrentSessionUser(): CurrentUser | null {
 }
 
 /**
- * 設定當前 Session 使用者
+ * 設定當前 Session 使用者（自動附加防竄改完整性簽章）
  */
 export function setCurrentSessionUser(user: CurrentUser | null): void {
   try {
     if (user) {
-      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+      const signed = {
+        ...user,
+        sessionSig: computeSessionIntegritySig(user),
+      };
+      localStorage.setItem(SESSION_USER_KEY, JSON.stringify(signed));
     } else {
       localStorage.removeItem(SESSION_USER_KEY);
     }

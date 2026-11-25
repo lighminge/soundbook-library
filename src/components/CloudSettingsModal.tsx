@@ -30,7 +30,7 @@ interface CloudSettingsModalProps {
 
 export const GAS_SCRIPT_CODE = `/**
  * ============================================================================
- * 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟上傳、串流讀取、改名、同步刪除與 >35MB 大型語音檔 100% 原始大小無損分段續傳腳本
+ * 聲書閣 (SoundBook Pavilion) — Google 雲端硬碟上傳、串流讀取、改名、同步刪除與 >35MB 大型語音檔 100% 原始大小無損分段續傳腳本 (資安強化版)
  * ============================================================================
  * 【重要設定步驟】：
  * 1. 前往 https://script.google.com/ 開啟專案，將本程式碼完整貼上並按 Ctrl+S 儲存。
@@ -63,6 +63,20 @@ function cleanFolderId(rawId) {
   return str.split('?')[0].split('/')[0].trim();
 }
 
+// 資安防護：驗證目標檔案是否位於聲書閣指定的雲端硬碟資料夾內，防止誤操作雲端硬碟其他私人檔案
+function isFileInAllowedFolder(file, allowedFolderId) {
+  if (!allowedFolderId) return true;
+  try {
+    var parents = file.getParents();
+    while (parents.hasNext()) {
+      if (parents.next().getId() === allowedFolderId) {
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
@@ -84,9 +98,10 @@ function doPost(e) {
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 2. 處理同步刪除雲端硬碟檔案 (移至垃圾桶)
+    // 2. 處理同步刪除雲端硬碟檔案 (移至垃圾桶，含資料夾範圍資安檢查)
     if (payload.action === 'delete') {
       const rawIds = payload.fileIds || (payload.fileId ? [payload.fileId] : []);
+      const delFolderId = cleanFolderId(payload.folderId);
       const deletedIds = [];
       const errors = [];
 
@@ -97,6 +112,10 @@ function doPost(e) {
         }
         try {
           var targetFileToDel = DriveApp.getFileById(fId);
+          if (delFolderId && !isFileInAllowedFolder(targetFileToDel, delFolderId)) {
+            errors.push({ fileId: fId, error: '目標檔案不在指定的聲書閣資料夾內，已拒絕刪除保護私人檔案' });
+            continue;
+          }
           targetFileToDel.setTrashed(true);
           deletedIds.push(fId);
         } catch (delErr) {
@@ -114,10 +133,11 @@ function doPost(e) {
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 3. 支援同步修改 Google 雲端硬碟中的檔案名稱 (語音檔或圖片)
+    // 3. 支援同步修改 Google 雲端硬碟中的檔案名稱 (語音檔或圖片，含資料夾範圍資安檢查)
     if (payload.action === 'rename') {
       var renameId = String(payload.fileId || '').trim();
       var newName = String(payload.newFileName || '').trim();
+      var renFolderId = cleanFolderId(payload.folderId);
       if (!renameId || !newName) {
         return ContentService.createTextOutput(
           JSON.stringify({
@@ -128,6 +148,15 @@ function doPost(e) {
         ).setMimeType(ContentService.MimeType.JSON);
       }
       var targetFileToRename = DriveApp.getFileById(renameId);
+      if (renFolderId && !isFileInAllowedFolder(targetFileToRename, renFolderId)) {
+        return ContentService.createTextOutput(
+          JSON.stringify({
+            success: false,
+            action: 'rename',
+            error: '目標檔案不在指定的聲書閣資料夾內，已拒絕修改名稱'
+          })
+        ).setMimeType(ContentService.MimeType.JSON);
+      }
       var oldName = targetFileToRename.getName();
       var extMatch = oldName.match(/(\\.[a-zA-Z0-9]{2,5})$/);
       if (extMatch && extMatch[1] && !/\\.[a-zA-Z0-9]{2,5}$/.test(newName)) {
@@ -145,23 +174,22 @@ function doPost(e) {
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 4. 大型檔案 (>24MB) 分段續傳初始化：突破 GAS 單次 35MB/50MB 限制（回傳 OAuth Token 與 Resumable Upload URL，100% 保留原始檔案大小不壓縮）
+    // 4. 大型檔案 (>24MB) 分段續傳初始化：突破 GAS 單次 35MB/50MB 限制（僅回傳單檔專用 Resumable Upload URL，絕不外露 OAuth accessToken）
     if (payload.action === 'initChunkUpload') {
       var initFolderId = cleanFolderId(payload.folderId);
       var initFileName = payload.fileName || ('soundbook_' + new Date().getTime());
       var initMimeType = payload.mimeType || 'audio/mpeg';
       var initFileSize = Number(payload.fileSize) || 0;
-      var oauthToken = ScriptApp.getOAuthToken();
       if (initFileSize <= 0) {
         return ContentService.createTextOutput(
           JSON.stringify({
             success: true,
             action: 'initChunkUpload',
-            mode: 'probe',
-            accessToken: oauthToken
+            mode: 'probe'
           })
         ).setMimeType(ContentService.MimeType.JSON);
       }
+      var oauthToken = ScriptApp.getOAuthToken();
       try {
         var meta = { name: initFileName, mimeType: initMimeType };
         if (initFolderId) meta.parents = [initFolderId];
@@ -193,30 +221,38 @@ function doPost(e) {
               success: true,
               action: 'initChunkUpload',
               mode: 'resumable',
-              accessToken: oauthToken,
               uploadUrl: String(locationUrl)
             })
           ).setMimeType(ContentService.MimeType.JSON);
         }
       } catch (resumableErr) {
-        // 若尚未授權 UrlFetchApp，仍回傳 accessToken 讓瀏覽器直接對 Google Drive API 進行分段續傳
+        // 若尚未授權 UrlFetchApp，退回 DriveApp 分段暫存模式
       }
       return ContentService.createTextOutput(
         JSON.stringify({
           success: true,
           action: 'initChunkUpload',
-          mode: 'direct_oauth',
-          accessToken: oauthToken,
+          mode: 'driveapp',
           uploadId: 'up_' + new Date().getTime()
         })
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 4.5 瀏覽器直傳完成後設定 Google 雲端硬碟檔案共享權限
+    // 4.5 瀏覽器直傳完成後設定 Google 雲端硬碟檔案共享權限（含資料夾範圍資安檢查）
     if (payload.action === 'setFilePublic') {
       var pubFileId = String(payload.fileId || '').trim();
       var pubMime = String(payload.mimeType || 'audio/mpeg');
+      var pubFolderId = cleanFolderId(payload.folderId);
       var pubFile = DriveApp.getFileById(pubFileId);
+      if (pubFolderId && !isFileInAllowedFolder(pubFile, pubFolderId)) {
+        return ContentService.createTextOutput(
+          JSON.stringify({
+            success: false,
+            action: 'setFilePublic',
+            error: '目標檔案不在指定的聲書閣資料夾內，已拒絕變更權限'
+          })
+        ).setMimeType(ContentService.MimeType.JSON);
+      }
       pubFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       var isPubImg = pubMime.indexOf('image/') === 0;
       return ContentService.createTextOutput(

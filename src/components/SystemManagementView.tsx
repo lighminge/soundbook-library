@@ -55,6 +55,7 @@ import {
   loadLoginLogs,
   deleteLoginLog,
   clearAllLoginLogs,
+  isPasswordHashed,
 } from '../services/authService';
 import {
   DEFAULT_LOGIN_SCREEN_CONFIG,
@@ -218,7 +219,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
     setEditingUser(user);
     setIsCreatingUser(false);
     setUsername(user.username);
-    setPassword(user.password);
+    setPassword(isPasswordHashed(user.password) ? '' : user.password);
     setShowPassword(false);
     setDisplayName(user.displayName);
     setRole(user.role);
@@ -240,7 +241,7 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
     const cleanUsername = isEditingProtectedAdmin
       ? PROTECTED_ADMIN_USERNAME
       : username.trim();
-    const cleanPassword = password.trim();
+    const cleanPassword = password.trim() || (editingUser ? editingUser.password : '');
     const cleanDisplayName = displayName.trim() || cleanUsername;
     const finalRole: 'admin' | 'user' = isEditingProtectedAdmin ? 'admin' : role;
 
@@ -623,10 +624,14 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
-                        required
+                        required={!editingUser}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="請輸入登入密碼"
+                        placeholder={
+                          editingUser
+                            ? '若不修改密碼請留空（已啟用 SHA-256 加密保護）'
+                            : '請輸入登入密碼'
+                        }
                         className="w-full pl-3.5 pr-9 py-2 rounded-lg border border-[#D5C5AE] bg-white text-sm font-mono focus:outline-none focus:border-[#8B5A2B]"
                       />
                       <button
@@ -777,7 +782,17 @@ export const SystemManagementView: React.FC<SystemManagementViewProps> = ({
                             {u.username}
                           </td>
                           <td className="py-3 px-4 font-mono text-xs text-[#7A6855]">
-                            {u.password}
+                            {isPasswordHashed(u.password) ? (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-medium"
+                                title="密碼已採用 SHA-256 加鹽雜湊加密儲存，不暴露明文"
+                              >
+                                <Lock className="w-2.5 h-2.5" />
+                                <span>•••••••• (SHA-256 加密)</span>
+                              </span>
+                            ) : (
+                              u.password
+                            )}
                           </td>
                           <td className="py-3 px-4">
                             {u.role === 'admin' ? (

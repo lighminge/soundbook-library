@@ -1385,6 +1385,7 @@ export async function renameFileInGoogleDrive(
   }
 
   const scriptUrl = config.googleDriveScriptUrl.trim();
+  const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
 
   // 僅使用 GAS action: 'rename' 原位改名（DriveApp.setName），不再採用「重新上傳新檔 + 刪除舊檔」的備援方式，
   // 以避免舊檔刪除失敗或網路回應中斷時，在雲端硬碟中產生重複的語音檔 / 圖片。
@@ -1401,6 +1402,7 @@ export async function renameFileInGoogleDrive(
           action: 'rename',
           fileId: cleanId,
           newFileName: normalizedName,
+          folderId: cleanFolderId,
         }),
       });
 
@@ -1505,6 +1507,7 @@ export async function deleteFilesFromGoogleDrive(fileIds: string[]): Promise<{
   }
 
   try {
+    const cleanFolderId = extractDriveFolderId(config.googleDriveFolderId);
     const response = await fetch(config.googleDriveScriptUrl.trim(), {
       method: 'POST',
       headers: {
@@ -1513,6 +1516,7 @@ export async function deleteFilesFromGoogleDrive(fileIds: string[]): Promise<{
       body: JSON.stringify({
         action: 'delete',
         fileIds,
+        folderId: cleanFolderId,
       }),
     });
 
@@ -1769,97 +1773,78 @@ async function uploadLargeFileViaGasChunks(
     return { supported: false };
   }
 
-  // 優先通道 A：若 GAS 回傳 OAuth accessToken，由瀏覽器直接對 Google Drive API v3 進行 Resumable Upload（100% 原始檔案二進位直傳，無須壓縮、不受 GAS 10MB/50MB 限制）
-  if (initData.accessToken) {
+  // 優先通道 A：若 GAS 在伺服器端已建立單檔專用 Resumable Session URL (uploadUrl)，由瀏覽器直接對該 Session URL 進行二進位分段直傳（無須外露 OAuth accessToken，100% 原始檔案無損直傳）
+  if (initData.uploadUrl) {
     try {
-      const initDriveRes = await fetch(
-        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
-        {
-          method: 'POST',
+      const directSessionUrl = String(initData.uploadUrl);
+      const DIRECT_CHUNK_BYTES = 8 * 1024 * 1024; // 8MB (32 * 256KB)
+      const directTotalChunks = Math.ceil(file.size / DIRECT_CHUNK_BYTES);
+      let createdFileId = '';
+
+      for (let i = 0; i < directTotalChunks; i++) {
+        const start = i * DIRECT_CHUNK_BYTES;
+        const end = Math.min(file.size, (i + 1) * DIRECT_CHUNK_BYTES) - 1;
+        const chunkBlob = file.slice(start, end + 1);
+        const pct = Math.round(18 + ((i + 0.5) / directTotalChunks) * 62);
+        onProgress?.(
+          pct,
+          `正在無損直傳原始大型語音檔至 Google 雲端硬碟 (第 ${i + 1} / ${directTotalChunks} 段)...`
+        );
+
+        const putRes = await fetch(directSessionUrl, {
+          method: 'PUT',
           headers: {
-            Authorization: `Bearer ${initData.accessToken}`,
-            'Content-Type': 'application/json; charset=UTF-8',
-            'X-Upload-Content-Type': file.type || 'audio/mpeg',
-            'X-Upload-Content-Length': String(file.size),
+            'Content-Range': `bytes ${start}-${end}/${file.size}`,
           },
-          body: JSON.stringify({
-            name: file.name,
-            mimeType: file.type || 'audio/mpeg',
-            ...(cleanFolderId ? { parents: [cleanFolderId] } : {}),
-          }),
+          body: chunkBlob,
+        });
+
+        if (putRes.status === 308) {
+          continue;
         }
-      );
+        if (putRes.status === 200 || putRes.status === 201) {
+          const putJson = await putRes.json();
+          if (putJson && putJson.id) {
+            createdFileId = String(putJson.id);
+            break;
+          }
+        }
+        throw new Error(`Direct resumable PUT status ${putRes.status}`);
+      }
 
-      const directSessionUrl = initDriveRes.headers.get('Location') || initData.uploadUrl || '';
-      if (directSessionUrl) {
-        const DIRECT_CHUNK_BYTES = 8 * 1024 * 1024; // 8MB (32 * 256KB)
-        const directTotalChunks = Math.ceil(file.size / DIRECT_CHUNK_BYTES);
-        let createdFileId = '';
-
-        for (let i = 0; i < directTotalChunks; i++) {
-          const start = i * DIRECT_CHUNK_BYTES;
-          const end = Math.min(file.size, (i + 1) * DIRECT_CHUNK_BYTES) - 1;
-          const chunkBlob = file.slice(start, end + 1);
-          const pct = Math.round(18 + ((i + 0.5) / directTotalChunks) * 62);
-          onProgress?.(
-            pct,
-            `正在無損直傳原始大型語音檔至 Google 雲端硬碟 (第 ${i + 1} / ${directTotalChunks} 段)...`
-          );
-
-          const putRes = await fetch(directSessionUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Range': `bytes ${start}-${end}/${file.size}`,
-            },
-            body: chunkBlob,
+      if (createdFileId) {
+        onProgress?.(82, '正在設定 Google 雲端硬碟檔案共用權限...');
+        let viewUrl: string | undefined = `https://drive.google.com/file/d/${createdFileId}/view`;
+        let directUrl = `https://docs.google.com/uc?export=download&id=${createdFileId}`;
+        try {
+          const pubRes = await fetch(scriptUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'setFilePublic',
+              fileId: createdFileId,
+              mimeType: file.type || 'audio/mpeg',
+              folderId: cleanFolderId,
+            }),
           });
-
-          if (putRes.status === 308) {
-            continue;
+          const pubJson = JSON.parse(await pubRes.text());
+          if (pubJson && pubJson.success) {
+            if (pubJson.viewUrl) viewUrl = String(pubJson.viewUrl);
+            if (pubJson.directUrl) directUrl = String(pubJson.directUrl);
           }
-          if (putRes.status === 200 || putRes.status === 201) {
-            const putJson = await putRes.json();
-            if (putJson && putJson.id) {
-              createdFileId = String(putJson.id);
-              break;
-            }
-          }
-          throw new Error(`Direct resumable PUT status ${putRes.status}`);
+        } catch {
+          // ignore permission callback error if already accessible
         }
 
-        if (createdFileId) {
-          onProgress?.(82, '正在設定 Google 雲端硬碟檔案共用權限...');
-          let viewUrl: string | undefined = `https://drive.google.com/file/d/${createdFileId}/view`;
-          let directUrl = `https://docs.google.com/uc?export=download&id=${createdFileId}`;
-          try {
-            const pubRes = await fetch(scriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify({
-                action: 'setFilePublic',
-                fileId: createdFileId,
-                mimeType: file.type || 'audio/mpeg',
-              }),
-            });
-            const pubJson = JSON.parse(await pubRes.text());
-            if (pubJson && pubJson.success) {
-              if (pubJson.viewUrl) viewUrl = String(pubJson.viewUrl);
-              if (pubJson.directUrl) directUrl = String(pubJson.directUrl);
-            }
-          } catch {
-            // ignore permission callback error if already accessible
-          }
-
-          return {
-            supported: true,
-            fileId: createdFileId,
-            directUrl,
-            viewUrl,
-          };
-        }
+        return {
+          supported: true,
+          fileId: createdFileId,
+          directUrl,
+          viewUrl,
+        };
       }
     } catch (directErr) {
-      console.warn('瀏覽器直傳 Google Drive Resumable API 改由 GAS 5MB 分段續傳:', directErr);
+      console.warn('瀏覽器直傳 Google Drive Resumable Session URL 改由 GAS 5MB 分段續傳:', directErr);
     }
   }
 
