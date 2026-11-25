@@ -619,12 +619,18 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     return matchCat && matchQuery;
   });
 
-  // 統計可用類別標籤與筆數（以當前選取分類為主，全選則統計全部館藏）
+  // 統計可用類別標籤與筆數（受所選館藏分類與主講人連動篩選）
   const availableShelfTags = useMemo(() => {
-    const targetItems =
-      selectedCategoryId === 'all'
-        ? audioItems
-        : audioItems.filter((i) => i.categoryId === selectedCategoryId);
+    const targetItems = audioItems.filter((item) => {
+      if (selectedCategoryId !== 'all' && item.categoryId !== selectedCategoryId) {
+        return false;
+      }
+      if (!shelfSearchSpeaker) return true;
+      if (shelfSearchSpeaker === '__unassigned__') {
+        return !item.speaker || !item.speaker.trim();
+      }
+      return item.speaker?.trim() === shelfSearchSpeaker.trim();
+    });
 
     const tagCountMap: Record<string, number> = {};
     targetItems.forEach((item) => {
@@ -642,9 +648,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
         tag,
         count: tagCountMap[tag],
       }));
-  }, [audioItems, selectedCategoryId]);
+  }, [audioItems, selectedCategoryId, shelfSearchSpeaker]);
 
-  // 當分類切換時，若已選取的標籤不在新分類的標籤清單中，自動重設為全部標籤
+  // 當分類或主講人切換時，若已選取的標籤不在篩選後的標籤清單中，自動重設為全部標籤
   useEffect(() => {
     if (shelfSearchTag && !availableShelfTags.some((t) => t.tag === shelfSearchTag)) {
       setShelfSearchTag('');
@@ -738,10 +744,24 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
     }
   };
 
-  // 點選書架上的語音檔時，切換曲目；手機版自動平滑捲動至下方的播放舞台，電腦版則平滑定位至頂部播放視角
-  const handleSelectShelfAudio = (item: AudioItem) => {
+  // 點選書架或「搜尋館藏語音」結果上的語音檔時，切換曲目並自動播放；點擊上方搜尋結果時平滑捲動定位至下方播放舞台
+  const handleSelectShelfAudio = (item: AudioItem, scrollToPlayerStage = false) => {
+    pendingAutoPlayRef.current = true;
     onSelectAudio(item);
-    if (window.innerWidth < 1024) {
+
+    const audio = audioRef.current;
+    if (audio && currentItem?.id === item.id && playableScreeningUrl) {
+      audio.currentTime = 0;
+      audio
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+          pendingAutoPlayRef.current = false;
+        })
+        .catch((err) => console.warn('自動播放失敗:', err));
+    }
+
+    if (scrollToPlayerStage || window.innerWidth < 1024) {
       if (playerStageRef.current) {
         playerStageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
@@ -2582,7 +2602,9 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
               className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-[#D5C5AE] bg-white text-xs md:text-sm text-[#2C221E] focus:outline-none focus:border-[#8B5A2B] shadow-inner cursor-pointer appearance-none truncate font-medium"
             >
               <option value="">
-                🏷️ 全部類別標籤 {availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}
+                {shelfSearchSpeaker
+                  ? `🏷️ 該主講人所有標籤 (${availableShelfTags.length > 0 ? `共 ${availableShelfTags.length} 種` : '無標籤'})`
+                  : `🏷️ 全部類別標籤 ${availableShelfTags.length === 0 ? '(尚無標籤)' : '(不限)'}`}
               </option>
               {availableShelfTags.map(({ tag, count }) => (
                 <option key={tag} value={tag}>
@@ -2620,7 +2642,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    onClick={() => handleSelectShelfAudio(item)}
+                    onClick={() => handleSelectShelfAudio(item, true)}
                     style={{
                       borderLeftColor: catColor,
                       borderLeftWidth: '5px',
@@ -2633,7 +2655,7 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         ? 'bg-[#FFFDF7] border-t-2 border-r-2 border-b-2 border-[#8B5A2B] ring-2 ring-[#8B5A2B]/25 shadow-md'
                         : 'border-t border-r border-b border-[#E5D9C5] hover:-translate-y-0.5'
                     }`}
-                    title={`點選卡片立即放映此語音檔（所屬館藏：[${cat?.code || ''}] ${cat?.name || '未分類'}）`}
+                    title={`點選卡片立即自動播放此語音檔（所屬館藏：[${cat?.code || ''}] ${cat?.name || '未分類'}）`}
                   >
                     {/* 左側精裝書脊分類色彩標記條 */}
                     <div
@@ -2685,13 +2707,13 @@ export const ScreeningRoomView: React.FC<ScreeningRoomViewProps> = ({
                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => handleSelectShelfAudio(item)}
+                            onClick={() => handleSelectShelfAudio(item, true)}
                             className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer transition ${
                               isPlayingCurrent
                                 ? 'bg-amber-600 text-white shadow-2xs'
                                 : 'bg-[#3A2518] hover:bg-[#593824] text-[#FAF5EC]'
                             }`}
-                            title="直接播放此語音檔"
+                            title="直接自動播放此語音檔"
                           >
                             <Play className="w-2.5 h-2.5 fill-current" />
                             <span>{isPlayingCurrent ? '放映中' : '單曲播放'}</span>
